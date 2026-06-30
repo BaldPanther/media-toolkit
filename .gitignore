@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Машинно-зависимый ярлык (воссоздаётся make_shortcut.ps1)
+*.lnk
+
+# Локальные данные OpenSubtitles
+subs_settings.json
