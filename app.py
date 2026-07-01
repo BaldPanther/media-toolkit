@@ -35,6 +35,7 @@ class App:
         self.busy = False
 
         root.title("MKV — дорожки по умолчанию")
+        self._set_window_icon()
         root.geometry("1080x720")
         root.minsize(900, 600)
 
@@ -56,6 +57,21 @@ class App:
                 direct = []
             if direct:
                 self.root.after(200, self.scan)
+
+    def _set_window_icon(self):
+        assets = Path(__file__).resolve().parent / "assets"
+        self.icon_image = None
+        try:
+            self.icon_image = tk.PhotoImage(file=str(assets / "app-icon.png"))
+            self.root.iconphoto(True, self.icon_image)
+        except tk.TclError:
+            pass
+
+        if sys.platform == "win32":
+            try:
+                self.root.iconbitmap(str(assets / "app-icon.ico"))
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------------ UI --
     def _build_top(self, start_folder):

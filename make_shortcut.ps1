@@ -4,12 +4,14 @@
 $ErrorActionPreference = 'Stop'
 
 $pythonw   = 'D:\Programs\Python\Python314\pythonw.exe'
-$appPy     = 'D:\Projects\Apps\mkv-default-tracks\app.py'
-$workDir   = 'D:\Projects\Apps\mkv-default-tracks'
+$workDir   = $PSScriptRoot
+$appPy     = Join-Path $workDir 'app.py'
+$iconPath  = Join-Path $workDir 'assets\app-icon.ico'
 $defFolder = 'Y:\tv-ssd-1'                     # папка по умолчанию (стартовая точка)
 
 if (-not (Test-Path $pythonw)) { Write-Host "pythonw not found: $pythonw"; exit 1 }
 if (-not (Test-Path $appPy))   { Write-Host "app.py not found: $appPy"; exit 1 }
+if (-not (Test-Path $iconPath)) { Write-Host "icon not found: $iconPath"; exit 1 }
 
 $argLine = '"' + $appPy + '" "' + $defFolder + '"'
 
@@ -19,7 +21,7 @@ function New-Lnk([string]$path) {
     $lnk.TargetPath       = $pythonw
     $lnk.Arguments        = $argLine
     $lnk.WorkingDirectory = $workDir
-    $lnk.IconLocation     = "$pythonw,0"
+    $lnk.IconLocation     = "$iconPath,0"
     $lnk.Description       = 'MKV: set default audio/subtitle tracks'
     $lnk.Save()
     Write-Host "Shortcut created: $path"
