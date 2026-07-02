@@ -233,16 +233,33 @@ class App:
         spin(2, 3, "интро кон:", "intro_end")
         spin(3, 1, "титры нач:", "outro_start")
 
-        # Recap «в предыдущих сериях» одним значением на весь список (в сезоне обычно
-        # одинаков). Начало — с нуля, задаётся только конец.
-        ttk.Label(opt, text="Recap до (всем):").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        self.edl_recap_all = tk.StringVar(value="")
-        ttk.Entry(opt, textvariable=self.edl_recap_all, width=7).grid(
-            row=4, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
-        ttk.Button(opt, text="Задать всем", command=self.apply_recap_all).grid(
-            row=4, column=2, sticky="w", pady=(6, 0))
-        ttk.Button(opt, text="Убрать recap", command=self.clear_recap_all).grid(
-            row=4, column=3, sticky="w", padx=(6, 0), pady=(6, 0))
+        # --- Задать всем сериям вручную (когда детект промахнулся или его нет) ---
+        # В некоторых сериалах интро/титры одинаковы по времени во всех сериях, но
+        # детект их не берёт (нет чёткой музыкальной темы) — задаём одним значением.
+        manual = ttk.LabelFrame(parent, text="Задать всем сериям вручную (время: MM:SS или секунды)", padding=10)
+        manual.pack(fill="x", padx=10, pady=(0, 4))
+        self.edl_manual = {k: tk.StringVar(value="")
+                           for k in ("intro_start", "intro_end", "outro_start", "recap_end")}
+
+        ttk.Label(manual, text="Интро:").grid(row=0, column=0, sticky="e")
+        ttk.Label(manual, text="нач").grid(row=0, column=1, sticky="e", padx=(8, 2))
+        ttk.Entry(manual, textvariable=self.edl_manual["intro_start"], width=8).grid(row=0, column=2)
+        ttk.Label(manual, text="кон").grid(row=0, column=3, sticky="e", padx=(8, 2))
+        ttk.Entry(manual, textvariable=self.edl_manual["intro_end"], width=8).grid(row=0, column=4)
+        ttk.Button(manual, text="Задать всем", command=self.apply_intro_all).grid(row=0, column=5, padx=(10, 0))
+
+        ttk.Label(manual, text="Титры:").grid(row=1, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="нач").grid(row=1, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_start"], width=8).grid(row=1, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(до конца файла)").grid(row=1, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать всем", command=self.apply_outro_all).grid(row=1, column=5, padx=(10, 0), pady=(6, 0))
+
+        ttk.Label(manual, text="Recap:").grid(row=2, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="до").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=2, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(с начала файла)").grid(row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать всем", command=self.apply_recap_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
+        ttk.Button(manual, text="Убрать всё", command=self.clear_all_segments).grid(row=2, column=6, padx=(8, 0), pady=(6, 0))
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -795,27 +812,59 @@ class App:
             break
         self.edl_track_info.set(info)
 
-    def apply_recap_all(self):
+    def _edl_have_eps(self) -> bool:
         if not self.edl_eps:
             messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return False
+        return True
+
+    def apply_intro_all(self):
+        if not self._edl_have_eps():
             return
-        x = self._parse_time(self.edl_recap_all.get())
+        s = self._parse_time(self.edl_manual["intro_start"].get())
+        e_ = self._parse_time(self.edl_manual["intro_end"].get())
+        if s is None or e_ is None or e_ <= s:
+            messagebox.showinfo("Интро", "Укажите начало и конец интро (например 0:00 и 0:13).")
+            return
+        for ep in self.edl_eps:
+            ep.intro = edl.Segment(s, e_)
+        self.refresh_edl_preview()
+        self.log_line(f"Интро задано всем ({len(self.edl_eps)}): {self._fmt_time(s)}–{self._fmt_time(e_)}.")
+
+    def apply_outro_all(self):
+        if not self._edl_have_eps():
+            return
+        s = self._parse_time(self.edl_manual["outro_start"].get())
+        if s is None:
+            messagebox.showinfo("Титры", "Укажите начало титров (например 20:30) — конец берётся до конца файла.")
+            return
+        for ep in self.edl_eps:
+            end = ep.duration or (s + 60)
+            ep.outro = edl.Segment(s, end) if end > s else None
+        self.refresh_edl_preview()
+        self.log_line(f"Титры заданы всем: с {self._fmt_time(s)} до конца файла.")
+
+    def apply_recap_all(self):
+        if not self._edl_have_eps():
+            return
+        x = self._parse_time(self.edl_manual["recap_end"].get())
         if not x or x <= 0:
-            messagebox.showinfo("Recap", "Укажите конец recap (например 0:45) в поле «Recap до (всем)».")
+            messagebox.showinfo("Recap", "Укажите конец recap (например 0:13) — начало с начала файла.")
             return
-        for e in self.edl_eps:
-            e.recap = edl.Segment(0.0, x)
+        for ep in self.edl_eps:
+            ep.recap = edl.Segment(0.0, x)
         self.refresh_edl_preview()
         self.log_line(f"Recap задан всем сериям ({len(self.edl_eps)}): 0:00–{self._fmt_time(x)}.")
 
-    def clear_recap_all(self):
-        if not self.edl_eps:
+    def clear_all_segments(self):
+        if not self._edl_have_eps():
             return
-        n = sum(1 for e in self.edl_eps if e.recap)
-        for e in self.edl_eps:
-            e.recap = None
+        if not messagebox.askyesno("Убрать всё", "Сбросить интро, титры и recap у всех серий?"):
+            return
+        for ep in self.edl_eps:
+            ep.intro = ep.outro = ep.recap = None
         self.refresh_edl_preview()
-        self.log_line(f"Recap убран ({n}).")
+        self.log_line("Сброшены интро/титры/recap у всех серий.")
 
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
