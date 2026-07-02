@@ -1101,7 +1101,15 @@ class App:
 
 
 def main():
-    start = sys.argv[1] if len(sys.argv) > 1 else load_app_settings().get("last_path", "")
+    # Приоритет: последний путь (если он есть и папка доступна) → аргумент запуска
+    # (ярлык подставляет дефолтный путь) → пусто.
+    last = load_app_settings().get("last_path", "")
+    if last and Path(last).is_dir():
+        start = last
+    elif len(sys.argv) > 1:
+        start = sys.argv[1]
+    else:
+        start = ""
     root = tk.Tk()
     App(root, start)
     root.mainloop()
