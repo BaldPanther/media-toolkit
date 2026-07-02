@@ -239,7 +239,7 @@ class App:
         manual = ttk.LabelFrame(parent, text="Задать всем сериям вручную (время: MM:SS или секунды)", padding=10)
         manual.pack(fill="x", padx=10, pady=(0, 4))
         self.edl_manual = {k: tk.StringVar(value="")
-                           for k in ("intro_start", "intro_end", "outro_start", "recap_end")}
+                           for k in ("intro_start", "intro_end", "outro_start", "outro_last", "recap_end")}
 
         ttk.Label(manual, text="Интро:").grid(row=0, column=0, sticky="e")
         ttk.Label(manual, text="нач").grid(row=0, column=1, sticky="e", padx=(8, 2))
@@ -254,12 +254,19 @@ class App:
         ttk.Label(manual, text="(до конца файла)").grid(row=1, column=3, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(manual, text="Задать всем", command=self.apply_outro_all).grid(row=1, column=5, padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(manual, text="Recap:").grid(row=2, column=0, sticky="e", pady=(6, 0))
-        ttk.Label(manual, text="до").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=2, column=2, pady=(6, 0))
-        ttk.Label(manual, text="(с начала файла)").grid(row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать всем", command=self.apply_recap_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
-        ttk.Button(manual, text="Убрать всё", command=self.clear_all_segments).grid(row=2, column=6, padx=(8, 0), pady=(6, 0))
+        # Титры «последние N сек от конца» — устойчиво к разной длине серий (титры обычно
+        # фиксированной длительности), для каждой серии начало = длительность − N.
+        ttk.Label(manual, text="…или последние").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_last"], width=8).grid(row=2, column=2, pady=(6, 0))
+        ttk.Label(manual, text="сек (от конца)").grid(row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать всем", command=self.apply_outro_last_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
+
+        ttk.Label(manual, text="Recap:").grid(row=3, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="до").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=3, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(с начала файла)").grid(row=3, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать всем", command=self.apply_recap_all).grid(row=3, column=5, padx=(10, 0), pady=(6, 0))
+        ttk.Button(manual, text="Убрать всё", command=self.clear_all_segments).grid(row=3, column=6, padx=(8, 0), pady=(6, 0))
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -843,6 +850,23 @@ class App:
             ep.outro = edl.Segment(s, end) if end > s else None
         self.refresh_edl_preview()
         self.log_line(f"Титры заданы всем: с {self._fmt_time(s)} до конца файла.")
+
+    def apply_outro_last_all(self):
+        if not self._edl_have_eps():
+            return
+        n = self._parse_time(self.edl_manual["outro_last"].get())
+        if not n or n <= 0:
+            messagebox.showinfo("Титры", "Укажите длительность титров в секундах (например 60) — "
+                                          "вырежутся последними N сек каждой серии.")
+            return
+        done = 0
+        for ep in self.edl_eps:
+            if ep.duration:
+                ep.outro = edl.Segment(max(0.0, ep.duration - n), ep.duration)
+                done += 1
+        self.refresh_edl_preview()
+        self.log_line(f"Титры заданы всем как последние {self._fmt_time(n)} "
+                      f"({done} серий с известной длительностью).")
 
     def apply_recap_all(self):
         if not self._edl_have_eps():
