@@ -117,6 +117,17 @@ class EpisodeEdl:
 
     audio_langs: list[str] = field(default_factory=list)  # языки аудиодорожек по порядку
 
+    # Параллельные наборы таймингов, чтобы сравнивать источники, не теряя ни один.
+    # Активные — intro/outro/recap (из них пишется .edl). local_* — снимок последнего
+    # локального автодетекта (для «взять локальные»), online_* — ответ онлайн-базы.
+    local_intro: Segment | None = None
+    local_outro: Segment | None = None
+    local_recap: Segment | None = None
+    online_intro: Segment | None = None
+    online_outro: Segment | None = None
+    online_recap: Segment | None = None
+    online_note: str = ""             # источник/диагностика онлайн-загрузки
+
     @classmethod
     def from_path(cls, path, duration: float | None = None,
                   audio_langs: list[str] | None = None) -> "EpisodeEdl":

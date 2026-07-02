@@ -232,51 +232,73 @@ class App:
         spin(2, 3, "интро кон:", "intro_end")
         spin(3, 1, "титры нач:", "outro_start")
 
-        # --- Задать всем сериям вручную (когда детект промахнулся или его нет) ---
+        # --- Задать вручную (когда детект промахнулся или его нет) ---
         # В некоторых сериалах интро/титры одинаковы по времени во всех сериях, но
         # детект их не берёт (нет чёткой музыкальной темы) — задаём одним значением.
-        manual = ttk.LabelFrame(parent, text="Задать всем сериям вручную (время: MM:SS или секунды)", padding=10)
+        # Переключатель scope позволяет применить не ко всем, а к выделенным строкам
+        # (Shift/Ctrl в таблице) — напр. когда один сезон-папка склеен из двух cours
+        # с разными таймингами.
+        manual = ttk.LabelFrame(parent, text="Задать вручную (время: MM:SS или секунды)", padding=10)
         manual.pack(fill="x", padx=10, pady=(0, 4))
         self.edl_manual = {k: tk.StringVar(value="")
                            for k in ("intro_start", "intro_end", "intro_dur",
                                      "outro_start", "outro_last", "recap_end")}
+        self.edl_scope = tk.StringVar(value="all")
 
-        ttk.Label(manual, text="Интро:").grid(row=0, column=0, sticky="e")
-        ttk.Label(manual, text="нач").grid(row=0, column=1, sticky="e", padx=(8, 2))
-        ttk.Entry(manual, textvariable=self.edl_manual["intro_start"], width=8).grid(row=0, column=2)
-        ttk.Label(manual, text="кон").grid(row=0, column=3, sticky="e", padx=(8, 2))
-        ttk.Entry(manual, textvariable=self.edl_manual["intro_end"], width=8).grid(row=0, column=4)
-        ttk.Button(manual, text="Задать всем", command=self.apply_intro_all).grid(row=0, column=5, padx=(10, 0))
+        scope_row = ttk.Frame(manual)
+        scope_row.grid(row=0, column=0, columnspan=7, sticky="w", pady=(0, 4))
+        ttk.Label(scope_row, text="Применять к:").pack(side="left")
+        ttk.Radiobutton(scope_row, text="ко всем сериям", value="all",
+                        variable=self.edl_scope).pack(side="left", padx=(6, 0))
+        self.edl_scope_sel_rb = ttk.Radiobutton(scope_row, text="к выделенным (0)", value="sel",
+                                                 variable=self.edl_scope)
+        self.edl_scope_sel_rb.pack(side="left", padx=(6, 0))
+
+        ttk.Label(manual, text="Интро:").grid(row=1, column=0, sticky="e")
+        ttk.Label(manual, text="нач").grid(row=1, column=1, sticky="e", padx=(8, 2))
+        ttk.Entry(manual, textvariable=self.edl_manual["intro_start"], width=8).grid(row=1, column=2)
+        ttk.Label(manual, text="кон").grid(row=1, column=3, sticky="e", padx=(8, 2))
+        ttk.Entry(manual, textvariable=self.edl_manual["intro_end"], width=8).grid(row=1, column=4)
+        ttk.Button(manual, text="Задать", command=self.apply_intro_all).grid(row=1, column=5, padx=(10, 0))
 
         # Интро «длительность N сек»: начало у каждой серии своё (из автодетекта или
         # ручной правки), конец пересчитывается как начало + N — лечит случай, когда
         # детект верно нашёл начало, но криво определил конец.
-        ttk.Label(manual, text="…или длительность").grid(row=1, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["intro_dur"], width=8).grid(row=1, column=2, pady=(6, 0))
+        ttk.Label(manual, text="…или длительность").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["intro_dur"], width=8).grid(row=2, column=2, pady=(6, 0))
         ttk.Label(manual, text="сек — продолжительность интро (конец = начало серии + N)").grid(
-            row=1, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать всем", command=self.apply_intro_dur_all).grid(row=1, column=5, padx=(10, 0), pady=(6, 0))
+            row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать", command=self.apply_intro_dur_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(manual, text="Титры:").grid(row=2, column=0, sticky="e", pady=(6, 0))
-        ttk.Label(manual, text="нач").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["outro_start"], width=8).grid(row=2, column=2, pady=(6, 0))
-        ttk.Label(manual, text="(до конца файла)").grid(row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать всем", command=self.apply_outro_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
+        ttk.Label(manual, text="Титры:").grid(row=3, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="нач").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_start"], width=8).grid(row=3, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(до конца файла)").grid(row=3, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать", command=self.apply_outro_all).grid(row=3, column=5, padx=(10, 0), pady=(6, 0))
 
         # Титры «последние N сек от конца» — устойчиво к разной длине серий (титры обычно
         # фиксированной длительности), для каждой серии начало = длительность − N.
-        ttk.Label(manual, text="…или последние").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["outro_last"], width=8).grid(row=3, column=2, pady=(6, 0))
+        ttk.Label(manual, text="…или последние").grid(row=4, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_last"], width=8).grid(row=4, column=2, pady=(6, 0))
         ttk.Label(manual, text="сек — продолжительность титров (от конца файла)").grid(
-            row=3, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать всем", command=self.apply_outro_last_all).grid(row=3, column=5, padx=(10, 0), pady=(6, 0))
+            row=4, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать", command=self.apply_outro_last_all).grid(row=4, column=5, padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(manual, text="Recap:").grid(row=4, column=0, sticky="e", pady=(6, 0))
-        ttk.Label(manual, text="до").grid(row=4, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=4, column=2, pady=(6, 0))
-        ttk.Label(manual, text="(с начала файла)").grid(row=4, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать всем", command=self.apply_recap_all).grid(row=4, column=5, padx=(10, 0), pady=(6, 0))
-        ttk.Button(manual, text="Убрать всё", command=self.clear_all_segments).grid(row=4, column=6, padx=(8, 0), pady=(6, 0))
+        ttk.Label(manual, text="Recap:").grid(row=5, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="до").grid(row=5, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=5, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(с начала файла)").grid(row=5, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать", command=self.apply_recap_all).grid(row=5, column=5, padx=(10, 0), pady=(6, 0))
+
+        # Прицельное удаление по сегменту (уважает scope): напр. снять только титры
+        # у выделенного последнего сезона, где их нет, сохранив интро.
+        ttk.Label(manual, text="Убрать:").grid(row=6, column=0, sticky="e", pady=(8, 0))
+        clr = ttk.Frame(manual)
+        clr.grid(row=6, column=1, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Button(clr, text="интро", command=lambda: self.clear_segment_scope("intro")).pack(side="left", padx=(0, 4))
+        ttk.Button(clr, text="титры", command=lambda: self.clear_segment_scope("outro")).pack(side="left", padx=4)
+        ttk.Button(clr, text="recap", command=lambda: self.clear_segment_scope("recap")).pack(side="left", padx=4)
+        ttk.Button(clr, text="всё", command=self.clear_all_segments).pack(side="left", padx=4)
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -288,15 +310,29 @@ class App:
         self.edl_delete_btn.pack(side="left")
         ttk.Label(btns, text="  (двойной клик по строке — правка вручную)").pack(side="left", padx=10)
 
+        # Онлайн-тайминги: подтягиваем готовые интро/титры из баз, показываем рядом с
+        # локальными (отдельные колонки) и переносим в активные по кнопке — с учётом scope.
+        online_f = ttk.LabelFrame(parent, text="Онлайн-тайминги (AniSkip / TheIntroDB)", padding=8)
+        online_f.pack(fill="x", padx=10, pady=(4, 0))
+        self.online_load_btn = ttk.Button(online_f, text="Загрузить онлайн…", command=self.online_dialog)
+        self.online_load_btn.pack(side="left")
+        self.online_take_on_btn = ttk.Button(online_f, text="Взять онлайн (по scope)", command=self.take_online)
+        self.online_take_on_btn.pack(side="left", padx=(8, 0))
+        self.online_take_loc_btn = ttk.Button(online_f, text="Вернуть локальные (по scope)", command=self.take_local)
+        self.online_take_loc_btn.pack(side="left", padx=(8, 0))
+        self.online_status = tk.StringVar(value="")
+        ttk.Label(online_f, textvariable=self.online_status, foreground="#0a58ca").pack(side="left", padx=10)
+
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
-        cols = ("file", "se", "recap", "intro", "outro", "edl", "note")
+        cols = ("file", "se", "recap", "intro", "intro_on", "outro", "outro_on", "edl", "note")
         heads = {"file": "Файл", "se": "S/E", "recap": "Recap",
-                 "intro": "Интро → пропуск", "outro": "Титры → пропуск", "edl": ".edl",
-                 "note": "Заметка"}
-        widths = {"file": 260, "se": 56, "recap": 90, "intro": 150, "outro": 150, "edl": 56,
-                  "note": 180}
-        self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
+                 "intro": "Интро (актив.)", "intro_on": "Интро (онлайн)",
+                 "outro": "Титры (актив.)", "outro_on": "Титры (онлайн)",
+                 "edl": ".edl", "note": "Заметка"}
+        widths = {"file": 200, "se": 52, "recap": 74, "intro": 120, "intro_on": 120,
+                  "outro": 120, "outro_on": 120, "edl": 44, "note": 130}
+        self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="extended")
         for c in cols:
             self.edl_tree.heading(c, text=heads[c])
             self.edl_tree.column(c, width=widths[c], anchor="w")
@@ -307,6 +343,7 @@ class App:
         self.edl_tree.tag_configure("first", foreground="#0a58ca")
         self.edl_tree.tag_configure("has", background="#dff5df")
         self.edl_tree.bind("<Double-1>", self._edl_edit_row)
+        self.edl_tree.bind("<<TreeviewSelect>>", self._update_scope_count)
 
         self.edl_status = tk.StringVar(value="Просканируйте папку, затем «Определить автоматически».")
         ttk.Label(parent, textvariable=self.edl_status, padding=(10, 4)).pack(fill="x")
@@ -387,7 +424,10 @@ class App:
         for b in (self.scan_btn, self.apply_btn, self.subs_btn,
                   getattr(self, "edl_detect_btn", None),
                   getattr(self, "edl_write_btn", None),
-                  getattr(self, "edl_delete_btn", None)):
+                  getattr(self, "edl_delete_btn", None),
+                  getattr(self, "online_load_btn", None),
+                  getattr(self, "online_take_on_btn", None),
+                  getattr(self, "online_take_loc_btn", None)):
             if b is not None:
                 b.configure(state=state)
 
@@ -828,6 +868,11 @@ class App:
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
+                e.local_intro, e.local_outro, e.local_recap = \
+                    old.local_intro, old.local_outro, old.local_recap
+                e.online_intro, e.online_outro, e.online_recap = \
+                    old.online_intro, old.online_outro, old.online_recap
+                e.online_note = old.online_note
             elif edl.has_external_edl(f.path):
                 # Свежий скан: подхватываем тайминги из уже записанного .edl —
                 # можно править вручную без повторного детекта. В файле лежат
@@ -870,23 +915,52 @@ class App:
             return False
         return True
 
+    def _update_scope_count(self, *_):
+        """Обновляет счётчик у радиокнопки «к выделенным (N)» при смене выделения."""
+        if hasattr(self, "edl_scope_sel_rb"):
+            self.edl_scope_sel_rb.configure(text=f"к выделенным ({len(self.edl_tree.selection())})")
+
+    def _edl_scope_eps(self):
+        """Серии, к которым применять значения: все или выделенные (по scope).
+
+        None — если применять не к чему (нет данных или пустое выделение): вызывающий
+        просто выходит.
+        """
+        if not self.edl_eps:
+            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return None
+        if self.edl_scope.get() == "sel":
+            eps = [self.edl_row_ep[i] for i in self.edl_tree.selection() if i in self.edl_row_ep]
+            if not eps:
+                messagebox.showinfo("Нет выделения",
+                                    "Выделите серии в таблице (Shift/Ctrl) или переключите "
+                                    "«Применять к: ко всем сериям».")
+                return None
+            return eps
+        return list(self.edl_eps)
+
+    def _scope_word(self, n: int) -> str:
+        return f"выделенным ({n})" if self.edl_scope.get() == "sel" else f"всем ({n})"
+
     def apply_intro_all(self):
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
         s = self._parse_time(self.edl_manual["intro_start"].get())
         e_ = self._parse_time(self.edl_manual["intro_end"].get())
         if s is None or e_ is None or e_ <= s:
             messagebox.showinfo("Интро", "Укажите начало и конец интро (например 0:00 и 0:13).")
             return
-        for ep in self.edl_eps:
+        for ep in eps:
             ep.intro = edl.Segment(s, e_)
         self.refresh_edl_preview()
-        self.log_line(f"Интро задано всем ({len(self.edl_eps)}): {self._fmt_time(s)}–{self._fmt_time(e_)}.")
+        self.log_line(f"Интро задано {self._scope_word(len(eps))}: {self._fmt_time(s)}–{self._fmt_time(e_)}.")
 
     def apply_intro_dur_all(self):
         """Конец интро = его начало + N сек. Начало у каждой серии остаётся своё
         (из автодетекта или ручной правки) — серии без начала пропускаются."""
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
         n = self._parse_time(self.edl_manual["intro_dur"].get())
         if not n or n <= 0:
@@ -894,7 +968,7 @@ class App:
                                           "конец станет «начало + N» у серий с известным началом.")
             return
         done = skipped = 0
-        for ep in self.edl_eps:
+        for ep in eps:
             if ep.intro:
                 ep.intro = edl.Segment(ep.intro.start, ep.intro.start + n)
                 done += 1
@@ -907,20 +981,22 @@ class App:
         self.log_line(msg)
 
     def apply_outro_all(self):
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
         s = self._parse_time(self.edl_manual["outro_start"].get())
         if s is None:
             messagebox.showinfo("Титры", "Укажите начало титров (например 20:30) — конец берётся до конца файла.")
             return
-        for ep in self.edl_eps:
+        for ep in eps:
             end = ep.duration or (s + 60)
             ep.outro = edl.Segment(s, end) if end > s else None
         self.refresh_edl_preview()
-        self.log_line(f"Титры заданы всем: с {self._fmt_time(s)} до конца файла.")
+        self.log_line(f"Титры заданы {self._scope_word(len(eps))}: с {self._fmt_time(s)} до конца файла.")
 
     def apply_outro_last_all(self):
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
         n = self._parse_time(self.edl_manual["outro_last"].get())
         if not n or n <= 0:
@@ -928,35 +1004,297 @@ class App:
                                           "вырежутся последними N сек каждой серии.")
             return
         done = 0
-        for ep in self.edl_eps:
+        for ep in eps:
             if ep.duration:
                 ep.outro = edl.Segment(max(0.0, ep.duration - n), ep.duration)
                 done += 1
         self.refresh_edl_preview()
-        self.log_line(f"Титры заданы всем как последние {self._fmt_time(n)} "
+        self.log_line(f"Титры заданы как последние {self._fmt_time(n)} "
                       f"({done} серий с известной длительностью).")
 
     def apply_recap_all(self):
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
         x = self._parse_time(self.edl_manual["recap_end"].get())
         if not x or x <= 0:
             messagebox.showinfo("Recap", "Укажите конец recap (например 0:13) — начало с начала файла.")
             return
-        for ep in self.edl_eps:
+        for ep in eps:
             ep.recap = edl.Segment(0.0, x)
         self.refresh_edl_preview()
-        self.log_line(f"Recap задан всем сериям ({len(self.edl_eps)}): 0:00–{self._fmt_time(x)}.")
+        self.log_line(f"Recap задан {self._scope_word(len(eps))}: 0:00–{self._fmt_time(x)}.")
+
+    def clear_segment_scope(self, kind: str):
+        """Убирает один сегмент (intro/outro/recap) у серий по scope."""
+        eps = self._edl_scope_eps()
+        if eps is None:
+            return
+        label = {"intro": "интро", "outro": "титры", "recap": "recap"}[kind]
+        for ep in eps:
+            setattr(ep, kind, None)
+        self.refresh_edl_preview()
+        self.log_line(f"Убрано «{label}» у {len(eps)} серий.")
 
     def clear_all_segments(self):
-        if not self._edl_have_eps():
+        eps = self._edl_scope_eps()
+        if eps is None:
             return
-        if not messagebox.askyesno("Убрать всё", "Сбросить интро, титры и recap у всех серий?"):
+        if not messagebox.askyesno("Убрать всё",
+                                   f"Сбросить интро, титры и recap у {len(eps)} серий?"):
             return
-        for ep in self.edl_eps:
+        for ep in eps:
             ep.intro = ep.outro = ep.recap = None
         self.refresh_edl_preview()
-        self.log_line("Сброшены интро/титры/recap у всех серий.")
+        self.log_line(f"Сброшены интро/титры/recap у {len(eps)} серий.")
+
+    # ---------------------------------------------------- онлайн-тайминги --
+    def take_online(self):
+        """Переносит онлайн-тайминги в активные (по scope). Пофайлово по сегментам:
+        перезаписываем только те, что онлайн реально нашёл — локальные не теряются."""
+        eps = self._edl_scope_eps()
+        if eps is None:
+            return
+        n = 0
+        for ep in eps:
+            got = False
+            if ep.online_intro:
+                ep.intro = ep.online_intro; got = True
+            if ep.online_outro:
+                ep.outro = ep.online_outro; got = True
+            if ep.online_recap:
+                ep.recap = ep.online_recap; got = True
+            n += 1 if got else 0
+        self.refresh_edl_preview()
+        self.log_line(f"Взяты онлайн-тайминги: применены к {n} из {len(eps)} серий "
+                      "(где онлайн-данные есть). Для полного удаления сегмента — «Убрать».")
+
+    def take_local(self):
+        """Возвращает активным значениям снимок локального детекта (по scope, по сегментам)."""
+        eps = self._edl_scope_eps()
+        if eps is None:
+            return
+        n = 0
+        for ep in eps:
+            got = False
+            if ep.local_intro:
+                ep.intro = ep.local_intro; got = True
+            if ep.local_outro:
+                ep.outro = ep.local_outro; got = True
+            if ep.local_recap:
+                ep.recap = ep.local_recap; got = True
+            n += 1 if got else 0
+        self.refresh_edl_preview()
+        self.log_line(f"Возвращены локальные тайминги у {n} из {len(eps)} серий "
+                      "(у которых был локальный детект).")
+
+    def online_dialog(self):
+        if self.busy:
+            return
+        if not self.edl_eps:
+            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return
+        import online as onlinemod  # ленивый импорт: сеть нужна только здесь
+
+        eps_se = [e for e in self.edl_eps if e.episode is not None]
+        if not eps_se:
+            messagebox.showinfo("Нет номеров серий",
+                                "У файлов не распознаны S/E (SxxEyy) — онлайн-сопоставление невозможно.")
+            return
+        emin = min(e.episode for e in eps_se)
+        emax = max(e.episode for e in eps_se)
+        folder = self.path_var.get().strip()
+
+        win = tk.Toplevel(self.root)
+        win.title("Онлайн-тайминги")
+        win.transient(self.root)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, justify="left", text=(
+            "Правила сопоставления серий с онлайн-базой. Для аниме — AniSkip (ID = MyAnimeList),\n"
+            "для сериалов/фильмов — TheIntroDB (ID = TMDb-число или IMDb вида tt…).\n"
+            "«Серии от…до» — по номеру E из имени файла; «онлайн E1» — какой серии базы\n"
+            "соответствует первая серия диапазона (для AniSkip; лечит склейку двух cours).\n"
+            f"Найденные серии: E{emin:02d}–E{emax:02d}."
+        )).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 8))
+
+        for c, h in enumerate(("Источник", "ID", "Серии от", "до", "онлайн E1")):
+            ttk.Label(frm, text=h).grid(row=1, column=c, sticky="w", padx=3)
+
+        rows: list[dict] = []
+        rows_frame = ttk.Frame(frm)
+        rows_frame.grid(row=2, column=0, columnspan=6, sticky="ew")
+
+        def add_row(source="AniSkip", idv="", efrom=emin, eto=emax, first=1):
+            r = len(rows)
+            src = tk.StringVar(value=source)
+            idvar = tk.StringVar(value=str(idv))
+            fromv, tov, firstv = (tk.StringVar(value=str(efrom)),
+                                  tk.StringVar(value=str(eto)), tk.StringVar(value=str(first)))
+            ttk.Combobox(rows_frame, textvariable=src, state="readonly", width=11,
+                         values=["AniSkip", "TheIntroDB"]).grid(row=r, column=0, padx=3, pady=2)
+            ttk.Entry(rows_frame, textvariable=idvar, width=16).grid(row=r, column=1, padx=3)
+            ttk.Entry(rows_frame, textvariable=fromv, width=6).grid(row=r, column=2, padx=3)
+            ttk.Entry(rows_frame, textvariable=tov, width=6).grid(row=r, column=3, padx=3)
+            ttk.Entry(rows_frame, textvariable=firstv, width=6).grid(row=r, column=4, padx=3)
+            rows.append({"source": src, "id": idvar, "from": fromv, "to": tov, "first": firstv})
+
+        saved = load_app_settings().get("online_rules", {}).get(folder)
+        if saved:
+            for rule in saved:
+                add_row(rule.get("source", "AniSkip"), rule.get("id", ""),
+                        rule.get("from", emin), rule.get("to", emax), rule.get("first", 1))
+        else:
+            add_row()
+
+        btnbar = ttk.Frame(frm)
+        btnbar.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        ttk.Button(btnbar, text="+ правило", command=lambda: add_row()).pack(side="left")
+
+        def auto_suggest():
+            ep0 = eps_se[0]
+            try:
+                ids = onlinemod.read_nfo_ids(ep0.path)
+            except Exception:  # noqa: BLE001 — .nfo необязателен
+                ids = {}
+            r0 = rows[0]
+            if ids.get("mal"):
+                r0["source"].set("AniSkip"); r0["id"].set(ids["mal"])
+            elif ids.get("tmdb"):
+                r0["source"].set("TheIntroDB"); r0["id"].set(ids["tmdb"])
+            elif ids.get("imdb"):
+                r0["source"].set("TheIntroDB"); r0["id"].set(ids["imdb"])
+            else:
+                title = onlinemod.clean_show_title(Path(folder).name)
+                try:
+                    cands = onlinemod.search_mal(title, 5)
+                except onlinemod.OnlineError as ex:
+                    messagebox.showerror("Ошибка поиска", str(ex))
+                    return
+                if cands:
+                    r0["source"].set("AniSkip"); r0["id"].set(str(cands[0].mal_id))
+                    self.online_status.set("Подобрано по названию (проверьте): "
+                                           + "; ".join(c.label() for c in cands[:3]))
+                else:
+                    messagebox.showinfo("Не найдено",
+                                        "ID в .nfo нет и MAL-поиск ничего не дал. Введите ID вручную.")
+                    return
+            if ids:
+                messagebox.showinfo("Из .nfo", "Найдены ID: "
+                                    + ", ".join(f"{k}={v}" for k, v in ids.items())
+                                    + "\n(проставлен первый подходящий; остальные — вручную).")
+
+        ttk.Button(btnbar, text="Авто-подобрать", command=auto_suggest).pack(side="left", padx=8)
+
+        def collect_rules():
+            out = []
+            for r in rows:
+                idv = r["id"].get().strip()
+                if not idv:
+                    continue
+                try:
+                    ef, et = int(float(r["from"].get())), int(float(r["to"].get()))
+                    fr = int(float(r["first"].get()))
+                except ValueError:
+                    continue
+                out.append({"source": r["source"].get(), "id": idv, "from": ef, "to": et, "first": fr})
+            return out
+
+        def load():
+            rules = collect_rules()
+            if not rules:
+                messagebox.showinfo("Нет правил", "Заполните хотя бы одно правило с ID.")
+                return
+            data = load_app_settings()
+            data.setdefault("online_rules", {})[folder] = rules
+            save_app_settings(data)
+            win.destroy()
+            self._online_fetch(rules)
+
+        actionbar = ttk.Frame(frm)
+        actionbar.grid(row=4, column=0, columnspan=6, sticky="e", pady=(12, 0))
+        ttk.Button(actionbar, text="Загрузить тайминги", command=load).pack(side="right")
+        ttk.Button(actionbar, text="Отмена", command=win.destroy).pack(side="right", padx=6)
+
+        win.update_idletasks()
+        w, h = win.winfo_width(), win.winfo_height()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+        win.grab_set()
+
+    def _online_fetch(self, rules):
+        import online as onlinemod
+
+        def match(ep):
+            if ep.episode is None:
+                return None
+            for rule in rules:
+                if rule["from"] <= ep.episode <= rule["to"]:
+                    return rule
+            return None
+
+        targets = [(e, match(e)) for e in self.edl_eps]
+        targets = [(e, r) for e, r in targets if r is not None]
+        if not targets:
+            messagebox.showinfo("Нечего загружать",
+                                "Ни одна серия не попала под правила (проверьте диапазоны E).")
+            return
+
+        self.set_busy(True)
+        self.online_status.set("")
+        self.progress.configure(value=0, maximum=len(targets))
+        self.log_line(f"ОНЛАЙН: запрашиваю тайминги для {len(targets)} серий…")
+        total = len(targets)
+
+        def work():
+            import time
+            ok = miss = err = 0
+            for i, (ep, rule) in enumerate(targets, 1):
+                if self.cancel_event.is_set():
+                    break
+                try:
+                    res = self._fetch_one(onlinemod, ep, rule)
+                    ep.online_intro, ep.online_outro, ep.online_recap = res.intro, res.outro, res.recap
+                    ep.online_note = res.source + (f": {res.note}" if res.note else "")
+                    ok += 1 if res.any else 0
+                    miss += 0 if res.any else 1
+                except onlinemod.OnlineError as ex:
+                    ep.online_note = f"ошибка: {ex}"
+                    err += 1
+                self.root.after(0, lambda i=i, ep=ep: self._online_progress(i, total, ep))
+                time.sleep(0.4)  # мягкий rate-limit (Jikan/AniSkip/TheIntroDB)
+            self.root.after(0, lambda: self._online_done(ok, miss, err))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _fetch_one(self, onlinemod, ep, rule):
+        src, idv = rule["source"], rule["id"]
+        if src == "AniSkip":
+            if not idv.isdigit():
+                raise onlinemod.OnlineError(f"MAL ID должен быть числом, а не «{idv}»")
+            online_ep = ep.episode - rule["from"] + rule["first"]
+            return onlinemod.fetch_aniskip(int(idv), online_ep, ep.duration)
+        # TheIntroDB: season/episode как в имени файла; ID = tmdb (число) или imdb (tt…).
+        if idv.lower().startswith("tt"):
+            return onlinemod.fetch_theintrodb(imdb_id=idv, season=ep.season,
+                                              episode=ep.episode, duration_s=ep.duration)
+        return onlinemod.fetch_theintrodb(tmdb_id=idv, season=ep.season,
+                                          episode=ep.episode, duration_s=ep.duration)
+
+    def _online_progress(self, i, total, ep):
+        self.progress.configure(value=i)
+        self.online_status.set(f"{i}/{total}: {ep.path.name}")
+
+    def _online_done(self, ok, miss, err):
+        self.progress.configure(value=0)
+        self.set_busy(False)
+        msg = f"Онлайн: с таймингами {ok}, пусто {miss}, ошибок {err}."
+        if self.cancel_event.is_set():
+            msg = "Отменено. " + msg
+        self.online_status.set(msg)
+        self.log_line(msg + " Сравните колонки и при нужде «Взять онлайн».")
+        self.refresh_edl_preview()
 
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
@@ -993,11 +1331,17 @@ class App:
             else:
                 outro_txt = "—"
 
+            intro_on_txt = (f"{self._fmt_time(e.online_intro.start)}–{self._fmt_time(e.online_intro.end)}"
+                            if e.online_intro else "—")
+            outro_on_txt = (f"{self._fmt_time(e.online_outro.start)}–{self._fmt_time(e.online_outro.end)}"
+                            if e.online_outro else "—")
+            note_txt = "; ".join(x for x in (e.note, e.online_note) if x)
+
             has = "есть" if edl.has_external_edl(e.path) else ""
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
-                                       values=(e.path.name, se, recap_txt, intro_txt, outro_txt, has,
-                                               e.note),
+                                       values=(e.path.name, se, recap_txt, intro_txt, intro_on_txt,
+                                               outro_txt, outro_on_txt, has, note_txt),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
         self.edl_status.set(
@@ -1071,6 +1415,10 @@ class App:
             self.log_line(f"Детект отменён. Найдено до отмены: интро {fi}/{n}, титры {fo}/{n}.")
         else:
             self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
+        # Снимок локального детекта — чтобы «Вернуть локальные» восстанавливал именно его,
+        # даже если активные значения потом заменили онлайновыми.
+        for e in self.edl_eps:
+            e.local_intro, e.local_outro, e.local_recap = e.intro, e.outro, e.recap
         self.set_busy(False)
         self.refresh_edl_preview()
 
@@ -1154,8 +1502,21 @@ class App:
             varmap[key] = v
             ttk.Entry(frm, textvariable=v, width=12).grid(row=i, column=1, sticky="w", pady=2)
 
+        # Явное удаление сегмента: обнуляет поля, а save() пустое поле трактует как «нет».
+        # Нужно, когда детект нашёл лишнее (напр. титров нет — мультсериал идёт до конца):
+        # ввод 0 давал бы сегмент «весь эпизод», а эти кнопки убирают его начисто.
+        clear_frm = ttk.Frame(frm)
+        clear_frm.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ttk.Label(clear_frm, text="Убрать:").pack(side="left")
+        ttk.Button(clear_frm, text="интро", width=7,
+                   command=lambda: (varmap["is"].set(""), varmap["ie"].set(""))).pack(side="left", padx=2)
+        ttk.Button(clear_frm, text="титры", width=7,
+                   command=lambda: varmap["os"].set("")).pack(side="left", padx=2)
+        ttk.Button(clear_frm, text="recap", width=7,
+                   command=lambda: varmap["rc"].set("")).pack(side="left", padx=2)
+
         btns = ttk.Frame(frm)
-        btns.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        btns.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save():
             rc = self._parse_time(varmap["rc"].get())
