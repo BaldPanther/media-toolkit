@@ -217,7 +217,8 @@ _IPS_FALLBACK = 8.0            # отпечатков в секунду, есл�
 INTRO_WINDOW = 240.0          # сек от начала, где ищем интро
 OUTRO_WINDOW = 240.0          # сек от конца, где ищем титры
 MAX_SHIFT_S = 150.0           # макс. относительный сдвиг сегмента между сериями
-BIT_THR = 8                   # порог различия отпечатков (из 32 бит) для «похожи»
+BIT_THR = 11                  # порог различия отпечатков (из 32 бит) для «похожи»
+                              # (выше — точнее старт и шире покрытие; ~18+ даёт ложные)
 MIN_LEN_S = 10.0              # короче — не считаем интро/титрами
 SNAP_END_S = 20.0            # если титры кончаются ближе к концу файла — тянем до конца
 
@@ -290,31 +291,46 @@ def _best_common(a, b, max_shift: int, bit_thr: int) -> tuple[int, int]:
     return best_len, best_a
 
 
-def _assign(eps, fps, durs, ref, kind, from_end, window,
+def _assign(eps, fps, durs, kind, from_end, window,
             max_shift_s, bit_thr, min_len_s):
-    """Сопоставляет каждую серию с эталоном и проставляет ep.intro/ep.outro."""
+    """Проставляет ep.intro/ep.outro по КОНСЕНСУСУ нескольких сравнений.
+
+    Каждую серию сравниваем с набором «якорей» (другие серии сезона) и берём
+    медиану найденных границ. Так один атипичный эпизод не сбивает результат, а
+    сегмент находится даже там, где сравнение с единственным эталоном промахивалось.
+    """
+    import numpy as np
     valid = [i for i, f in enumerate(fps) if f is not None and len(f) > 2]
     if len(valid) < 2:
         for e in eps:
             e.note = (e.note + "; " if e.note else "") + f"{kind}: мало отпечатков"
         return
-    if ref not in valid:
-        ref = valid[len(valid) // 2]
+    # На длинных сезонах ограничиваем число якорей (скорость), разбрасывая по сезону.
+    anchors = valid if len(valid) <= 8 else valid[:: max(1, len(valid) // 8)]
 
     for i, e in enumerate(eps):
         fp = fps[i]
         if fp is None or len(fp) <= 2:
             e.note = (e.note + "; " if e.note else "") + f"{kind}: нет отпечатка"
             continue
-        partner = ref if i != ref else next((j for j in valid if j != ref), ref)
-        pfp = fps[partner]
         ips = (len(fp) / durs[i]) if durs[i] else _IPS_FALLBACK
-        rl, a_s = _best_common(fp, pfp, int(max_shift_s * ips), bit_thr)
-        seg_len = rl / ips
-        if seg_len < min_len_s:
+        ms = int(max_shift_s * ips)
+        starts, ends = [], []
+        for j in anchors:
+            if j == i:
+                continue
+            pfp = fps[j]
+            if pfp is None or len(pfp) <= 2:
+                continue
+            rl, a_s = _best_common(fp, pfp, ms, bit_thr)
+            if rl / ips >= min_len_s:
+                starts.append(a_s)
+                ends.append(a_s + rl)
+        if not starts:
             e.note = (e.note + "; " if e.note else "") + f"{kind}: не найдено"
             continue
-        start_t, end_t = a_s / ips, (a_s + rl) / ips
+        start_t = float(np.median(starts)) / ips
+        end_t = float(np.median(ends)) / ips
         if from_end:
             base = (e.duration - durs[i]) if (e.duration and durs[i]) else \
                    ((e.duration - window) if e.duration else 0.0)
@@ -342,7 +358,6 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
         for e in eps:
             e.note = "нужно ≥2 серий в сезоне"
         return eps
-    ref = n // 2
     for kind in kinds:
         from_end = kind == "outro"
         window = outro_window if from_end else intro_window
@@ -353,6 +368,6 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
             fp, dur = _extract_fp(ffmpeg, fpcalc, e.path, window, from_end)
             fps.append(fp)
             durs.append(dur)
-        _assign(eps, fps, durs, ref, kind, from_end, window,
+        _assign(eps, fps, durs, kind, from_end, window,
                 max_shift_s, bit_thr, min_len_s)
     return eps
