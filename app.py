@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
 from pathlib import Path
@@ -25,6 +26,23 @@ import edl
 NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
 EDL_TRACK_AUTO = "Оригинал (авто)"
+
+# Локальные настройки приложения (последний путь и т.п.), рядом с программой.
+_SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
+
+
+def load_app_settings() -> dict:
+    try:
+        return json.loads(_SETTINGS_FILE.read_text("utf-8"))
+    except Exception:  # noqa: BLE001 — нет файла/битый JSON: просто пустые настройки
+        return {}
+
+
+def save_app_settings(data: dict) -> None:
+    try:
+        _SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+    except Exception:  # noqa: BLE001 — не критично, просто не сохранили
+        pass
 
 
 class App:
@@ -190,9 +208,13 @@ class App:
         # закадрового названия серии, которое сбивает определение границ.
         ttk.Label(opt, text="Дорожка для детекта:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.edl_track_var = tk.StringVar(value=EDL_TRACK_AUTO)
-        self.edl_track_combo = ttk.Combobox(opt, state="readonly", width=18,
+        self.edl_track_combo = ttk.Combobox(opt, state="readonly", width=16,
                                              textvariable=self.edl_track_var, values=[EDL_TRACK_AUTO])
-        self.edl_track_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(6, 0))
+        self.edl_track_combo.grid(row=1, column=1, columnspan=2, sticky="w", padx=(6, 0), pady=(6, 0))
+        self.edl_track_combo.bind("<<ComboboxSelected>>", lambda e: self._update_track_info())
+        self.edl_track_info = tk.StringVar(value="")
+        ttk.Label(opt, textvariable=self.edl_track_info, foreground="#0a58ca").grid(
+            row=1, column=3, columnspan=3, sticky="w", padx=(8, 0), pady=(6, 0))
 
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
         # Конец титров не регулируем — он всегда до конца файла.
@@ -210,6 +232,17 @@ class App:
         spin(2, 1, "интро нач:", "intro_start")
         spin(2, 3, "интро кон:", "intro_end")
         spin(3, 1, "титры нач:", "outro_start")
+
+        # Recap «в предыдущих сериях» одним значением на весь список (в сезоне обычно
+        # одинаков). Начало — с нуля, задаётся только конец.
+        ttk.Label(opt, text="Recap до (всем):").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        self.edl_recap_all = tk.StringVar(value="")
+        ttk.Entry(opt, textvariable=self.edl_recap_all, width=7).grid(
+            row=4, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
+        ttk.Button(opt, text="Задать всем", command=self.apply_recap_all).grid(
+            row=4, column=2, sticky="w", pady=(6, 0))
+        ttk.Button(opt, text="Убрать recap", command=self.clear_recap_all).grid(
+            row=4, column=3, sticky="w", padx=(6, 0), pady=(6, 0))
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -346,6 +379,7 @@ class App:
         if not folder or not Path(folder).is_dir():
             messagebox.showerror("Ошибка", "Укажите существующую папку.")
             return
+        save_app_settings({**load_app_settings(), "last_path": folder})
         try:
             core.find_tools()
         except FileNotFoundError as e:
@@ -742,6 +776,46 @@ class App:
             self.edl_track_combo.configure(values=values)
             if self.edl_track_var.get() not in values:
                 self.edl_track_var.set(EDL_TRACK_AUTO)
+        self._update_track_info()
+
+    def _update_track_info(self):
+        """Показывает, какую именно дорожку выберет текущая настройка (язык + название)."""
+        if not hasattr(self, "edl_track_info"):
+            return
+        prefer = None if self.edl_track_var.get() == EDL_TRACK_AUTO else self.edl_track_var.get()
+        info = ""
+        for f in self.files:
+            if getattr(f, "error", "") or not f.audio:
+                continue
+            idx = edl.pick_audio_index([t.language or "" for t in f.audio], prefer)
+            if 0 <= idx < len(f.audio):
+                t = f.audio[idx]
+                name = t.name.strip()
+                info = f"→ {t.language or 'und'}" + (f" «{name}»" if name else "")
+            break
+        self.edl_track_info.set(info)
+
+    def apply_recap_all(self):
+        if not self.edl_eps:
+            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return
+        x = self._parse_time(self.edl_recap_all.get())
+        if not x or x <= 0:
+            messagebox.showinfo("Recap", "Укажите конец recap (например 0:45) в поле «Recap до (всем)».")
+            return
+        for e in self.edl_eps:
+            e.recap = edl.Segment(0.0, x)
+        self.refresh_edl_preview()
+        self.log_line(f"Recap задан всем сериям ({len(self.edl_eps)}): 0:00–{self._fmt_time(x)}.")
+
+    def clear_recap_all(self):
+        if not self.edl_eps:
+            return
+        n = sum(1 for e in self.edl_eps if e.recap)
+        for e in self.edl_eps:
+            e.recap = None
+        self.refresh_edl_preview()
+        self.log_line(f"Recap убран ({n}).")
 
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
@@ -752,7 +826,8 @@ class App:
         pad = self.edl_padding()
         n_intro = n_outro = 0
         for e in self.edl_eps:
-            se = f"S{e.season:02d}E{e.episode:02d}" if e.season and e.episode else "—"
+            se = (f"S{e.season:02d}E{e.episode:02d}"
+                  if e.season is not None and e.episode is not None else "—")
             intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
                                           pad.intro_start, pad.intro_end, e.duration)
             outro_eff = edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
@@ -953,7 +1028,7 @@ class App:
 
 
 def main():
-    start = sys.argv[1] if len(sys.argv) > 1 else ""
+    start = sys.argv[1] if len(sys.argv) > 1 else load_app_settings().get("last_path", "")
     root = tk.Tk()
     App(root, start)
     root.mainloop()
