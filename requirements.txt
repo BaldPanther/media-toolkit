@@ -7,3 +7,6 @@ subliminal>=2.6
 # Опционально: для автодетекта интро/титров (вкладка «Пропуск заставок»).
 # Также нужны ffmpeg в PATH и fpcalc (Chromaprint) — портативный лежит в assets/.
 numpy>=1.26
+
+# Только для разработки: юнит-тесты (python -m pytest tests/ -q).
+# pytest>=8

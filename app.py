@@ -53,6 +53,7 @@ class App:
         self.sub_options: list[core.Option] = []
         self.total_files = 0
         self.busy = False
+        self.cancel_event = threading.Event()
         self.edl_eps: list[edl.EpisodeEdl] = []
         self.edl_row_ep: dict[str, edl.EpisodeEdl] = {}
 
@@ -174,6 +175,8 @@ class App:
         f.pack(fill="x")
         self.apply_btn = ttk.Button(f, text="Применить (дорожки/субтитры)", command=self.apply)
         self.apply_btn.pack(side="left")
+        self.preview_status = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.preview_status).pack(side="left", padx=10)
 
     def _build_common_bottom(self):
         f = ttk.Frame(self.root, padding=(10, 6))
@@ -181,6 +184,10 @@ class App:
         ttk.Label(f, text="Прогресс:").pack(side="left")
         self.progress = ttk.Progressbar(f, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
+        # Рабочие потоки проверяют cancel_event между файлами и мягко прерываются.
+        self.cancel_btn = ttk.Button(f, text="Отмена", state="disabled",
+                                     command=self.cancel_event.set)
+        self.cancel_btn.pack(side="left")
 
         self.log = ScrolledText(self.root, height=7, state="disabled", wrap="word")
         self.log.pack(fill="x", padx=10, pady=(0, 10))
@@ -283,10 +290,12 @@ class App:
 
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
-        cols = ("file", "se", "recap", "intro", "outro", "edl")
+        cols = ("file", "se", "recap", "intro", "outro", "edl", "note")
         heads = {"file": "Файл", "se": "S/E", "recap": "Recap",
-                 "intro": "Интро → пропуск", "outro": "Титры → пропуск", "edl": ".edl"}
-        widths = {"file": 260, "se": 56, "recap": 90, "intro": 150, "outro": 150, "edl": 56}
+                 "intro": "Интро → пропуск", "outro": "Титры → пропуск", "edl": ".edl",
+                 "note": "Заметка"}
+        widths = {"file": 260, "se": 56, "recap": 90, "intro": 150, "outro": 150, "edl": 56,
+                  "note": 180}
         self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
         for c in cols:
             self.edl_tree.heading(c, text=heads[c])
@@ -371,6 +380,9 @@ class App:
 
     def set_busy(self, busy: bool):
         self.busy = busy
+        if busy:
+            self.cancel_event.clear()
+        self.cancel_btn.configure(state="normal" if busy else "disabled")
         state = "disabled" if busy else "normal"
         for b in (self.scan_btn, self.apply_btn, self.subs_btn,
                   getattr(self, "edl_detect_btn", None),
@@ -424,22 +436,34 @@ class App:
 
         def work():
             try:
-                files = core.scan_folder(folder, recursive, progress=progress)
+                files = core.scan_folder(folder, recursive, progress=progress,
+                                         stop=self.cancel_event.is_set)
             except Exception as e:  # noqa: BLE001
                 self.root.after(0, lambda: self._scan_error(e))
+                return
+            if self.cancel_event.is_set():
+                # Частичный список не показываем — остаётся прежнее состояние.
+                self.root.after(0, self._scan_cancelled)
                 return
             self.root.after(0, lambda: self._scan_done(files))
 
         threading.Thread(target=work, daemon=True).start()
 
     def _scan_progress(self, i, total, path):
+        # i — число уже готовых файлов (1..total), path — последний завершённый.
         self.progress.configure(maximum=max(total, 1), value=i)
-        self.summary_var.set(f"Сканирование {i + 1}/{total}: {Path(path).name}")
+        self.summary_var.set(f"Сканирование {i}/{total}: {Path(path).name}")
 
     def _scan_error(self, e):
         self.set_busy(False)
         self.summary_var.set("Ошибка сканирования.")
         messagebox.showerror("Ошибка", str(e))
+
+    def _scan_cancelled(self):
+        self.set_busy(False)
+        self.progress.configure(value=0)
+        self.summary_var.set("Сканирование отменено.")
+        self.log_line("Сканирование отменено.")
 
     def _scan_done(self, files):
         self.files = files
@@ -473,6 +497,7 @@ class App:
     def refresh_preview(self):
         self.tree.delete(*self.tree.get_children())
         if not self.files:
+            self.preview_status.set("")
             return
         ac = self.audio_choice()
         sc = self.sub_choice()
@@ -513,7 +538,9 @@ class App:
 
             self.tree.insert("", "end", values=(f.path.name, acur, anew, scur, snew, status), tags=(tag,))
 
-        self.log_line(f"Превью: к изменению {n_change}, предупреждений {n_warn}.")
+        # Счётчик у кнопки «Применить», а не в лог: превью пересчитывается при каждом
+        # переключении комбобокса, и лог быстро замусоривался бы.
+        self.preview_status.set(f"К изменению: {n_change}, предупреждений: {n_warn}.")
 
     def _cur_default(self, tracks) -> str:
         d = [t for t in tracks if t.default]
@@ -558,9 +585,13 @@ class App:
         def work():
             ok = 0
             for i, p in enumerate(todo, 1):
+                if self.cancel_event.is_set():
+                    self.root.after(0, lambda: self.log_line("Применение отменено."))
+                    break
                 res = core.apply_plan(propedit, p)
                 ok += 1 if res.ok else 0
                 self.root.after(0, lambda r=res, d=i: self._apply_step(r, d))
+            # И после отмены пересканируем: часть файлов уже изменена.
             self.root.after(0, lambda: self._apply_done(ok, len(todo)))
 
         threading.Thread(target=work, daemon=True).start()
@@ -662,7 +693,8 @@ class App:
 
         def work():
             try:
-                results = subsmod.download(targets, settings, progress=progress)
+                results = subsmod.download(targets, settings, progress=progress,
+                                           stop=self.cancel_event.is_set)
             except Exception as e:  # noqa: BLE001
                 self.root.after(0, lambda: self._subs_error(e))
                 return
@@ -692,6 +724,8 @@ class App:
             else:
                 self.log_line(f"  ✗ {r.path.name}: {r.detail}")
         msg = f"Субтитры: скачано {dl}, не найдено {nf}, ошибок {len(errs)}."
+        if self.cancel_event.is_set():
+            msg = "Отменено. " + msg
         self.log_line(msg)
         self.subs_status.set(msg)
         self.progress.configure(value=0)
@@ -794,6 +828,14 @@ class App:
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
+            elif edl.has_external_edl(f.path):
+                # Свежий скан: подхватываем тайминги из уже записанного .edl —
+                # можно править вручную без повторного детекта. В файле лежат
+                # финальные значения (padding уже применён при записи), поэтому
+                # ненулевые отступы лягут поверх них ещё раз.
+                e.recap, e.intro, e.outro = edl.read_edl(f.path)
+                if e.recap or e.intro or e.outro:
+                    e.note = "из .edl"
             eps.append(e)
         self.edl_eps = eps
 
@@ -954,7 +996,8 @@ class App:
             has = "есть" if edl.has_external_edl(e.path) else ""
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
-                                       values=(e.path.name, se, recap_txt, intro_txt, outro_txt, has),
+                                       values=(e.path.name, se, recap_txt, intro_txt, outro_txt, has,
+                                               e.note),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
         self.edl_status.set(
@@ -976,6 +1019,11 @@ class App:
             messagebox.showerror("Нет ffmpeg", "Не найден ffmpeg в PATH.")
             return
 
+        # Свежий прогон — свежие заметки: detect_season дописывает через «; »,
+        # без сброса текст копился бы между запусками.
+        for e in self.edl_eps:
+            e.note = ""
+
         seasons = edl.group_by_season([e.path for e in self.edl_eps])
         by_path = {str(e.path): e for e in self.edl_eps}
         total = len(self.edl_eps)
@@ -992,8 +1040,11 @@ class App:
         def work():
             try:
                 for season, paths in sorted(seasons.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
+                    if self.cancel_event.is_set():
+                        break
                     eps = [by_path[str(p)] for p in paths]
-                    edl.detect_season(eps, fpcalc, ffmpeg, prefer_lang=prefer, progress=progress)
+                    edl.detect_season(eps, fpcalc, ffmpeg, prefer_lang=prefer, progress=progress,
+                                      stop=self.cancel_event.is_set)
             except Exception as ex:  # noqa: BLE001
                 self.root.after(0, lambda: self._edl_detect_error(ex))
                 return
@@ -1013,11 +1064,14 @@ class App:
 
     def _edl_detect_done(self):
         self.progress.configure(value=0)
-        self.set_busy(False)
         fi = sum(1 for e in self.edl_eps if e.intro)
         fo = sum(1 for e in self.edl_eps if e.outro)
         n = len(self.edl_eps)
-        self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
+        if self.cancel_event.is_set():
+            self.log_line(f"Детект отменён. Найдено до отмены: интро {fi}/{n}, титры {fo}/{n}.")
+        else:
+            self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
+        self.set_busy(False)
         self.refresh_edl_preview()
 
     def write_edl_files(self):

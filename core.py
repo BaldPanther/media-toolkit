@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -185,16 +186,32 @@ def list_mkv(folder, recursive: bool) -> list[Path]:
     return sorted(p for p in globber("*.mkv") if p.is_file())
 
 
-def scan_folder(folder, recursive: bool, progress=None) -> list[MkvFile]:
-    """progress(i, total, path) вызывается перед обработкой каждого файла."""
+def scan_folder(folder, recursive: bool, progress=None, stop=None) -> list[MkvFile]:
+    """Читает дорожки всех MKV папки; порядок результата — как в list_mkv.
+
+    mkvmerge -J — короткие внешние процессы, поэтому файлы обрабатываются пулом
+    потоков (GIL не мешает: потоки ждут subprocess). progress(i, total, path)
+    вызывается по завершении каждого файла, i — число уже готовых (1..total).
+    stop() -> True прерывает работу: возвращается прочитанное к этому моменту.
+    """
     mkvmerge, _ = find_tools()
     paths = list_mkv(folder, recursive)
-    files: list[MkvFile] = []
-    for i, p in enumerate(paths):
-        if progress:
-            progress(i, len(paths), p)
-        files.append(scan_file(mkvmerge, p))
-    return files
+    total = len(paths)
+    results: dict[int, MkvFile] = {}
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as ex:
+        futures = {ex.submit(scan_file, mkvmerge, p): i for i, p in enumerate(paths)}
+        done = 0
+        for fut in as_completed(futures):
+            if stop and stop():
+                for f in futures:
+                    f.cancel()
+                break
+            i = futures[fut]
+            results[i] = fut.result()
+            done += 1
+            if progress:
+                progress(done, total, paths[i])
+    return [results[i] for i in sorted(results)]
 
 
 # --------------------------------------------------------------------------- #

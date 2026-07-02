@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -181,6 +182,62 @@ def delete_edl(video_path) -> bool:
         p.unlink()
         return True
     return False
+
+
+def read_edl(video_path) -> tuple[Segment | None, Segment | None, Segment | None]:
+    """Читает `<video>.edl` обратно в сегменты → (recap, intro, outro).
+
+    Свои файлы разбираются точно — по комментариям-маркерам `## Recap` /
+    `## Intro` / `## Outro` перед строками (их пишет format_edl). Чужой .edl без
+    маркеров классифицируем эвристикой: сегмент, начинающийся с нуля, — интро,
+    с наибольшим началом — титры, остальное игнорируем.
+    Нечитаемый/битый файл → (None, None, None).
+    """
+    p = edl_path(video_path)
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return None, None, None
+
+    recap = intro = outro = None
+    unmarked: list[Segment] = []
+    marker = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("##"):
+            marker = line.casefold()
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        try:
+            start, end = float(parts[0]), float(parts[1])
+        except ValueError:
+            continue
+        if end <= start:
+            continue
+        seg = Segment(start, end)
+        if "recap" in marker:
+            recap = seg
+        elif "intro" in marker:
+            intro = seg
+        elif "outro" in marker or "credits" in marker:
+            outro = seg
+        else:
+            unmarked.append(seg)
+        marker = ""
+
+    if unmarked:
+        unmarked.sort(key=lambda s: s.start)
+        if intro is None and unmarked[0].start < 1.0:
+            intro = unmarked.pop(0)
+        if outro is None and unmarked:
+            outro = unmarked.pop()
+        if intro is None and unmarked:
+            intro = unmarked.pop(0)
+    return recap, intro, outro
 
 
 def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool) -> Path | None:
@@ -388,12 +445,14 @@ def _assign(eps, fps, durs, kind, from_end, window,
 def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
                   intro_window=INTRO_WINDOW, outro_window=OUTRO_WINDOW,
                   max_shift_s=MAX_SHIFT_S, bit_thr=BIT_THR, min_len_s=MIN_LEN_S,
-                  prefer_lang: str | None = None, progress=None):
+                  prefer_lang: str | None = None, progress=None, stop=None):
     """Проставляет intro/outro для серий ОДНОГО сезона по аудио-фингерпринтингу.
 
     episodes — список EpisodeEdl (желательно одного сезона, отсортированы).
     prefer_lang — язык дорожки для детекта (None = «оригинал (авто)», см.
-    pick_audio_index). progress(kind, i, total, path) — колбэк прогресса. Заполняет
+    pick_audio_index). progress(kind, i, total, path) — колбэк по завершении
+    каждого отпечатка (i — число готовых). stop() -> True прерывает работу:
+    недосчитанный kind не проставляется, уже готовые остаются. Заполняет
     ep.intro/ep.outro и ep.note; возвращает тот же список.
     """
     eps = list(episodes)
@@ -403,16 +462,38 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
             e.note = "нужно ≥2 серий в сезоне"
         return eps
     for kind in kinds:
+        if stop and stop():
+            return eps
         from_end = kind == "outro"
         window = outro_window if from_end else intro_window
-        fps, durs = [], []
-        for i, e in enumerate(eps):
-            if progress:
-                progress(kind, i, n, e.path)
+        fps: list = [None] * n
+        durs: list = [None] * n
+
+        def extract(i, from_end=from_end, window=window):
+            e = eps[i]
             idx = pick_audio_index(e.audio_langs, prefer_lang)
-            fp, dur = _extract_fp(ffmpeg, fpcalc, e.path, window, from_end, idx)
-            fps.append(fp)
-            durs.append(dur)
+            return _extract_fp(ffmpeg, fpcalc, e.path, window, from_end, idx)
+
+        # ffmpeg+fpcalc — внешние процессы, гоним пачкой; ffmpeg CPU-тяжёлый,
+        # поэтому пул скромнее, чем при скане.
+        cancelled = False
+        with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as ex:
+            futures = {ex.submit(extract, i): i for i in range(n)}
+            done = 0
+            for fut in as_completed(futures):
+                if stop and stop():
+                    cancelled = True
+                    for f in futures:
+                        f.cancel()
+                    break
+                i = futures[fut]
+                fps[i], durs[i] = fut.result()
+                done += 1
+                if progress:
+                    progress(kind, done, n, eps[i].path)
+        if cancelled:
+            # _assign по неполному набору дал бы кривые медианы — не проставляем.
+            return eps
         _assign(eps, fps, durs, kind, from_end, window,
                 max_shift_s, bit_thr, min_len_s)
     return eps
