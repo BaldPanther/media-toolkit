@@ -79,16 +79,8 @@ class App:
 
         self._enable_entry_clipboard()
         self._check_tools()
-        if start_folder and Path(start_folder).is_dir():
-            # Папка предзаполнена (см. _build_top). Авто-скан запускаем только если в
-            # самой папке есть .mkv напрямую; для корня библиотеки из подпапок-сериалов
-            # просто оставляем путь как стартовую точку для «Обзор»/«Сканировать».
-            try:
-                direct = core.list_mkv(start_folder, recursive=False)
-            except Exception:
-                direct = []
-            if direct:
-                self.root.after(200, self.scan)
+        # Путь (последний/аргумент) только подставляется в поле — сканирование вручную
+        # кнопкой «Сканировать»: если папка уже обрабатывалась, повторный скан не нужен.
 
     def _set_window_icon(self):
         assets = Path(__file__).resolve().parent / "assets"
