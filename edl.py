@@ -113,10 +113,14 @@ class EpisodeEdl:
     outro: Segment | None = None
     note: str = ""                    # диагностика детекта (для показа в таблице)
 
+    audio_langs: list[str] = field(default_factory=list)  # языки аудиодорожек по порядку
+
     @classmethod
-    def from_path(cls, path, duration: float | None = None) -> "EpisodeEdl":
+    def from_path(cls, path, duration: float | None = None,
+                  audio_langs: list[str] | None = None) -> "EpisodeEdl":
         s, e = parse_season_episode(path)
-        return cls(Path(path), season=s, episode=e, duration=duration)
+        return cls(Path(path), season=s, episode=e, duration=duration,
+                   audio_langs=list(audio_langs or []))
 
 
 def is_first_of_season(ep: EpisodeEdl) -> bool:
@@ -199,6 +203,35 @@ def find_ffmpeg() -> str | None:
     return shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
 
 
+# Языки дубляжа, которые пропускаем при авто-выборе «оригинала»: на них поверх
+# заставки часто проговаривают название серии, что сбивает детект. Оригинал (eng
+# для западного, jpn для аниме) — чистая музыка.
+_DUB_LANGS = {"rus", "ru"}
+
+
+def pick_audio_index(langs, prefer_lang: str | None = None) -> int:
+    """Индекс аудиодорожки (0-based среди аудио) для детекта.
+
+    prefer_lang — конкретный код языка (напр. 'eng'); None — «оригинал (авто)»:
+    первая дорожка не на языке дубляжа. Всегда возвращает валидный индекс (0 —
+    запасной, если ничего не подошло).
+    """
+    norm = [(l or "").lower() for l in langs]
+    if prefer_lang:
+        pl = prefer_lang.lower()
+        for i, l in enumerate(norm):
+            if l == pl:
+                return i
+        # запрошенного языка нет — падаем в авто-логику ниже
+    for i, l in enumerate(norm):          # первая не-дубляж и не «неизвестный»
+        if l not in _DUB_LANGS and l not in ("", "und"):
+            return i
+    for i, l in enumerate(norm):          # запасной: любая не-дубляж
+        if l not in _DUB_LANGS:
+            return i
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # Автодетект интро/титров (аудио-фингерпринтинг)
 # --------------------------------------------------------------------------- #
@@ -227,7 +260,8 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, creationflags=_CREATE_NO_WINDOW)
 
 
-def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool):
+def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
+                audio_index: int = 0):
     """Отпечаток окна аудио. Возвращает (np.uint32 array | None, reported_duration)."""
     import numpy as np
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -235,7 +269,7 @@ def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool):
     try:
         pos = ["-sseof", f"-{window:.0f}"] if from_end else ["-ss", "0"]
         cp = _run([ffmpeg, "-v", "error", *pos, "-i", str(path), "-t", f"{window:.0f}",
-                   "-map", "0:a:0", "-ac", "1", "-ar", "11025", "-y", tmp.name])
+                   "-map", f"0:a:{audio_index}", "-ac", "1", "-ar", "11025", "-y", tmp.name])
         if cp.returncode != 0:
             return None, None
         cp2 = _run([fpcalc, "-raw", "-length", "100000", tmp.name])
@@ -345,12 +379,13 @@ def _assign(eps, fps, durs, kind, from_end, window,
 def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
                   intro_window=INTRO_WINDOW, outro_window=OUTRO_WINDOW,
                   max_shift_s=MAX_SHIFT_S, bit_thr=BIT_THR, min_len_s=MIN_LEN_S,
-                  progress=None):
+                  prefer_lang: str | None = None, progress=None):
     """Проставляет intro/outro для серий ОДНОГО сезона по аудио-фингерпринтингу.
 
     episodes — список EpisodeEdl (желательно одного сезона, отсортированы).
-    progress(kind, i, total, path) — колбэк прогресса. Заполняет ep.intro/ep.outro
-    и ep.note; возвращает тот же список.
+    prefer_lang — язык дорожки для детекта (None = «оригинал (авто)», см.
+    pick_audio_index). progress(kind, i, total, path) — колбэк прогресса. Заполняет
+    ep.intro/ep.outro и ep.note; возвращает тот же список.
     """
     eps = list(episodes)
     n = len(eps)
@@ -365,7 +400,8 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
         for i, e in enumerate(eps):
             if progress:
                 progress(kind, i, n, e.path)
-            fp, dur = _extract_fp(ffmpeg, fpcalc, e.path, window, from_end)
+            idx = pick_audio_index(e.audio_langs, prefer_lang)
+            fp, dur = _extract_fp(ffmpeg, fpcalc, e.path, window, from_end, idx)
             fps.append(fp)
             durs.append(dur)
         _assign(eps, fps, durs, kind, from_end, window,

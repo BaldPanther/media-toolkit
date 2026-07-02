@@ -24,6 +24,7 @@ import edl
 
 NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
+EDL_TRACK_AUTO = "Оригинал (авто)"
 
 
 class App:
@@ -185,6 +186,14 @@ class App:
             variable=self.edl_keep_first, command=self.refresh_edl_preview,
         ).grid(row=0, column=0, columnspan=6, sticky="w")
 
+        # Дорожка для детекта: по умолчанию оригинал (не дубляж) — чистая музыка без
+        # закадрового названия серии, которое сбивает определение границ.
+        ttk.Label(opt, text="Дорожка для детекта:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.edl_track_var = tk.StringVar(value=EDL_TRACK_AUTO)
+        self.edl_track_combo = ttk.Combobox(opt, state="readonly", width=18,
+                                             textvariable=self.edl_track_var, values=[EDL_TRACK_AUTO])
+        self.edl_track_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(6, 0))
+
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
         self.edl_pad = {k: tk.StringVar(value="0") for k in
                         ("intro_start", "intro_end", "outro_start", "outro_end")}
@@ -196,11 +205,11 @@ class App:
             sb.grid(row=row, column=col + 1, sticky="w", pady=(6, 0))
             sb.bind("<KeyRelease>", lambda e: self.refresh_edl_preview())
 
-        ttk.Label(opt, text="Отступы (сек), + позже / − раньше:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        spin(1, 1, "интро нач:", "intro_start")
-        spin(1, 3, "интро кон:", "intro_end")
-        spin(2, 1, "титры нач:", "outro_start")
-        spin(2, 3, "титры кон:", "outro_end")
+        ttk.Label(opt, text="Отступы (сек), + позже / − раньше:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        spin(2, 1, "интро нач:", "intro_start")
+        spin(2, 3, "интро кон:", "intro_end")
+        spin(3, 1, "титры нач:", "outro_start")
+        spin(3, 3, "титры кон:", "outro_end")
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -712,15 +721,27 @@ class App:
         """Пересобирает список серий из self.files, сохраняя уже найденные тайминги."""
         prev = {str(e.path): e for e in self.edl_eps}
         eps = []
+        langs: list[str] = []
         for f in self.files:
             if f.error:
                 continue
-            e = edl.EpisodeEdl.from_path(f.path, duration=f.duration)
+            file_langs = [t.language or "" for t in f.audio]
+            for l in file_langs:
+                if l and l not in langs:
+                    langs.append(l)
+            e = edl.EpisodeEdl.from_path(f.path, duration=f.duration, audio_langs=file_langs)
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.note = old.intro, old.outro, old.note
             eps.append(e)
         self.edl_eps = eps
+
+        # Обновляем список языков для выбора дорожки детекта.
+        if hasattr(self, "edl_track_combo"):
+            values = [EDL_TRACK_AUTO] + sorted(langs)
+            self.edl_track_combo.configure(values=values)
+            if self.edl_track_var.get() not in values:
+                self.edl_track_var.set(EDL_TRACK_AUTO)
 
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
@@ -780,11 +801,12 @@ class App:
         seasons = edl.group_by_season([e.path for e in self.edl_eps])
         by_path = {str(e.path): e for e in self.edl_eps}
         total = len(self.edl_eps)
+        prefer = None if self.edl_track_var.get() == EDL_TRACK_AUTO else self.edl_track_var.get()
 
         self.set_busy(True)
         self._edl_prog = 0
         self.progress.configure(value=0, maximum=total * 2)  # intro + outro
-        self.log_line(f"АВТОДЕТЕКТ: {total} серий, сезонов {len(seasons)}…")
+        self.log_line(f"АВТОДЕТЕКТ: {total} серий, сезонов {len(seasons)}, дорожка: {self.edl_track_var.get()}…")
 
         def progress(kind, i, n, path):
             self.root.after(0, self._edl_detect_progress, kind, path)
@@ -793,7 +815,7 @@ class App:
             try:
                 for season, paths in sorted(seasons.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
                     eps = [by_path[str(p)] for p in paths]
-                    edl.detect_season(eps, fpcalc, ffmpeg, progress=progress)
+                    edl.detect_season(eps, fpcalc, ffmpeg, prefer_lang=prefer, progress=progress)
             except Exception as ex:  # noqa: BLE001
                 self.root.after(0, lambda: self._edl_detect_error(ex))
                 return
