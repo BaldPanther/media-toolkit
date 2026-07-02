@@ -258,7 +258,8 @@ class App:
         # фиксированной длительности), для каждой серии начало = длительность − N.
         ttk.Label(manual, text="…или последние").grid(row=2, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
         ttk.Entry(manual, textvariable=self.edl_manual["outro_last"], width=8).grid(row=2, column=2, pady=(6, 0))
-        ttk.Label(manual, text="сек (от конца)").grid(row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(manual, text="сек — продолжительность титров (от конца файла)").grid(
+            row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(manual, text="Задать всем", command=self.apply_outro_last_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
 
         ttk.Label(manual, text="Recap:").grid(row=3, column=0, sticky="e", pady=(6, 0))
