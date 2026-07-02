@@ -111,6 +111,7 @@ class EpisodeEdl:
     duration: float | None = None
     intro: Segment | None = None      # найденное/заданное интро (до фичи первой серии)
     outro: Segment | None = None
+    recap: Segment | None = None      # начальный recap «в предыдущих сериях» (0..X), вручную
     note: str = ""                    # диагностика детекта (для показа в таблице)
 
     audio_langs: list[str] = field(default_factory=list)  # языки аудиодорожек по порядку
@@ -146,9 +147,13 @@ def has_external_edl(video_path) -> bool:
     return edl_path(video_path).is_file()
 
 
-def format_edl(intro: Segment | None, outro: Segment | None) -> str:
-    """Текст .edl из сегментов. Пустая строка, если оба None."""
+def format_edl(intro: Segment | None, outro: Segment | None,
+               recap: Segment | None = None) -> str:
+    """Текст .edl из сегментов. Пустая строка, если все None."""
     lines: list[str] = []
+    if recap is not None:
+        lines.append("## Recap (в предыдущих сериях)")
+        lines.append(f"{recap.start:.3f}\t{recap.end:.3f}\t{EDL_ACTION_SKIP}")
     if intro is not None:
         lines.append("## Intro")
         lines.append(f"{intro.start:.3f}\t{intro.end:.3f}\t{EDL_ACTION_SKIP}")
@@ -158,9 +163,10 @@ def format_edl(intro: Segment | None, outro: Segment | None) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
-def write_edl(video_path, intro: Segment | None, outro: Segment | None) -> Path | None:
+def write_edl(video_path, intro: Segment | None, outro: Segment | None,
+              recap: Segment | None = None) -> Path | None:
     """Пишет `<video>.edl` рядом с видео. Возвращает путь или None (нечего писать)."""
-    text = format_edl(intro, outro)
+    text = format_edl(intro, outro, recap)
     if not text:
         return None
     p = edl_path(video_path)
@@ -183,7 +189,10 @@ def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool) ->
                           padding.intro_start, padding.intro_end, ep.duration)
     outro = apply_padding(ep.outro,
                           padding.outro_start, padding.outro_end, ep.duration)
-    return write_edl(ep.path, intro, outro)
+    # Титры всегда идут до конца файла — не регулируем, тянем до длительности.
+    if outro is not None and ep.duration:
+        outro = Segment(outro.start, ep.duration)
+    return write_edl(ep.path, intro, outro, ep.recap)
 
 
 # --------------------------------------------------------------------------- #

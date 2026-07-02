@@ -195,8 +195,9 @@ class App:
         self.edl_track_combo.grid(row=1, column=1, columnspan=3, sticky="w", padx=(6, 0), pady=(6, 0))
 
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
+        # Конец титров не регулируем — он всегда до конца файла.
         self.edl_pad = {k: tk.StringVar(value="0") for k in
-                        ("intro_start", "intro_end", "outro_start", "outro_end")}
+                        ("intro_start", "intro_end", "outro_start")}
 
         def spin(row, col, label, key):
             ttk.Label(opt, text=label).grid(row=row, column=col, sticky="e", padx=(12, 2), pady=(6, 0))
@@ -209,7 +210,6 @@ class App:
         spin(2, 1, "интро нач:", "intro_start")
         spin(2, 3, "интро кон:", "intro_end")
         spin(3, 1, "титры нач:", "outro_start")
-        spin(3, 3, "титры кон:", "outro_end")
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
@@ -223,10 +223,10 @@ class App:
 
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
-        cols = ("file", "se", "intro", "outro", "edl")
-        heads = {"file": "Файл", "se": "S/E", "intro": "Интро → пропуск",
-                 "outro": "Титры → пропуск", "edl": ".edl"}
-        widths = {"file": 300, "se": 60, "intro": 160, "outro": 160, "edl": 60}
+        cols = ("file", "se", "recap", "intro", "outro", "edl")
+        heads = {"file": "Файл", "se": "S/E", "recap": "Recap",
+                 "intro": "Интро → пропуск", "outro": "Титры → пропуск", "edl": ".edl"}
+        widths = {"file": 260, "se": 56, "recap": 90, "intro": 150, "outro": 150, "edl": 56}
         self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
         for c in cols:
             self.edl_tree.heading(c, text=heads[c])
@@ -714,7 +714,7 @@ class App:
     def edl_padding(self) -> edl.Padding:
         return edl.Padding(
             self._pad_val("intro_start"), self._pad_val("intro_end"),
-            self._pad_val("outro_start"), self._pad_val("outro_end"),
+            self._pad_val("outro_start"), 0.0,   # конец титров не регулируем (до конца файла)
         )
 
     def _rebuild_edl_eps(self):
@@ -732,7 +732,7 @@ class App:
             e = edl.EpisodeEdl.from_path(f.path, duration=f.duration, audio_langs=file_langs)
             old = prev.get(str(f.path))
             if old:
-                e.intro, e.outro, e.note = old.intro, old.outro, old.note
+                e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
             eps.append(e)
         self.edl_eps = eps
 
@@ -756,6 +756,10 @@ class App:
             intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
                                           pad.intro_start, pad.intro_end, e.duration)
             outro_eff = edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
+            if outro_eff and e.duration:          # титры всегда до конца файла
+                outro_eff = edl.Segment(outro_eff.start, e.duration)
+
+            recap_txt = f"0:00–{self._fmt_time(e.recap.end)}" if e.recap else "—"
 
             tags = []
             if keep and edl.is_first_of_season(e) and e.intro is not None:
@@ -776,7 +780,7 @@ class App:
             has = "есть" if edl.has_external_edl(e.path) else ""
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
-                                       values=(e.path.name, se, intro_txt, outro_txt, has),
+                                       values=(e.path.name, se, recap_txt, intro_txt, outro_txt, has),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
         self.edl_status.set(
@@ -851,7 +855,8 @@ class App:
         pad = self.edl_padding()
         to_write = [e for e in self.edl_eps
                     if edl.apply_padding(edl.effective_intro(e, keep), pad.intro_start, pad.intro_end, e.duration)
-                    or edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)]
+                    or edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
+                    or e.recap]
         if not to_write:
             messagebox.showinfo("Нечего записывать",
                                 "Нет ни интро, ни титров. Сначала «Определить автоматически» или задайте вручную.")
@@ -901,37 +906,49 @@ class App:
         ttk.Label(
             frm,
             text="Время: MM:SS, H:MM:SS или секунды. Пусто — сегмента нет.\n"
-                 "Задаётся базовый интервал (отступы сезона применяются поверх).",
+                 "Recap идёт с начала файла; титры — до конца файла (конец не задаётся).\n"
+                 "Отступы сезона применяются к интро/титрам поверх этих значений.",
             justify="left",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        vals = [
-            ("Интро начало:", e.intro.start if e.intro else None),
-            ("Интро конец:", e.intro.end if e.intro else None),
-            ("Титры начало:", e.outro.start if e.outro else None),
-            ("Титры конец:", e.outro.end if e.outro else None),
+        rows = [
+            ("Recap до (с начала, пусто = нет):", "rc", e.recap.end if e.recap else None),
+            ("Интро начало:", "is", e.intro.start if e.intro else None),
+            ("Интро конец:", "ie", e.intro.end if e.intro else None),
+            ("Титры начало (до конца файла):", "os", e.outro.start if e.outro else None),
         ]
-        keys = ["is", "ie", "os", "oe"]
         varmap = {}
-        for i, (lab, val) in enumerate(vals, start=1):
+        for i, (lab, key, val) in enumerate(rows, start=1):
             ttk.Label(frm, text=lab).grid(row=i, column=0, sticky="e", pady=2, padx=(0, 6))
             v = tk.StringVar(value=self._fmt_time(val) if val is not None else "")
-            varmap[keys[i - 1]] = v
+            varmap[key] = v
             ttk.Entry(frm, textvariable=v, width=12).grid(row=i, column=1, sticky="w", pady=2)
 
         btns = ttk.Frame(frm)
-        btns.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        btns.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save():
+            rc = self._parse_time(varmap["rc"].get())
             is_, ie = self._parse_time(varmap["is"].get()), self._parse_time(varmap["ie"].get())
-            os_, oe = self._parse_time(varmap["os"].get()), self._parse_time(varmap["oe"].get())
+            os_ = self._parse_time(varmap["os"].get())
+            e.recap = edl.Segment(0.0, rc) if (rc is not None and rc > 0) else None
             e.intro = edl.Segment(is_, ie) if (is_ is not None and ie is not None and ie > is_) else None
-            e.outro = edl.Segment(os_, oe) if (os_ is not None and oe is not None and oe > os_) else None
+            if os_ is not None:
+                end = e.duration or (e.outro.end if e.outro else os_ + 60)
+                e.outro = edl.Segment(os_, end) if end > os_ else None
+            else:
+                e.outro = None
             win.destroy()
             self.refresh_edl_preview()
 
         ttk.Button(btns, text="Сохранить", command=save).pack(side="right")
         ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="right", padx=6)
+
+        # Центрируем окно на экране (иначе Toplevel появляется в левом верхнем углу).
+        win.update_idletasks()
+        w, h = win.winfo_width(), win.winfo_height()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
         win.grab_set()
 
 
