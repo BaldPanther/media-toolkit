@@ -1,0 +1,358 @@
+"""Генерация EDL-файлов для авто-пропуска интро/титров в Kodi.
+
+Kodi читает `<video>.edl` рядом с видео (то же имя, расширение `.edl`). Формат —
+текст «start end action», где для интро/титров используем action 3 (commercial
+break): Kodi авто-пропускает сегмент один раз за сеанс, при этом можно отмотать
+назад. Время — в секундах. Строки, начинающиеся с `##`, — комментарии (Kodi v19+).
+См. https://kodi.wiki/view/Edit_decision_list.
+
+Модуль делится на две части:
+  - каркас (этот код): парсинг S/E, группировка по сезонам, padding, запись .edl,
+    фича «первая серия сезона» (интро оставляем видимым);
+  - автодетект (`detect.py`-логика ниже): аудио-фингерпринтинг через fpcalc.
+
+Каркас не зависит ни от fpcalc, ни от numpy и пригоден для юнит-тестов.
+"""
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# action 3 = commercial break: авто-пропуск один раз, с возможностью отмотать назад.
+EDL_ACTION_SKIP = 3
+
+_HERE = Path(__file__).resolve().parent
+
+
+# --------------------------------------------------------------------------- #
+# Разбор имени: сезон / эпизод
+# --------------------------------------------------------------------------- #
+
+# Ловит S01E01, s1e1, "S01.E01", "1x01". Первая группа — сезон, вторая — эпизод.
+_SXXEYY = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
+_NxNN = re.compile(r"(?<!\d)(\d{1,2})[xX](\d{1,3})(?!\d)")
+
+
+def parse_season_episode(path) -> tuple[int | None, int | None]:
+    """Возвращает (season, episode) из имени файла или (None, None)."""
+    stem = Path(path).stem
+    m = _SXXEYY.search(stem) or _NxNN.search(stem)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
+def group_by_season(paths) -> dict[int | None, list[Path]]:
+    """Группирует пути по номеру сезона (сортировка внутри — по эпизоду)."""
+    groups: dict[int | None, list[Path]] = {}
+    for p in paths:
+        season, _ = parse_season_episode(p)
+        groups.setdefault(season, []).append(Path(p))
+    for season in groups:
+        groups[season].sort(key=lambda p: (parse_season_episode(p)[1] or 0, p.name))
+    return groups
+
+
+# --------------------------------------------------------------------------- #
+# Сегменты и padding
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Segment:
+    start: float
+    end: float
+
+    @property
+    def length(self) -> float:
+        return max(0.0, self.end - self.start)
+
+
+@dataclass
+class Padding:
+    """Ручной сдвиг границ (в секундах) поверх автодетекта, на весь сезон.
+
+    Отрицательный сдвиг начала = начать пропуск раньше; положительный конца =
+    отпустить пропуск позже. По умолчанию нули (границы как нашёл детект).
+    """
+    intro_start: float = 0.0
+    intro_end: float = 0.0
+    outro_start: float = 0.0
+    outro_end: float = 0.0
+
+
+def apply_padding(seg: Segment | None, pad_start: float, pad_end: float,
+                  duration: float | None = None) -> Segment | None:
+    """Сдвигает границы сегмента, зажимая в [0, duration]. None → None."""
+    if seg is None:
+        return None
+    start = max(0.0, seg.start + pad_start)
+    end = seg.end + pad_end
+    if duration is not None:
+        end = min(end, duration)
+    if end <= start:
+        return None
+    return Segment(start, end)
+
+
+# --------------------------------------------------------------------------- #
+# Модель серии и «первая серия сезона»
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class EpisodeEdl:
+    path: Path
+    season: int | None = None
+    episode: int | None = None
+    duration: float | None = None
+    intro: Segment | None = None      # найденное/заданное интро (до фичи первой серии)
+    outro: Segment | None = None
+    note: str = ""                    # диагностика детекта (для показа в таблице)
+
+    @classmethod
+    def from_path(cls, path, duration: float | None = None) -> "EpisodeEdl":
+        s, e = parse_season_episode(path)
+        return cls(Path(path), season=s, episode=e, duration=duration)
+
+
+def is_first_of_season(ep: EpisodeEdl) -> bool:
+    return ep.episode == 1
+
+
+def effective_intro(ep: EpisodeEdl, keep_first_intro: bool) -> Segment | None:
+    """Интро с учётом фичи первой серии: у E01 сезона интро оставляем видимым."""
+    if keep_first_intro and is_first_of_season(ep):
+        return None
+    return ep.intro
+
+
+# --------------------------------------------------------------------------- #
+# Формирование и запись .edl
+# --------------------------------------------------------------------------- #
+
+def edl_path(video_path) -> Path:
+    return Path(video_path).with_suffix(".edl")
+
+
+def has_external_edl(video_path) -> bool:
+    return edl_path(video_path).is_file()
+
+
+def format_edl(intro: Segment | None, outro: Segment | None) -> str:
+    """Текст .edl из сегментов. Пустая строка, если оба None."""
+    lines: list[str] = []
+    if intro is not None:
+        lines.append("## Intro")
+        lines.append(f"{intro.start:.3f}\t{intro.end:.3f}\t{EDL_ACTION_SKIP}")
+    if outro is not None:
+        lines.append("## Outro / Credits")
+        lines.append(f"{outro.start:.3f}\t{outro.end:.3f}\t{EDL_ACTION_SKIP}")
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def write_edl(video_path, intro: Segment | None, outro: Segment | None) -> Path | None:
+    """Пишет `<video>.edl` рядом с видео. Возвращает путь или None (нечего писать)."""
+    text = format_edl(intro, outro)
+    if not text:
+        return None
+    p = edl_path(video_path)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def delete_edl(video_path) -> bool:
+    """Удаляет .edl, если он есть. True — если файл был удалён."""
+    p = edl_path(video_path)
+    if p.is_file():
+        p.unlink()
+        return True
+    return False
+
+
+def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool) -> Path | None:
+    """Применяет padding + фичу первой серии и пишет .edl для одной серии."""
+    intro = apply_padding(effective_intro(ep, keep_first_intro),
+                          padding.intro_start, padding.intro_end, ep.duration)
+    outro = apply_padding(ep.outro,
+                          padding.outro_start, padding.outro_end, ep.duration)
+    return write_edl(ep.path, intro, outro)
+
+
+# --------------------------------------------------------------------------- #
+# Поиск fpcalc (Chromaprint) — для автодетекта
+# --------------------------------------------------------------------------- #
+
+def find_fpcalc() -> str | None:
+    """Ищет fpcalc: сперва портативный в assets/, затем в PATH."""
+    exe = "fpcalc.exe" if os.name == "nt" else "fpcalc"
+    local = _HERE / "assets" / exe
+    if local.is_file():
+        return str(local)
+    return shutil.which("fpcalc") or shutil.which(exe)
+
+
+def find_ffmpeg() -> str | None:
+    return shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+
+
+# --------------------------------------------------------------------------- #
+# Автодетект интро/титров (аудио-фингерпринтинг)
+# --------------------------------------------------------------------------- #
+#
+# Идея (как в Jellyfin intro-skipper): интро и титры — это повторяющийся между
+# сериями сезона аудио-сегмент. Для каждой серии берём окно у начала (интро) и у
+# конца (титры), считаем Chromaprint-отпечаток и ищем самый длинный совпадающий
+# кусок относительно эталонной серии — со сдвигом, чтобы поймать «плавающую» из-за
+# cold open заставку. Отпечаток нечувствителен к языку визуальных титров (сравнение
+# идёт по звуку), поэтому мультиязычные титры детектируются по общей музыке.
+
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+_IPS_FALLBACK = 8.0            # отпечатков в секунду, если не удалось откалибровать
+
+# Параметры детекта по умолчанию (подобраны под сериалы/мультсериалы ~20–45 мин).
+INTRO_WINDOW = 240.0          # сек от начала, где ищем интро
+OUTRO_WINDOW = 240.0          # сек от конца, где ищем титры
+MAX_SHIFT_S = 150.0           # макс. относительный сдвиг сегмента между сериями
+BIT_THR = 8                   # порог различия отпечатков (из 32 бит) для «похожи»
+MIN_LEN_S = 10.0              # короче — не считаем интро/титрами
+SNAP_END_S = 20.0            # если титры кончаются ближе к концу файла — тянем до конца
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, creationflags=_CREATE_NO_WINDOW)
+
+
+def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool):
+    """Отпечаток окна аудио. Возвращает (np.uint32 array | None, reported_duration)."""
+    import numpy as np
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    try:
+        pos = ["-sseof", f"-{window:.0f}"] if from_end else ["-ss", "0"]
+        cp = _run([ffmpeg, "-v", "error", *pos, "-i", str(path), "-t", f"{window:.0f}",
+                   "-map", "0:a:0", "-ac", "1", "-ar", "11025", "-y", tmp.name])
+        if cp.returncode != 0:
+            return None, None
+        cp2 = _run([fpcalc, "-raw", "-length", "100000", tmp.name])
+        out = cp2.stdout.decode("utf-8", "replace")
+        fp = None
+        dur = None
+        for line in out.splitlines():
+            if line.startswith("FINGERPRINT="):
+                vals = line[len("FINGERPRINT="):].split(",")
+                fp = np.array([int(x) for x in vals if x], dtype=np.uint32)
+            elif line.startswith("DURATION="):
+                try:
+                    dur = float(line[len("DURATION="):])
+                except ValueError:
+                    pass
+        return fp, dur
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+def _longest_run(mask) -> tuple[int, int]:
+    """Самый длинный непрерывный True в булевом массиве → (длина, индекс начала)."""
+    import numpy as np
+    if not mask.any():
+        return 0, 0
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], mask.view(np.int8), [0]))))
+    starts, ends = edges[0::2], edges[1::2]
+    lens = ends - starts
+    k = int(lens.argmax())
+    return int(lens[k]), int(starts[k])
+
+
+def _best_common(a, b, max_shift: int, bit_thr: int) -> tuple[int, int]:
+    """Самый длинный общий сегмент a и b по всем сдвигам.
+
+    Возвращает (длина_в_отпечатках, старт_в_координатах_a).
+    """
+    import numpy as np
+    na, nb = len(a), len(b)
+    best_len = best_a = 0
+    for off in range(-max_shift, max_shift + 1):
+        a_s, b_s = (0, off) if off >= 0 else (-off, 0)
+        ln = min(na - a_s, nb - b_s)
+        if ln <= best_len:
+            continue
+        d = np.bitwise_count(a[a_s:a_s + ln] ^ b[b_s:b_s + ln])
+        rl, rs = _longest_run(d <= bit_thr)
+        if rl > best_len:
+            best_len, best_a = rl, a_s + rs
+    return best_len, best_a
+
+
+def _assign(eps, fps, durs, ref, kind, from_end, window,
+            max_shift_s, bit_thr, min_len_s):
+    """Сопоставляет каждую серию с эталоном и проставляет ep.intro/ep.outro."""
+    valid = [i for i, f in enumerate(fps) if f is not None and len(f) > 2]
+    if len(valid) < 2:
+        for e in eps:
+            e.note = (e.note + "; " if e.note else "") + f"{kind}: мало отпечатков"
+        return
+    if ref not in valid:
+        ref = valid[len(valid) // 2]
+
+    for i, e in enumerate(eps):
+        fp = fps[i]
+        if fp is None or len(fp) <= 2:
+            e.note = (e.note + "; " if e.note else "") + f"{kind}: нет отпечатка"
+            continue
+        partner = ref if i != ref else next((j for j in valid if j != ref), ref)
+        pfp = fps[partner]
+        ips = (len(fp) / durs[i]) if durs[i] else _IPS_FALLBACK
+        rl, a_s = _best_common(fp, pfp, int(max_shift_s * ips), bit_thr)
+        seg_len = rl / ips
+        if seg_len < min_len_s:
+            e.note = (e.note + "; " if e.note else "") + f"{kind}: не найдено"
+            continue
+        start_t, end_t = a_s / ips, (a_s + rl) / ips
+        if from_end:
+            base = (e.duration - durs[i]) if (e.duration and durs[i]) else \
+                   ((e.duration - window) if e.duration else 0.0)
+            seg = Segment(base + start_t, base + end_t)
+            if e.duration and 0 <= e.duration - seg.end < SNAP_END_S:
+                seg.end = e.duration
+        else:
+            seg = Segment(start_t, end_t)
+        setattr(e, kind, seg)
+
+
+def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
+                  intro_window=INTRO_WINDOW, outro_window=OUTRO_WINDOW,
+                  max_shift_s=MAX_SHIFT_S, bit_thr=BIT_THR, min_len_s=MIN_LEN_S,
+                  progress=None):
+    """Проставляет intro/outro для серий ОДНОГО сезона по аудио-фингерпринтингу.
+
+    episodes — список EpisodeEdl (желательно одного сезона, отсортированы).
+    progress(kind, i, total, path) — колбэк прогресса. Заполняет ep.intro/ep.outro
+    и ep.note; возвращает тот же список.
+    """
+    eps = list(episodes)
+    n = len(eps)
+    if n < 2:
+        for e in eps:
+            e.note = "нужно ≥2 серий в сезоне"
+        return eps
+    ref = n // 2
+    for kind in kinds:
+        from_end = kind == "outro"
+        window = outro_window if from_end else intro_window
+        fps, durs = [], []
+        for i, e in enumerate(eps):
+            if progress:
+                progress(kind, i, n, e.path)
+            fp, dur = _extract_fp(ffmpeg, fpcalc, e.path, window, from_end)
+            fps.append(fp)
+            durs.append(dur)
+        _assign(eps, fps, durs, ref, kind, from_end, window,
+                max_shift_s, bit_thr, min_len_s)
+    return eps

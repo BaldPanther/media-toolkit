@@ -90,6 +90,7 @@ class MkvFile:
     path: Path
     tracks: list[Track] = field(default_factory=list)
     error: str = ""
+    duration: float | None = None   # длительность в секундах (из mkvmerge -J), если известна
 
     @property
     def audio(self) -> list[Track]:
@@ -170,7 +171,12 @@ def scan_file(mkvmerge: str, path: Path) -> MkvFile:
             default=bool(props.get("default_track", False)),
             forced=bool(props.get("forced_track", False)),
         ))
-    return MkvFile(path, tracks)
+
+    # Длительность контейнера (mkvmerge отдаёт наносекунды) — нужна для конца титров.
+    cprops = (data.get("container", {}) or {}).get("properties", {}) or {}
+    dur_ns = cprops.get("duration")
+    duration = dur_ns / 1e9 if isinstance(dur_ns, (int, float)) else None
+    return MkvFile(path, tracks, duration=duration)
 
 
 def list_mkv(folder, recursive: bool) -> list[Path]:
@@ -377,6 +383,12 @@ def _report(folder: str, recursive: bool) -> None:
     print(f"Раскладок аудио: {len(groups)}")
     if len(groups) > 1:
         print("  ВНИМАНИЕ: раскладки различаются между файлами!")
+
+    durs = [f.duration for f in ok if f.duration]
+    if durs:
+        def _hms(s): return f"{int(s // 60)}:{int(s % 60):02d}"
+        print(f"Длительность: от {_hms(min(durs))} до {_hms(max(durs))} "
+              f"(известна у {len(durs)}/{len(ok)})")
 
     audio, total = aggregate_audio(ok)
     print(f"\nАудиодорожки (по названию и языку, всего файлов {total}):")

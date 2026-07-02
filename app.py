@@ -20,6 +20,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 import core
+import edl
 
 NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
@@ -33,17 +34,29 @@ class App:
         self.sub_options: list[core.Option] = []
         self.total_files = 0
         self.busy = False
+        self.edl_eps: list[edl.EpisodeEdl] = []
+        self.edl_row_ep: dict[str, edl.EpisodeEdl] = {}
 
-        root.title("MKV — дорожки по умолчанию")
+        root.title("MKV — дорожки, субтитры, пропуск заставок")
         self._set_window_icon()
-        root.geometry("1080x720")
-        root.minsize(900, 600)
+        root.geometry("1080x760")
+        root.minsize(900, 640)
 
         self._build_top(start_folder)
-        self._build_selection()
-        self._build_subs()
-        self._build_table()
-        self._build_bottom()
+
+        self.nb = ttk.Notebook(self.root)
+        self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+        self.tab_tracks = ttk.Frame(self.nb)
+        self.tab_edl = ttk.Frame(self.nb)
+        self.nb.add(self.tab_tracks, text="Дорожки и субтитры")
+        self.nb.add(self.tab_edl, text="Пропуск заставок (EDL)")
+
+        self._build_selection(self.tab_tracks)
+        self._build_subs(self.tab_tracks)
+        self._build_table(self.tab_tracks)
+        self._build_tracks_apply(self.tab_tracks)
+        self._build_edl(self.tab_edl)
+        self._build_common_bottom()
 
         self._enable_entry_clipboard()
         self._check_tools()
@@ -91,8 +104,8 @@ class App:
         self.summary_var = tk.StringVar(value="Папка не выбрана.")
         ttk.Label(self.root, textvariable=self.summary_var, padding=(10, 0)).pack(fill="x")
 
-    def _build_selection(self):
-        f = ttk.LabelFrame(self.root, text="Что поставить по умолчанию", padding=10)
+    def _build_selection(self, parent):
+        f = ttk.LabelFrame(parent, text="Что поставить по умолчанию", padding=10)
         f.pack(fill="x", padx=10, pady=6)
         f.columnconfigure(1, weight=1)
         f.columnconfigure(3, weight=1)
@@ -109,8 +122,8 @@ class App:
         self.sub_combo.grid(row=0, column=3, sticky="ew", padx=6)
         self.sub_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_preview())
 
-    def _build_subs(self):
-        f = ttk.LabelFrame(self.root, text="Русские субтитры (качаются файлом .ru.srt рядом с серией)", padding=10)
+    def _build_subs(self, parent):
+        f = ttk.LabelFrame(parent, text="Русские субтитры (качаются файлом .ru.srt рядом с серией)", padding=10)
         f.pack(fill="x", padx=10, pady=(0, 6))
 
         self.subs_only_missing = tk.BooleanVar(value=True)
@@ -121,8 +134,8 @@ class App:
         self.subs_status = tk.StringVar(value="")
         ttk.Label(f, textvariable=self.subs_status).pack(side="left", padx=10)
 
-    def _build_table(self):
-        f = ttk.Frame(self.root, padding=(10, 0))
+    def _build_table(self, parent):
+        f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
 
         cols = ("file", "acur", "anew", "scur", "snew", "status")
@@ -145,16 +158,80 @@ class App:
         self.tree.tag_configure("nochange", foreground="#888888")
         self.tree.tag_configure("error", background="#ffbcbc")
 
-    def _build_bottom(self):
+    def _build_tracks_apply(self, parent):
+        f = ttk.Frame(parent, padding=(10, 6))
+        f.pack(fill="x")
+        self.apply_btn = ttk.Button(f, text="Применить (дорожки/субтитры)", command=self.apply)
+        self.apply_btn.pack(side="left")
+
+    def _build_common_bottom(self):
         f = ttk.Frame(self.root, padding=(10, 6))
         f.pack(fill="x")
-        self.apply_btn = ttk.Button(f, text="Применить", command=self.apply)
-        self.apply_btn.pack(side="left")
+        ttk.Label(f, text="Прогресс:").pack(side="left")
         self.progress = ttk.Progressbar(f, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
 
-        self.log = ScrolledText(self.root, height=8, state="disabled", wrap="word")
+        self.log = ScrolledText(self.root, height=7, state="disabled", wrap="word")
         self.log.pack(fill="x", padx=10, pady=(0, 10))
+
+    # -------------------------------------------------------- вкладка EDL --
+    def _build_edl(self, parent):
+        opt = ttk.LabelFrame(parent, text="Настройки пропуска", padding=10)
+        opt.pack(fill="x", padx=10, pady=(8, 4))
+
+        self.edl_keep_first = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            opt, text="Показывать заставку в первой серии сезона (E01) — пропускать только титры",
+            variable=self.edl_keep_first, command=self.refresh_edl_preview,
+        ).grid(row=0, column=0, columnspan=6, sticky="w")
+
+        # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
+        self.edl_pad = {k: tk.StringVar(value="0") for k in
+                        ("intro_start", "intro_end", "outro_start", "outro_end")}
+
+        def spin(row, col, label, key):
+            ttk.Label(opt, text=label).grid(row=row, column=col, sticky="e", padx=(12, 2), pady=(6, 0))
+            sb = ttk.Spinbox(opt, from_=-120, to=120, increment=1, width=5,
+                             textvariable=self.edl_pad[key], command=self.refresh_edl_preview)
+            sb.grid(row=row, column=col + 1, sticky="w", pady=(6, 0))
+            sb.bind("<KeyRelease>", lambda e: self.refresh_edl_preview())
+
+        ttk.Label(opt, text="Отступы (сек), + позже / − раньше:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        spin(1, 1, "интро нач:", "intro_start")
+        spin(1, 3, "интро кон:", "intro_end")
+        spin(2, 1, "титры нач:", "outro_start")
+        spin(2, 3, "титры кон:", "outro_end")
+
+        btns = ttk.Frame(parent, padding=(10, 4))
+        btns.pack(fill="x")
+        self.edl_detect_btn = ttk.Button(btns, text="Определить автоматически", command=self.detect_edl)
+        self.edl_detect_btn.pack(side="left")
+        self.edl_write_btn = ttk.Button(btns, text="Записать .edl", command=self.write_edl_files)
+        self.edl_write_btn.pack(side="left", padx=8)
+        self.edl_delete_btn = ttk.Button(btns, text="Удалить .edl", command=self.delete_edl_files)
+        self.edl_delete_btn.pack(side="left")
+        ttk.Label(btns, text="  (двойной клик по строке — правка вручную)").pack(side="left", padx=10)
+
+        f = ttk.Frame(parent, padding=(10, 0))
+        f.pack(fill="both", expand=True)
+        cols = ("file", "se", "intro", "outro", "edl")
+        heads = {"file": "Файл", "se": "S/E", "intro": "Интро → пропуск",
+                 "outro": "Титры → пропуск", "edl": ".edl"}
+        widths = {"file": 300, "se": 60, "intro": 160, "outro": 160, "edl": 60}
+        self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
+        for c in cols:
+            self.edl_tree.heading(c, text=heads[c])
+            self.edl_tree.column(c, width=widths[c], anchor="w")
+        vsb = ttk.Scrollbar(f, orient="vertical", command=self.edl_tree.yview)
+        self.edl_tree.configure(yscrollcommand=vsb.set)
+        self.edl_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="left", fill="y")
+        self.edl_tree.tag_configure("first", foreground="#0a58ca")
+        self.edl_tree.tag_configure("has", background="#dff5df")
+        self.edl_tree.bind("<Double-1>", self._edl_edit_row)
+
+        self.edl_status = tk.StringVar(value="Просканируйте папку, затем «Определить автоматически».")
+        ttk.Label(parent, textvariable=self.edl_status, padding=(10, 4)).pack(fill="x")
 
     def _enable_entry_clipboard(self):
         """Ctrl+C/V/X/A в полях ввода + меню по правой кнопке мыши.
@@ -226,8 +303,12 @@ class App:
     def set_busy(self, busy: bool):
         self.busy = busy
         state = "disabled" if busy else "normal"
-        for b in (self.scan_btn, self.apply_btn, self.subs_btn):
-            b.configure(state=state)
+        for b in (self.scan_btn, self.apply_btn, self.subs_btn,
+                  getattr(self, "edl_detect_btn", None),
+                  getattr(self, "edl_write_btn", None),
+                  getattr(self, "edl_delete_btn", None)):
+            if b is not None:
+                b.configure(state=state)
 
     def audio_choice(self):
         i = self.audio_combo.current()
@@ -312,6 +393,8 @@ class App:
         self.log_line(msg)
         self.set_busy(False)
         self.refresh_preview()
+        self._rebuild_edl_eps()
+        self.refresh_edl_preview()
 
     def _opt_text(self, o: core.Option) -> str:
         return f"{o.label} — {o.count}/{self.total_files}"
@@ -446,6 +529,8 @@ class App:
         self.progress.configure(value=0)
         self.set_busy(False)
         self.refresh_preview()
+        self._rebuild_edl_eps()
+        self.refresh_edl_preview()
 
 
     # ------------------------------------------------------ субтитры (.ru.srt) --
@@ -584,6 +669,244 @@ class App:
         def save():
             subsmod.save_settings(subsmod.Settings(u.get().strip(), p.get(), k.get().strip(), fb.get()))
             win.destroy()
+
+        ttk.Button(btns, text="Сохранить", command=save).pack(side="right")
+        ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="right", padx=6)
+        win.grab_set()
+
+    # ------------------------------------------------------- EDL (пропуск) --
+    @staticmethod
+    def _fmt_time(s) -> str:
+        if s is None:
+            return "—"
+        s = max(0, int(round(s)))
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+    @staticmethod
+    def _parse_time(txt: str):
+        txt = (txt or "").strip()
+        if not txt:
+            return None
+        try:
+            if ":" in txt:
+                s = 0.0
+                for part in txt.split(":"):
+                    s = s * 60 + float(part)
+                return s
+            return float(txt)
+        except ValueError:
+            return None
+
+    def _pad_val(self, key: str) -> float:
+        return self._parse_time(self.edl_pad[key].get()) or 0.0
+
+    def edl_padding(self) -> edl.Padding:
+        return edl.Padding(
+            self._pad_val("intro_start"), self._pad_val("intro_end"),
+            self._pad_val("outro_start"), self._pad_val("outro_end"),
+        )
+
+    def _rebuild_edl_eps(self):
+        """Пересобирает список серий из self.files, сохраняя уже найденные тайминги."""
+        prev = {str(e.path): e for e in self.edl_eps}
+        eps = []
+        for f in self.files:
+            if f.error:
+                continue
+            e = edl.EpisodeEdl.from_path(f.path, duration=f.duration)
+            old = prev.get(str(f.path))
+            if old:
+                e.intro, e.outro, e.note = old.intro, old.outro, old.note
+            eps.append(e)
+        self.edl_eps = eps
+
+    def refresh_edl_preview(self):
+        if not hasattr(self, "edl_tree"):
+            return
+        self.edl_tree.delete(*self.edl_tree.get_children())
+        self.edl_row_ep = {}
+        keep = self.edl_keep_first.get()
+        pad = self.edl_padding()
+        n_intro = n_outro = 0
+        for e in self.edl_eps:
+            se = f"S{e.season:02d}E{e.episode:02d}" if e.season and e.episode else "—"
+            intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
+                                          pad.intro_start, pad.intro_end, e.duration)
+            outro_eff = edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
+
+            tags = []
+            if keep and edl.is_first_of_season(e) and e.intro is not None:
+                intro_txt = "показ (1-я серия)"
+                tags.append("first")
+            elif intro_eff:
+                intro_txt = f"{self._fmt_time(intro_eff.start)}–{self._fmt_time(intro_eff.end)}"
+                n_intro += 1
+            else:
+                intro_txt = "—"
+
+            if outro_eff:
+                outro_txt = f"{self._fmt_time(outro_eff.start)}–{self._fmt_time(outro_eff.end)}"
+                n_outro += 1
+            else:
+                outro_txt = "—"
+
+            has = "есть" if edl.has_external_edl(e.path) else ""
+            row_tags = tuple(tags) + (("has",) if has else ())
+            iid = self.edl_tree.insert("", "end",
+                                       values=(e.path.name, se, intro_txt, outro_txt, has),
+                                       tags=row_tags)
+            self.edl_row_ep[iid] = e
+        self.edl_status.set(
+            f"Серий: {len(self.edl_eps)}. К пропуску интро: {n_intro}, титры: {n_outro}."
+        )
+
+    def detect_edl(self):
+        if self.busy:
+            return
+        if not self.edl_eps:
+            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return
+        fpcalc = edl.find_fpcalc()
+        ffmpeg = edl.find_ffmpeg()
+        if not fpcalc:
+            messagebox.showerror("Нет fpcalc", "Не найден fpcalc (Chromaprint). Ожидается в assets/fpcalc.exe.")
+            return
+        if not ffmpeg:
+            messagebox.showerror("Нет ffmpeg", "Не найден ffmpeg в PATH.")
+            return
+
+        seasons = edl.group_by_season([e.path for e in self.edl_eps])
+        by_path = {str(e.path): e for e in self.edl_eps}
+        total = len(self.edl_eps)
+
+        self.set_busy(True)
+        self._edl_prog = 0
+        self.progress.configure(value=0, maximum=total * 2)  # intro + outro
+        self.log_line(f"АВТОДЕТЕКТ: {total} серий, сезонов {len(seasons)}…")
+
+        def progress(kind, i, n, path):
+            self.root.after(0, self._edl_detect_progress, kind, path)
+
+        def work():
+            try:
+                for season, paths in sorted(seasons.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
+                    eps = [by_path[str(p)] for p in paths]
+                    edl.detect_season(eps, fpcalc, ffmpeg, progress=progress)
+            except Exception as ex:  # noqa: BLE001
+                self.root.after(0, lambda: self._edl_detect_error(ex))
+                return
+            self.root.after(0, self._edl_detect_done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _edl_detect_progress(self, kind, path):
+        self._edl_prog += 1
+        self.progress.configure(value=self._edl_prog)
+        self.edl_status.set(f"Детект [{kind}] {self._edl_prog}: {Path(path).name}")
+
+    def _edl_detect_error(self, ex):
+        self.set_busy(False)
+        self.progress.configure(value=0)
+        messagebox.showerror("Ошибка детекта", str(ex))
+
+    def _edl_detect_done(self):
+        self.progress.configure(value=0)
+        self.set_busy(False)
+        fi = sum(1 for e in self.edl_eps if e.intro)
+        fo = sum(1 for e in self.edl_eps if e.outro)
+        n = len(self.edl_eps)
+        self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
+        self.refresh_edl_preview()
+
+    def write_edl_files(self):
+        if self.busy or not self.edl_eps:
+            if not self.edl_eps:
+                messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return
+        keep = self.edl_keep_first.get()
+        pad = self.edl_padding()
+        to_write = [e for e in self.edl_eps
+                    if edl.apply_padding(edl.effective_intro(e, keep), pad.intro_start, pad.intro_end, e.duration)
+                    or edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)]
+        if not to_write:
+            messagebox.showinfo("Нечего записывать",
+                                "Нет ни интро, ни титров. Сначала «Определить автоматически» или задайте вручную.")
+            return
+        if not messagebox.askyesno(
+            "Запись .edl",
+            f"Записать {len(to_write)} файлов .edl рядом с сериями?\n"
+            "Существующие .edl будут перезаписаны. Видео не трогается.",
+        ):
+            return
+
+        written = 0
+        for e in self.edl_eps:
+            p = edl.build_and_write(e, pad, keep)
+            if p:
+                written += 1
+                self.log_line(f"  ✓ {p.name}")
+        self.log_line(f"Записано .edl: {written}.")
+        self.refresh_edl_preview()
+
+    def delete_edl_files(self):
+        if self.busy:
+            return
+        existing = [e for e in self.edl_eps if edl.has_external_edl(e.path)]
+        if not existing:
+            messagebox.showinfo("Нет .edl", "Рядом с сериями нет .edl файлов.")
+            return
+        if not messagebox.askyesno("Удаление .edl", f"Удалить {len(existing)} файлов .edl рядом с сериями?"):
+            return
+        n = sum(1 for e in existing if edl.delete_edl(e.path))
+        self.log_line(f"Удалено .edl: {n}.")
+        self.refresh_edl_preview()
+
+    def _edl_edit_row(self, event):
+        iid = self.edl_tree.identify_row(event.y)
+        if not iid or iid not in self.edl_row_ep:
+            return
+        self._edl_edit_dialog(self.edl_row_ep[iid])
+
+    def _edl_edit_dialog(self, e: "edl.EpisodeEdl"):
+        win = tk.Toplevel(self.root)
+        win.title(f"Правка: {e.path.name}")
+        win.transient(self.root)
+        win.resizable(False, False)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(
+            frm,
+            text="Время: MM:SS, H:MM:SS или секунды. Пусто — сегмента нет.\n"
+                 "Задаётся базовый интервал (отступы сезона применяются поверх).",
+            justify="left",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+
+        vals = [
+            ("Интро начало:", e.intro.start if e.intro else None),
+            ("Интро конец:", e.intro.end if e.intro else None),
+            ("Титры начало:", e.outro.start if e.outro else None),
+            ("Титры конец:", e.outro.end if e.outro else None),
+        ]
+        keys = ["is", "ie", "os", "oe"]
+        varmap = {}
+        for i, (lab, val) in enumerate(vals, start=1):
+            ttk.Label(frm, text=lab).grid(row=i, column=0, sticky="e", pady=2, padx=(0, 6))
+            v = tk.StringVar(value=self._fmt_time(val) if val is not None else "")
+            varmap[keys[i - 1]] = v
+            ttk.Entry(frm, textvariable=v, width=12).grid(row=i, column=1, sticky="w", pady=2)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, columnspan=2, sticky="e", pady=(10, 0))
+
+        def save():
+            is_, ie = self._parse_time(varmap["is"].get()), self._parse_time(varmap["ie"].get())
+            os_, oe = self._parse_time(varmap["os"].get()), self._parse_time(varmap["oe"].get())
+            e.intro = edl.Segment(is_, ie) if (is_ is not None and ie is not None and ie > is_) else None
+            e.outro = edl.Segment(os_, oe) if (os_ is not None and oe is not None and oe > os_) else None
+            win.destroy()
+            self.refresh_edl_preview()
 
         ttk.Button(btns, text="Сохранить", command=save).pack(side="right")
         ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="right", padx=6)
