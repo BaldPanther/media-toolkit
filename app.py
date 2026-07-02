@@ -1132,13 +1132,24 @@ class App:
             idvar = tk.StringVar(value=str(idv))
             fromv, tov, firstv = (tk.StringVar(value=str(efrom)),
                                   tk.StringVar(value=str(eto)), tk.StringVar(value=str(first)))
-            ttk.Combobox(rows_frame, textvariable=src, state="readonly", width=11,
-                         values=["AniSkip", "TheIntroDB"]).grid(row=r, column=0, padx=3, pady=2)
-            ttk.Entry(rows_frame, textvariable=idvar, width=16).grid(row=r, column=1, padx=3)
-            ttk.Entry(rows_frame, textvariable=fromv, width=6).grid(row=r, column=2, padx=3)
-            ttk.Entry(rows_frame, textvariable=tov, width=6).grid(row=r, column=3, padx=3)
-            ttk.Entry(rows_frame, textvariable=firstv, width=6).grid(row=r, column=4, padx=3)
-            rows.append({"source": src, "id": idvar, "from": fromv, "to": tov, "first": firstv})
+            widgets = [
+                ttk.Combobox(rows_frame, textvariable=src, state="readonly", width=11,
+                             values=["AniSkip", "TheIntroDB"]),
+                ttk.Entry(rows_frame, textvariable=idvar, width=16),
+                ttk.Entry(rows_frame, textvariable=fromv, width=6),
+                ttk.Entry(rows_frame, textvariable=tov, width=6),
+                ttk.Entry(rows_frame, textvariable=firstv, width=6),
+            ]
+            for c, w in enumerate(widgets):
+                w.grid(row=r, column=c, padx=3, pady=2)
+            rows.append({"source": src, "id": idvar, "from": fromv, "to": tov,
+                         "first": firstv, "widgets": widgets})
+
+        def clear_rows():
+            for row in rows:
+                for w in row["widgets"]:
+                    w.destroy()
+            rows.clear()
 
         saved = load_app_settings().get("online_rules", {}).get(folder)
         if saved:
@@ -1153,37 +1164,81 @@ class App:
         ttk.Button(btnbar, text="+ правило", command=lambda: add_row()).pack(side="left")
 
         def auto_suggest():
-            ep0 = eps_se[0]
+            # Подбираем ID сразу для обоих источников по названию/метаданным:
+            #  TheIntroDB — ID СЕРИАЛА из tvshow.nfo (tmdb→imdb), иначе TVmaze по названию;
+            #  AniSkip — MAL из tvshow.nfo, иначе поиск Jikan по названию, с авто-разбивкой
+            #  на cours (в MAL один тайтл = один cour, поэтому 48 серий = два MAL ID).
+            title = onlinemod.clean_show_title(Path(folder).name)
             try:
-                ids = onlinemod.read_nfo_ids(ep0.path)
+                ids = onlinemod.read_nfo_ids(eps_se[0].path)
             except Exception:  # noqa: BLE001 — .nfo необязателен
                 ids = {}
-            r0 = rows[0]
-            if ids.get("mal"):
-                r0["source"].set("AniSkip"); r0["id"].set(ids["mal"])
-            elif ids.get("tmdb"):
-                r0["source"].set("TheIntroDB"); r0["id"].set(ids["tmdb"])
-            elif ids.get("imdb"):
-                r0["source"].set("TheIntroDB"); r0["id"].set(ids["imdb"])
-            else:
-                title = onlinemod.clean_show_title(Path(folder).name)
+
+            idb_id, idb_src = (ids.get("tmdb") or ids.get("imdb")), "tvshow.nfo"
+            if not idb_id:
                 try:
-                    cands = onlinemod.search_mal(title, 5)
+                    imdb = onlinemod.search_tvmaze_imdb(title)
+                except onlinemod.OnlineError:
+                    imdb = None
+                if imdb:
+                    idb_id, idb_src = imdb, "TVmaze (по названию)"
+
+            mal_src, mal_cands = "tvshow.nfo", []
+            aniskip_rules = []  # (mal_id, efrom, eto, first)
+            if ids.get("mal"):
+                aniskip_rules.append((ids["mal"], emin, emax, 1))
+            else:
+                try:
+                    mal_cands = onlinemod.search_mal(title, 5)
                 except onlinemod.OnlineError as ex:
-                    messagebox.showerror("Ошибка поиска", str(ex))
-                    return
-                if cands:
-                    r0["source"].set("AniSkip"); r0["id"].set(str(cands[0].mal_id))
-                    self.online_status.set("Подобрано по названию (проверьте): "
-                                           + "; ".join(c.label() for c in cands[:3]))
-                else:
-                    messagebox.showinfo("Не найдено",
-                                        "ID в .nfo нет и MAL-поиск ничего не дал. Введите ID вручную.")
-                    return
-            if ids:
-                messagebox.showinfo("Из .nfo", "Найдены ID: "
-                                    + ", ".join(f"{k}={v}" for k, v in ids.items())
-                                    + "\n(проставлен первый подходящий; остальные — вручную).")
+                    self.log_line(f"MAL-поиск не удался: {ex}")
+                if mal_cands:
+                    mal_src = "Jikan (по названию)"
+                    seasons = sorted([c for c in mal_cands if c.episodes],
+                                     key=lambda c: (c.year or 9999))
+                    if seasons and emax > seasons[0].episodes:
+                        start = emin
+                        for c in seasons:
+                            if start > emax:
+                                break
+                            end = min(emax, start + c.episodes - 1)
+                            aniskip_rules.append((str(c.mal_id), start, end, 1))
+                            start = end + 1
+                        if start <= emax:  # хвост не покрыт — добьём лучшим кандидатом
+                            aniskip_rules.append((str(mal_cands[0].mal_id), start, emax, 1))
+                    else:
+                        aniskip_rules.append((str(mal_cands[0].mal_id), emin, emax, 1))
+
+            if not idb_id and not aniskip_rules:
+                messagebox.showinfo("Не найдено",
+                                    "Не удалось подобрать ID ни из tvshow.nfo, ни по названию.\n"
+                                    "Введите ID вручную: TMDb со страницы themoviedb.org/tv/<id>, "
+                                    "MAL — с myanimelist.net.")
+                return
+
+            clear_rows()
+            if idb_id:
+                add_row("TheIntroDB", idb_id, emin, emax, 1)
+            for mid, a, b, first in aniskip_rules:
+                add_row("AniSkip", mid, a, b, first)
+            if not rows:
+                add_row()
+
+            summary = []
+            if idb_id:
+                summary.append(f"TheIntroDB {idb_id} [{idb_src}]")
+            if len(aniskip_rules) > 1:
+                summary.append("AniSkip " + ", ".join(
+                    f"E{a:02d}–E{b:02d}→MAL {mid}" for mid, a, b, _ in aniskip_rules) + f" [{mal_src}]")
+            elif aniskip_rules:
+                summary.append(f"AniSkip MAL {aniskip_rules[0][0]} [{mal_src}]")
+            self.online_status.set("Подобрано (проверьте): " + "; ".join(summary))
+            if mal_cands:
+                messagebox.showinfo(
+                    "Кандидаты MAL",
+                    "Проверьте авто-разбивку по сезонам/cours:\n"
+                    + "\n".join("• " + c.label() for c in mal_cands[:5])
+                    + "\n\nЕсли раскладка серий неверна — поправьте «Серии от…до» и ID вручную.")
 
         ttk.Button(btnbar, text="Авто-подобрать", command=auto_suggest).pack(side="left", padx=8)
 

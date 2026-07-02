@@ -29,6 +29,7 @@ _TIMEOUT = 25
 ANISKIP_BASE = "https://api.aniskip.com/v2"
 THEINTRODB_BASE = "https://api.theintrodb.org/v3"
 JIKAN_BASE = "https://api.jikan.moe/v4"
+TVMAZE_BASE = "https://api.tvmaze.com"
 
 
 class OnlineError(Exception):
@@ -221,11 +222,15 @@ def _iter_uniqueids(text: str):
 
 
 def read_nfo_ids(video_path) -> dict:
-    """Внешние ID из соседних .nfo: эпизодный `<video>.nfo`, затем `tvshow.nfo`
-    в папке серии и на уровень выше. Возвращает {'tmdb':..,'imdb':..,'mal':..,…}."""
+    """ID СЕРИАЛА из `tvshow.nfo` (в папке серии и на уровень выше).
+
+    Важно: берём именно show-level `tvshow.nfo`, а НЕ эпизодный `<video>.nfo` —
+    у последнего `<uniqueid type="tmdb/imdb">` относится к самой серии, а не к
+    сериалу, и для матчинга в онлайн-базах (нужен ID сериала) он неверный.
+    Возвращает {'tmdb':..,'imdb':..,'tvdb':..,'mal':..,'anidb':..}."""
     ids: dict[str, str] = {}
     p = Path(video_path)
-    for nfo in (p.with_suffix(".nfo"), p.parent / "tvshow.nfo", p.parent.parent / "tvshow.nfo"):
+    for nfo in (p.parent / "tvshow.nfo", p.parent.parent / "tvshow.nfo"):
         if not nfo.is_file():
             continue
         try:
@@ -237,6 +242,19 @@ def read_nfo_ids(video_path) -> dict:
             if key and key not in ids and (val or "").strip():
                 ids[key] = val.strip()
     return ids
+
+
+def search_tvmaze_imdb(title: str) -> str | None:
+    """Keyless-поиск сериала по названию через TVmaze → IMDb ID (tt…) или None.
+
+    TheIntroDB принимает imdb_id и сам резолвит его в TMDb, поэтому это даёт
+    «поиск по названию» для TheIntroDB без ключа TMDb API."""
+    if not (title or "").strip():
+        return None
+    url = f"{TVMAZE_BASE}/singlesearch/shows?{urllib.parse.urlencode({'q': title})}"
+    data = _get_json(url)
+    imdb = ((data or {}).get("externals") or {}).get("imdb")
+    return imdb or None
 
 
 def clean_show_title(folder_name: str) -> str:

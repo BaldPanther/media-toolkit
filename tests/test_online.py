@@ -88,16 +88,44 @@ def test_theintrodb_requires_id():
 
 # ------------------------------------------------------------- .nfo IDs --
 
-def test_read_nfo_ids_parses_uniqueids(tmp_path):
+def test_read_nfo_ids_uses_show_nfo_not_episode(tmp_path):
+    # Регрессия: у эпизодного .nfo tmdb/imdb — id СЕРИИ (неверный для матчинга),
+    # правильные show-level id лежат в tvshow.nfo. Берём именно show-level.
     video = tmp_path / "Show.S01E01.mkv"
     video.write_bytes(b"")
     (tmp_path / "Show.S01E01.nfo").write_text(
-        '<?xml version="1.0"?>\n<episodedetails>'
-        '<uniqueid type="tmdb">1396</uniqueid>'
-        '<uniqueid type="imdb">tt0903747</uniqueid>'
-        '</episodedetails>', encoding="utf-8")
+        '<episodedetails><uniqueid type="tmdb">4237712</uniqueid>'
+        '<uniqueid type="imdb">tt26743791</uniqueid></episodedetails>', encoding="utf-8")
+    (tmp_path / "tvshow.nfo").write_text(
+        '<?xml version="1.0"?>\n<tvshow>'
+        '<uniqueid type="tmdb">220542</uniqueid>'
+        '<uniqueid type="imdb">tt26743760</uniqueid></tvshow>', encoding="utf-8")
     ids = online.read_nfo_ids(video)
-    assert ids["tmdb"] == "1396" and ids["imdb"] == "tt0903747"
+    assert ids["tmdb"] == "220542" and ids["imdb"] == "tt26743760"
+
+
+def test_read_nfo_ids_finds_tvshow_one_level_up(tmp_path):
+    # Реальный layout: видео в «Season 01», tvshow.nfo — в папке сериала выше.
+    season = tmp_path / "Season 01"
+    season.mkdir()
+    video = season / "Show.S01E01.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "tvshow.nfo").write_text(
+        '<tvshow><uniqueid type="tmdb">220542</uniqueid></tvshow>', encoding="utf-8")
+    assert online.read_nfo_ids(video)["tmdb"] == "220542"
+
+
+def test_search_tvmaze_imdb(monkeypatch):
+    monkeypatch.setattr(online, "_get_json", lambda url: {
+        "name": "The Apothecary Diaries",
+        "externals": {"tvrage": None, "thetvdb": 431162, "imdb": "tt26743760"},
+    })
+    assert online.search_tvmaze_imdb("apothecary") == "tt26743760"
+
+
+def test_search_tvmaze_imdb_none_when_no_match(monkeypatch):
+    monkeypatch.setattr(online, "_get_json", lambda url: None)
+    assert online.search_tvmaze_imdb("nope") is None
 
 
 def test_read_nfo_ids_falls_back_to_tvshow_and_regex(tmp_path):
