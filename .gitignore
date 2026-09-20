@@ -8,5 +8,8 @@ __pycache__/
 # Локальные данные OpenSubtitles
 subs_settings.json
 
+# Локальные настройки скрапера (ключи TMDb/Fanart.tv/OMDb, корни библиотек)
+meta_settings.json
+
 # Локальные настройки приложения (последний путь и т.п.)
 settings.json
