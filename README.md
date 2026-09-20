@@ -32,11 +32,13 @@
 ## Требования
 
 - **Python 3** (нужен модуль `tkinter` — входит в стандартную сборку python.org).
-- **MKVToolNix** — `mkvmerge` и `mkvpropedit`. Установка (PowerShell от администратора):
-  ```powershell
-  choco install mkvtoolnix -y
+- **MKVToolNix** — `mkvmerge` и `mkvpropedit`. Установка:
+  ```bash
+  brew install mkvtoolnix            # macOS
+  choco install mkvtoolnix -y        # Windows, PowerShell от администратора
   ```
-  Инструмент ищет их в `PATH` и в `C:\Program Files\MKVToolNix`.
+  Инструмент ищет их в `PATH`, а если там нет — в `/opt/homebrew/bin` и `/usr/local/bin`
+  на macOS, в `C:\Program Files\MKVToolNix` на Windows.
 - **Только для скачивания субтитров** (необязательно) — пакет `subliminal`:
   ```bash
   pip install subliminal

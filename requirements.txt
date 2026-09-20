@@ -1,11 +1,17 @@
+# Python 3.14, macOS и Windows.
 # Базовая работа (смена дорожек по умолчанию) зависимостей не требует —
 # нужны только Python 3 с tkinter и MKVToolNix (mkvmerge/mkvpropedit).
+#
+# Внешние инструменты (не через pip):
+#   MKVToolNix  mac: brew install mkvtoolnix    win: choco install mkvtoolnix
+#   ffmpeg      mac: brew install ffmpeg        win: Gyan.FFmpeg через winget
+#   fpcalc      mac: brew install chromaprint   win: портативный в assets/fpcalc.exe
 
 # Опционально: для кнопки «Скачать русские субтитры».
 subliminal>=2.6
 
 # Опционально: для автодетекта интро/титров (вкладка «Пропуск заставок»).
-# Также нужны ffmpeg в PATH и fpcalc (Chromaprint) — портативный лежит в assets/.
+# Нужны также ffmpeg и fpcalc — см. выше.
 numpy>=1.26
 
 # Только для разработки: юнит-тесты (python -m pytest tests/ -q).
