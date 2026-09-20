@@ -24,17 +24,19 @@ from pathlib import Path
 # Поиск инструментов MKVToolNix
 # --------------------------------------------------------------------------- #
 
-_MKV_DIRS = [
-    r"C:\Program Files\MKVToolNix",
-    r"C:\Program Files (x86)\MKVToolNix",
-]
+# Запасные папки на случай, если инструментов нет в PATH.
+_MKV_DIRS = (
+    [r"C:\Program Files\MKVToolNix", r"C:\Program Files (x86)\MKVToolNix"]
+    if os.name == "nt"
+    else ["/opt/homebrew/bin", "/usr/local/bin"]  # brew: Apple Silicon и Intel
+)
 
 # Скрывает всплывающие окна консоли при запуске из GUI на Windows.
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def _find_tool(name: str) -> str | None:
-    exe = name if name.lower().endswith(".exe") else name + ".exe"
+    exe = name + ".exe" if os.name == "nt" and not name.lower().endswith(".exe") else name
     found = shutil.which(name) or shutil.which(exe)
     if found:
         return found
@@ -53,7 +55,9 @@ def find_tools() -> tuple[str, str]:
     if missing:
         raise FileNotFoundError(
             "Не найдены инструменты MKVToolNix: " + ", ".join(missing) + ".\n"
-            "Установите MKVToolNix (choco install mkvtoolnix) или добавьте его папку в PATH."
+            "Установите MKVToolNix ("
+            + ("choco install mkvtoolnix" if os.name == "nt" else "brew install mkvtoolnix")
+            + ") или добавьте его папку в PATH."
         )
     return merge, propedit
 
