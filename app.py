@@ -22,6 +22,8 @@ from tkinter.scrolledtext import ScrolledText
 
 import core
 import edl
+import metaui
+from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme держим в API модуля
 
 NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
@@ -29,40 +31,6 @@ EDL_TRACK_AUTO = "Оригинал (авто)"
 
 # Локальные настройки приложения (последний путь и т.п.), рядом с программой.
 _SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
-
-
-def is_dark_theme(widget) -> bool:
-    """Тёмная ли системная тема.
-
-    На macOS ttk (тема aqua) следует системной автоматически, и в тёмной теме текст
-    в таблицах становится белым. Светлая заливка строки, заданная без явного
-    foreground, делает её нечитаемой — белое по светло-зелёному.
-    На Windows системного цвета нет, TclError → считаем тему светлой.
-    """
-    try:
-        r, g, b = widget.winfo_rgb("systemTextBackgroundColor")
-    except tk.TclError:
-        return False
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 65535 < 0.5
-
-
-def row_colors(widget) -> dict[str, dict[str, str]]:
-    """Цвета подсветки строк под текущую тему. Светлая — как было на Windows."""
-    if is_dark_theme(widget):
-        return {
-            "warn":     {"background": "#4a3020", "foreground": "#ffdcc4"},
-            "change":   {"background": "#1e3a24", "foreground": "#d7f0d7"},
-            "nochange": {"foreground": "#9a9a9a"},
-            "error":    {"background": "#5c2020", "foreground": "#ffd9d9"},
-            "accent":   {"foreground": "#6fa8ff"},
-        }
-    return {
-        "warn":     {"background": "#ffd9d9"},
-        "change":   {"background": "#dff5df"},
-        "nochange": {"foreground": "#888888"},
-        "error":    {"background": "#ffbcbc"},
-        "accent":   {"foreground": "#0a58ca"},
-    }
 
 
 def load_app_settings() -> dict:
@@ -90,8 +58,11 @@ class App:
         self.cancel_event = threading.Event()
         self.edl_eps: list[edl.EpisodeEdl] = []
         self.edl_row_ep: dict[str, edl.EpisodeEdl] = {}
+        # Кнопки вкладок, которые тоже надо гасить на время длинных операций.
+        # Вкладка «Медиатека» дописывает сюда свои при построении.
+        self.extra_busy_buttons: list = []
 
-        root.title("MKV — дорожки, субтитры, пропуск заставок")
+        root.title("Медиатека Kodi — метаданные, дорожки, пропуск заставок")
         self._set_window_icon()
         # Позицию задаём явно, не только размер: при запуске из Dock на macOS окно
         # без координат уезжает в левый нижний угол. По вертикали ставим чуть выше
@@ -105,8 +76,12 @@ class App:
 
         self.nb = ttk.Notebook(self.root)
         self.nb.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+        # Порядок вкладок = порядок работы: сначала раскладка и метаданные
+        # (она переименовывает файлы), потом дорожки и заставки.
+        self.tab_meta = ttk.Frame(self.nb)
         self.tab_tracks = ttk.Frame(self.nb)
         self.tab_edl = ttk.Frame(self.nb)
+        self.nb.add(self.tab_meta, text="Медиатека")
         self.nb.add(self.tab_tracks, text="Дорожки и субтитры")
         self.nb.add(self.tab_edl, text="Пропуск заставок (EDL)")
 
@@ -116,6 +91,7 @@ class App:
         self._build_tracks_apply(self.tab_tracks)
         self._build_edl(self.tab_edl)
         self._build_common_bottom()
+        self.meta = metaui.MetaTab(self.tab_meta, self)
 
         self._enable_entry_clipboard()
         self._check_tools()
@@ -146,6 +122,9 @@ class App:
         self.path_var = tk.StringVar(value=start_folder)
         ttk.Entry(f, textvariable=self.path_var).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(f, text="Обзор…", command=self.browse).pack(side="left")
+        # Фильм может лежать одним файлом прямо в корне библиотеки — папку
+        # вокруг него создаёт вкладка «Медиатека», но указать его надо явно.
+        ttk.Button(f, text="Файл…", command=self.browse_file).pack(side="left", padx=(4, 0))
 
         self.recursive_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Включая вложенные папки", variable=self.recursive_var).pack(side="left", padx=10)
@@ -470,7 +449,8 @@ class App:
                   getattr(self, "edl_delete_btn", None),
                   getattr(self, "online_load_btn", None),
                   getattr(self, "online_take_on_btn", None),
-                  getattr(self, "online_take_loc_btn", None)):
+                  getattr(self, "online_take_loc_btn", None),
+                  *self.extra_busy_buttons):
             if b is not None:
                 b.configure(state=state)
 
@@ -493,6 +473,17 @@ class App:
         d = filedialog.askdirectory(initialdir=self.path_var.get() or None)
         if d:
             self.path_var.set(d)
+
+    def browse_file(self):
+        """Выбор одиночного видеофайла — для фильма, лежащего без своей папки."""
+        current = Path(self.path_var.get() or ".")
+        start = current if current.is_dir() else current.parent
+        f = filedialog.askopenfilename(
+            initialdir=str(start) if start.exists() else None,
+            filetypes=[("Видео", "*.mkv *.mp4 *.avi *.m4v *.ts *.mov"),
+                       ("Все файлы", "*.*")])
+        if f:
+            self.path_var.set(f)
 
     def scan(self):
         if self.busy:
