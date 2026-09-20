@@ -118,32 +118,68 @@ def _filter_by_lang(items, choice: str):
     return list(items)
 
 
-_WHEEL_EVENTS = ("<MouseWheel>", "<Button-4>", "<Button-5>")
+_WHEEL_EVENTS = ("<MouseWheel>", "<TouchpadScroll>", "<Button-4>", "<Button-5>")
+
+
+def _scale_num(widget, value: float) -> int:
+    """Пересчёт «щелчков» в пиксели — так же, как это делает сам Tk."""
+    return round(value * float(widget.tk.call("tk", "scaling")) * 0.75)
+
+
+def _precise_deltas(packed: int) -> tuple[int, int]:
+    """Распаковка %D у <TouchpadScroll>: X в старших битах, Y в младших.
+
+    Формула взята из ::tk::PreciseScrollDeltas, чтобы знак и масштаб совпадали
+    с поведением штатных виджетов.
+    """
+    delta_x = packed >> 16
+    low = packed & 0xFFFF
+    delta_y = low if low < 0x8000 else low - 0x10000
+    return delta_x, delta_y
 
 
 def _bind_wheel(canvas: tk.Canvas, win: tk.Toplevel, after=None) -> None:
-    """Прокрутка колесом мыши внутри окна.
+    """Прокрутка колесом мыши и жестом тачпада.
 
-    Canvas сам колесо не слушает: на macOS и Windows событие приходит как
-    <MouseWheel> с разным масштабом delta, на X11 — как Button-4/5.
-    Привязка ставится и на сам canvas, и глобально через bind_all: под курсором
-    оказываются кнопки сетки, и полагаться на один путь доставки события ненадёжно.
+    Ключевой момент: в Tk 9 на macOS двухпальцевый жест тачпада и Magic Mouse
+    приходят **отдельным событием `<TouchpadScroll>`**, а не `<MouseWheel>` —
+    именно поэтому привязка только к колесу на маке не работала вовсе. Штатные
+    Text и Listbox слушают оба события, повторяем за ними.
+
+    Canvas не умеет прокрутку в пикселях, поэтому ставим шаг прокрутки в один
+    пиксель и считаем всё в них, как это делает Tk для Text.
+
+    Привязка идёт и на сам canvas, и глобально: под курсором оказываются кнопки
+    сетки, и полагаться на один путь доставки события ненадёжно.
     """
+    canvas.configure(yscrollincrement=1)
+
+    def scroll(pixels: int):
+        if pixels:
+            canvas.yview_scroll(pixels, "units")
+            if after is not None:
+                after()
+
     def on_wheel(event):
-        if event.delta:
-            step = -1 if event.delta > 0 else 1
-            if abs(event.delta) >= 120:          # Windows шлёт кратно 120
-                step = -int(event.delta / 120)
-        else:
-            step = -1 if event.num == 4 else 1
-        canvas.yview_scroll(step, "units")
-        if after is not None:
-            after()
+        if event.num in (4, 5):                       # X11
+            scroll(-40 if event.num == 4 else 40)
+            return "break"
+        pixels = int(_scale_num(canvas, event.delta) / -4.0)
+        if not pixels and event.delta:
+            pixels = -1 if event.delta > 0 else 1     # мелкий щелчок не теряем
+        scroll(pixels)
         return "break"
 
+    def on_touchpad(event):
+        _, delta_y = _precise_deltas(event.delta)
+        scroll(_scale_num(canvas, -delta_y))
+        return "break"
+
+    handlers = {"<TouchpadScroll>": on_touchpad}
     for sequence in _WHEEL_EVENTS:
-        canvas.bind(sequence, on_wheel)
-        win.bind_all(sequence, on_wheel)
+        handler = handlers.get(sequence, on_wheel)
+        canvas.bind(sequence, handler)
+        win.bind_all(sequence, handler)
     # bind_all глобальна — снимаем привязку вместе с окном, иначе прокрутка
     # продолжит уезжать в уничтоженный canvas.
     win.bind("<Destroy>",
@@ -488,7 +524,7 @@ class MetaTab:
             tree.delete(selected[0])
             self.log(f"Папка исключена из списка: {item.path} (метка {marker.name})")
 
-        ttk.Button(btns, text="Взять в работу", command=take).pack(side="right")
+        theme.accent_button(btns, text="Взять в работу", command=take).pack(side="right")
         ttk.Button(btns, text="Больше не предлагать", command=ignore).pack(side="right", padx=6)
         ttk.Button(btns, text="Закрыть", command=win.destroy).pack(side="right", padx=6)
         tree.bind("<Double-1>", lambda e: take())
@@ -766,12 +802,18 @@ class MetaTab:
                 status.set("")
                 return
 
+            back = theme.widget_bg(grid)
             for i, candidate in enumerate(items[:_GRID_LIMIT]):
-                cell = tk.Frame(grid, width=_CELL_W, height=_CELL_H)
+                cell = tk.Frame(grid, width=_CELL_W, height=_CELL_H, bg=back)
                 cell.grid(row=i // _GRID_COLUMNS, column=i % _GRID_COLUMNS)
                 cell.grid_propagate(False)      # размер держим сами, без прыжков
-                btn = ttk.Button(cell, text="…", command=lambda c=candidate: pick(c))
+                # Label, а не Button: у кнопки в теме aqua своя внутренняя
+                # рамка, картинка в неё не вписывается и системный фон торчит
+                # серыми кусками по краям ячейки.
+                btn = tk.Label(cell, text="…", bg=back, fg=theme.MUTED_TEXT,
+                               cursor=theme.HAND, borderwidth=0, highlightthickness=0)
                 btn.place(x=8, y=0, width=_GRID_BOX[0], height=_GRID_BOX[1])
+                btn.bind("<Button-1>", lambda e, c=candidate: pick(c))
                 ttk.Label(cell, text=candidate.label()).place(
                     x=8, y=_GRID_BOX[1] + 4, width=_GRID_BOX[0])
                 state["cells"].append({"frame": cell, "btn": btn,

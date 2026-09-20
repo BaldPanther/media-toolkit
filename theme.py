@@ -8,6 +8,13 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+from tkinter import font as tkfont
+from tkinter import ttk
+
+try:                                     # скруглённый фон рисуется Pillow
+    from PIL import Image, ImageDraw, ImageTk
+except ImportError:                      # noqa: BLE001 — без него кнопка просто прямоугольная
+    Image = ImageDraw = ImageTk = None
 
 # Цвет «основного действия» — им подсвечиваются кнопки, которые логично нажать
 # следующими. Светлый, чтобы поверх читался тёмный текст в обеих системных темах.
@@ -18,7 +25,41 @@ ACCENT_TEXT = "#10243a"
 ACCENT_OFF = "#4a4a4a"
 ACCENT_OFF_TEXT = "#8a8a8a"
 
-_HAND = "pointinghand" if sys.platform == "darwin" else "hand2"
+MUTED_TEXT = "#8a8a8a"
+HAND = "pointinghand" if sys.platform == "darwin" else "hand2"
+_HAND = HAND
+_RADIUS = 7          # примерно как у системных кнопок macOS
+_PAD_X, _PAD_Y = 14, 6
+
+
+def widget_bg(widget) -> str:
+    """Фон, на котором лежит виджет. Для ttk-контейнеров — из темы.
+
+    Нужен, чтобы скруглённые углы и пустые ячейки сливались с подложкой:
+    у ttk-фреймов обычного `cget("bg")` нет.
+    """
+    try:
+        return widget.cget("background")
+    except tk.TclError:
+        pass
+    style = ttk.Style(widget)
+    for name in (widget.winfo_class(), "TFrame"):
+        color = style.lookup(name, "background")
+        if color:
+            return color
+    return widget.winfo_toplevel().cget("background")
+
+
+def _rounded(width: int, height: int, color: str, radius: int = _RADIUS):
+    """Прямоугольник со скруглёнными углами и прозрачным фоном."""
+    if Image is None:
+        return None
+    scale = 4            # рисуем крупнее и уменьшаем — так края не рваные
+    img = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+    ImageDraw.Draw(img).rounded_rectangle(
+        (0, 0, width * scale - 1, height * scale - 1),
+        radius=radius * scale, fill=color)
+    return img.resize((width, height), Image.LANCZOS)
 
 
 class AccentButton(tk.Label):
@@ -33,16 +74,39 @@ class AccentButton(tk.Label):
 
     def __init__(self, parent, text: str = "", command=None,
                  state: str = "normal", **kwargs):
-        super().__init__(parent, text=text, padx=12, pady=5,
-                         bg=ACCENT, fg=ACCENT_TEXT, cursor=_HAND, **kwargs)
+        back = widget_bg(parent)
+        super().__init__(parent, text=text, bg=back, fg=ACCENT_TEXT,
+                         cursor=_HAND, borderwidth=0, highlightthickness=0,
+                         **kwargs)
         self._command = command
         self._enabled = True
+        self._skins = self._make_skins(text, back)
+        if self._skins:
+            self.configure(compound="center", image=self._skins[ACCENT])
+        else:                            # без Pillow — просто заливка без скругления
+            self.configure(padx=_PAD_X, pady=_PAD_Y, bg=ACCENT)
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_press)
         self.bind("<ButtonRelease-1>", self._on_release)
         if state != "normal":
             self._set_enabled(False)
+
+    def _make_skins(self, text: str, back: str) -> dict:
+        """По картинке-подложке на каждое состояние: скругление рисуем сами."""
+        if ImageTk is None:
+            return {}
+        metrics = tkfont.Font(font=self.cget("font"))
+        width = metrics.measure(text) + 2 * _PAD_X
+        height = metrics.metrics("linespace") + 2 * _PAD_Y
+        skins = {}
+        for color in (ACCENT, ACCENT_HOVER, ACCENT_PRESSED, ACCENT_OFF):
+            image = _rounded(width, height, color)
+            if image is None:
+                return {}
+            skins[color] = ImageTk.PhotoImage(image)
+        del back                         # фон уже учтён прозрачностью углов
+        return skins
 
     # tkinter зовёт configure(state=…) из общего кода (например, set_busy),
     # поэтому состояние перехватываем здесь, а не отдельным методом.
@@ -55,28 +119,34 @@ class AccentButton(tk.Label):
 
     config = configure
 
+    def _paint(self, color: str) -> None:
+        if self._skins:
+            super().configure(image=self._skins[color])
+        else:
+            super().configure(bg=color)
+
     def _set_enabled(self, enabled: bool) -> None:
         self._enabled = enabled
-        super().configure(bg=ACCENT if enabled else ACCENT_OFF,
-                          fg=ACCENT_TEXT if enabled else ACCENT_OFF_TEXT,
+        self._paint(ACCENT if enabled else ACCENT_OFF)
+        super().configure(fg=ACCENT_TEXT if enabled else ACCENT_OFF_TEXT,
                           cursor=_HAND if enabled else "")
 
     def _on_enter(self, _event):
         if self._enabled:
-            super().configure(bg=ACCENT_HOVER)
+            self._paint(ACCENT_HOVER)
 
     def _on_leave(self, _event):
         if self._enabled:
-            super().configure(bg=ACCENT)
+            self._paint(ACCENT)
 
     def _on_press(self, _event):
         if self._enabled:
-            super().configure(bg=ACCENT_PRESSED)
+            self._paint(ACCENT_PRESSED)
 
     def _on_release(self, event):
         if not self._enabled:
             return
-        super().configure(bg=ACCENT_HOVER)
+        self._paint(ACCENT_HOVER)
         # Клик засчитываем, только если отпустили над кнопкой — как у обычной.
         inside = 0 <= event.x < self.winfo_width() and 0 <= event.y < self.winfo_height()
         if inside and self._command is not None:
