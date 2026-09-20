@@ -693,3 +693,53 @@ def test_ignore_marker_works_inside_collection(tmp_path):
     touch(coll / "Scary Movie 2 (2001)" / "Scary Movie 2 (2001).mkv")
     library.write_ignore_marker(coll / "Scary Movie 2 (2001)")
     assert library.find_unprocessed(s) == []
+
+
+# ------------------------------- номер серии без «S01E01» (типично для аниме) --
+
+def test_parse_episodes_bare_number():
+    # «Koukaku Kidoutai - 01 [WEB-DL AMZN 1080p AVC EAC3]» — сезон неизвестен,
+    # серия читается. 1080p и EAC3 номером серии стать не должны.
+    assert library.parse_episodes(
+        "Koukaku Kidoutai - 01 [WEB-DL AMZN 1080p AVC EAC3].mkv") == (None, [1])
+    assert library.parse_episodes("Show E05.mkv") == (None, [5])
+    assert library.parse_episodes("Show EP 12.mkv") == (None, [12])
+    assert library.parse_episodes("Show #7.mkv") == (None, [7])
+
+
+def test_parse_episodes_bare_number_false_positives():
+    # Всё это номерами серий быть не должно — иначе фильмы поедут в сезоны.
+    for name in ("National Lampoon's Loaded Weapon 1 (1993).mkv",
+                 "The Conjuring 2 (2016).mkv",
+                 "Deadpool & Wolverine (2024).mkv",
+                 "Some.Film.2019.2160p.WEB-DL.mkv",
+                 "Top Gear - Patagonia Special 2014 (AlexFilm) 1080i.mkv"):
+        assert library.parse_episodes(name) == (None, []), name
+
+
+def test_flat_anime_folder_gets_season_one(tmp_path):
+    # Папок сезонов нет, номера голые — считаем это первым сезоном,
+    # иначе серии вообще некуда разложить.
+    root = tmp_path / "tv" / "Koukaku Kidoutai (2026)"
+    for n in (1, 2):
+        touch(root / f"Koukaku Kidoutai - 0{n} [WEB-DL AMZN 1080p].mkv")
+    scan = library.scan_folder(root)
+    assert scan.seasons() == [1]
+    assert scan.season_sizes() == {1: 2}
+
+    info = show_info("THE GHOST IN THE SHELL", 2026,
+                     [(1, 1, "Prologue"), (1, 2, "Super Spartan")])
+    plan = library.build_tv_plan(root, info, make_settings())
+    assert dst_of(plan, "- 01").name == \
+        "THE GHOST IN THE SHELL - S01E01 - Prologue.mkv"
+
+
+def test_season_folder_wins_over_assumption(tmp_path):
+    # Если папка сезона есть, номер берётся из неё, а не «первый по умолчанию».
+    root = tmp_path / "tv" / "Show (2020)"
+    touch(root / "Season 03" / "Show - 04 [1080p].mkv")
+    scan = library.scan_folder(root)
+    assert scan.seasons() == [3]
+    info = show_info("Show", 2020, [(3, 4, "Fourth")])
+    plan = library.build_tv_plan(root, info, make_settings())
+    assert dst_of(plan, "- 04").name == "Show - S03E04 - Fourth.mkv"

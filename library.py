@@ -187,6 +187,20 @@ _SE_TAG = re.compile(r"[Ss]\d{1,2}[\s._-]*[Ee]\d{1,3}|(?<!\d)\d{1,2}[xX]\d{1,3}(
 # было бы прочитано как вторая серия в файле.
 _MORE_EP = re.compile(r"(?:[\s._-]*[Ee][\s._]*(\d{1,3})|-(\d{1,3})(?=$|[\s._-]))")
 
+# Номер серии без «S01E01» — типовое именование аниме:
+# «Koukaku Kidoutai - 01 [WEB-DL AMZN 1080p AVC EAC3]», «Show E05», «Show #7».
+# Перед числом обязателен явный маркер, иначе «Loaded Weapon 1 (1993)» или
+# «1080p» тоже стали бы номерами серий.
+_BARE_EP = re.compile(r"""
+    (?:^|[\s._])                 # начало имени или разделитель
+    (?: -[\s._]*                 # « - 01 »
+      | [Ee][Pp]?[\s._]*         # « E01 », « EP 01 »
+      | \#[\s._]* )              # « #01 »
+    (\d{1,3})                    # сам номер
+    (?!\d)                       # не кусок числа побольше (1080p)
+    (?!\w)                       # и не начало слова
+""", re.X)
+
 
 def parse_episodes(path) -> tuple[int | None, list[int]]:
     """(сезон, список серий) из имени файла. Один файл может нести несколько.
@@ -195,10 +209,13 @@ def parse_episodes(path) -> tuple[int | None, list[int]]:
     раскрывается целиком, потому что в Kodi такому файлу нужен .nfo на каждую
     серию, иначе две из трёх просто пропадут из медиатеки.
     """
+    stem = Path(path).stem
     season, first = edl.parse_season_episode(path)
     if season is None or first is None:
-        return season, []
-    stem = Path(path).stem
+        # «S01E01» нет — пробуем голый номер. Сезон при этом неизвестен,
+        # его достаёт вызывающий: из папки «Season NN» или по раскладке тайтла.
+        bare = _BARE_EP.search(stem)
+        return (None, [int(bare.group(1))]) if bare else (season, [])
     match = _SE_TAG.search(stem)
     if match is None:
         return season, [first]
@@ -305,8 +322,15 @@ class Scan:
     season_dirs: dict[Path, int] = field(default_factory=dict)
 
     def season_of(self, video: Path) -> int | None:
-        season, _ = parse_episodes(video)
-        return season if season is not None else self.season_dirs.get(video.parent)
+        season, numbers = parse_episodes(video)
+        if season is not None:
+            return season
+        by_dir = self.season_dirs.get(video.parent)
+        if by_dir is not None:
+            return by_dir
+        # Номер серии есть, а сезона нет и папок сезонов в тайтле тоже нет —
+        # значит, это плоская раскладка одного сезона (обычное дело у аниме).
+        return 1 if numbers and not self.season_dirs else None
 
     def seasons(self) -> list[int]:
         found = {s for s in (self.season_of(v) for v in self.videos) if s is not None}
@@ -321,12 +345,10 @@ class Scan:
         """
         sizes: dict[int, int] = {}
         for v in self.videos:
-            season, numbers = parse_episodes(v)
-            if season is None:
-                season = self.season_dirs.get(v.parent)
+            season = self.season_of(v)
             if season is None:
                 continue
-            sizes[season] = sizes.get(season, 0) + max(len(numbers), 1)
+            sizes[season] = sizes.get(season, 0) + max(len(parse_episodes(v)[1]), 1)
         return sizes
 
 
@@ -654,10 +676,10 @@ def build_tv_plan(folder, info, settings, overrides=None) -> Plan:
         else:
             season, numbers = parse_episodes(video)
             if season is None:
-                season = scan.season_dirs.get(video.parent)
+                season = scan.season_of(video)
         if season is None or not numbers:
             plan.rows.append(Row(video, None, A_SKIP, S_NOEP, "video",
-                                 note="задайте сезон и серию двойным кликом"))
+                                 note="двойной клик — задать вручную"))
             plan.unmatched.append(video)
             continue
         # Название берём у первой серии файла: так подписан и многосерийный

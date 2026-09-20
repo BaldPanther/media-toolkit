@@ -318,7 +318,7 @@ class MetaTab:
 
         cols = ("sel", "now", "next", "status")
         heads = {"sel": "", "now": "Сейчас", "next": "Станет", "status": "Статус"}
-        widths = {"sel": 28, "now": 300, "next": 360, "status": 150}
+        widths = {"sel": 28, "now": 250, "next": 330, "status": 280}
         self.tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
         for c in cols:
             self.tree.heading(c, text=heads[c])
@@ -364,7 +364,9 @@ class MetaTab:
         self.policy_combo.pack(side="left")
         self.policy_combo.bind("<<ComboboxSelected>>", lambda e: self._on_policy_change())
 
-        self.plan_btn = ttk.Button(f, text="Построить план", command=self.build_plan,
+        # Кнопка — пересчёт предпросмотра: план и так строится после «Найти»
+        # и после ручной правки номеров, отдельно жать её обычно не нужно.
+        self.plan_btn = ttk.Button(f, text="Пересчитать план", command=self.build_plan,
                                    state="disabled")
         self.plan_btn.pack(side="left")
         self.apply_btn = theme.accent_button(f, text="Применить", command=self.apply,
