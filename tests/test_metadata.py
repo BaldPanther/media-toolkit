@@ -81,7 +81,7 @@ def test_tmdb_images_become_candidates(monkeypatch):
     by_kind = {c.kind: c for c in art}
     assert by_kind["poster"].lang == "ru"
     assert by_kind["poster"].url.endswith("/original/p.jpg")
-    assert by_kind["poster"].thumb_url.endswith("/w342/p.jpg")
+    assert by_kind["poster"].thumb_url.endswith("/w185/p.jpg")   # сетка выбора
     assert by_kind["fanart"].lang == ""          # null → «без текста»
     assert by_kind["clearlogo"].width == 800
 

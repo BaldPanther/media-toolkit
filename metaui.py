@@ -10,9 +10,11 @@ UI вынесен из `app.py` отдельным модулем — тот и 
 """
 from __future__ import annotations
 
+import io
 import threading
 import tkinter as tk
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -40,6 +42,18 @@ ART_ROWS = (
 )
 
 _THUMB_BOX = (90, 130)
+_GRID_BOX = (170, 250)
+_GRID_COLUMNS = 4
+_GRID_LIMIT = 40
+
+# Выбор языка сразу для всех видов арта. «как в настройках» — приоритет из
+# meta_settings.json, остальное поднимает выбранный язык на первое место.
+ART_LANG_CHOICES = {
+    "как в настройках": None,
+    "русский": "ru",
+    "английский": "en",
+    "без текста": "",
+}
 
 # Страницы выдачи ключей — их открывает кнопка «Получить…» в настройках.
 KEY_URLS = {
@@ -47,6 +61,69 @@ KEY_URLS = {
     "fanart": "https://fanart.tv/get-an-api-key/",
     "omdb": "https://www.omdbapi.com/apikey.aspx",
 }
+
+
+def _load_image(url: str, box):
+    """URL → уменьшенная картинка Pillow. Годится для рабочего потока.
+
+    В поток интерфейса нельзя только создание PhotoImage — скачивание и
+    масштабирование делаются здесь, параллельно.
+    """
+    if Image is None or not url:
+        return None
+    try:
+        data = artwork.thumbnail_bytes(url)
+        image = Image.open(io.BytesIO(data))
+        image.load()
+        image.thumbnail(box)
+        return image
+    except Exception:  # noqa: BLE001 — превью необязательно, молча без картинки
+        return None
+
+
+def _to_photo(image):
+    """Картинка Pillow → PhotoImage. Только из потока интерфейса."""
+    if image is None or ImageTk is None:
+        return None
+    try:
+        return ImageTk.PhotoImage(image)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _filter_by_lang(items, choice: str):
+    if choice == "ru":
+        return [c for c in items if c.lang == "ru"]
+    if choice == "en":
+        return [c for c in items if c.lang == "en"]
+    if choice == "без текста":
+        return [c for c in items if not c.lang]
+    return list(items)
+
+
+def _bind_wheel(canvas: tk.Canvas, win: tk.Toplevel) -> None:
+    """Прокрутка колесом мыши внутри окна.
+
+    Canvas сам колесо не слушает: на macOS и Windows событие приходит как
+    <MouseWheel> с разным масштабом delta, на X11 — как Button-4/5.
+    """
+    def on_wheel(event):
+        if event.delta:
+            step = -1 if event.delta > 0 else 1
+            if abs(event.delta) >= 120:          # Windows шлёт кратно 120
+                step = -int(event.delta / 120)
+        else:
+            step = -1 if event.num == 4 else 1
+        canvas.yview_scroll(step, "units")
+        return "break"
+
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        win.bind_all(sequence, on_wheel)
+    # bind_all глобальна — снимаем привязку вместе с окном, иначе прокрутка
+    # продолжит уезжать в уничтоженный canvas.
+    win.bind("<Destroy>", lambda e: [win.unbind_all(s) for s in
+                                     ("<MouseWheel>", "<Button-4>", "<Button-5>")]
+             if e.widget is win else None)
 
 
 class MetaTab:
@@ -70,8 +147,10 @@ class MetaTab:
     def _build(self, parent):
         self._build_identify(parent)
         self._build_art(parent)
-        self._build_table(parent)
+        # Нижние ряды пакуются до таблицы и прижимаются к низу: иначе таблица
+        # с expand=True съедает остаток высоты и выдавливает их за край окна.
         self._build_actions(parent)
+        self._build_table(parent)
 
     def _build_identify(self, parent):
         f = ttk.LabelFrame(parent, text="Что это", padding=10)
@@ -104,11 +183,13 @@ class MetaTab:
 
         bottom = ttk.Frame(f)
         bottom.grid(row=2, column=0, columnspan=7, sticky="ew", pady=(8, 0))
-        ttk.Button(bottom, text="Настройки скрапера…",
-                   command=self.settings_dialog).pack(side="left")
-        self.pending_btn = ttk.Button(bottom, text="Что не обработано…",
+        # С этой кнопки начинается работа, поэтому она первая и названа так,
+        # чтобы было понятно без чтения документации.
+        self.pending_btn = ttk.Button(bottom, text="▸ Что в библиотеке не обработано…",
                                       command=self.scan_library)
-        self.pending_btn.pack(side="left", padx=6)
+        self.pending_btn.pack(side="left")
+        ttk.Button(bottom, text="Настройки скрапера…",
+                   command=self.settings_dialog).pack(side="left", padx=6)
         ttk.Button(bottom, text="Подставить из имени папки",
                    command=self.fill_from_folder).pack(side="right")
 
@@ -117,13 +198,28 @@ class MetaTab:
         f.pack(fill="x", padx=10, pady=4)
         self.art_widgets = {}
 
+        # Язык сразу для всех картинок, чтобы не переключать его в каждой сетке
+        # по отдельности. Это не жёсткий фильтр, а приоритет: если постера на
+        # выбранном языке нет, берётся следующий по списку из настроек.
+        head = ttk.Frame(f)
+        head.grid(row=0, column=0, columnspan=len(ART_ROWS) + 1, sticky="w",
+                  pady=(0, 8))
+        ttk.Label(head, text="Язык картинок:").pack(side="left")
+        self.art_lang_combo = ttk.Combobox(head, state="readonly", width=18,
+                                           values=list(ART_LANG_CHOICES))
+        self.art_lang_combo.current(0)
+        self.art_lang_combo.pack(side="left", padx=6)
+        self.art_lang_combo.bind("<<ComboboxSelected>>",
+                                 lambda e: self._auto_choose_art())
+        ttk.Label(head, text="(если на этом языке нет — берётся следующий)").pack(side="left")
+
         for col, (kind, label) in enumerate(ART_ROWS):
             self.art_widgets[kind] = self._art_cell(f, col, label, kind)
 
         # Постеры сезонов: один блок с переключателем сезона — у Archer их 15,
         # пятнадцатью отдельными ячейками вкладка бы не поместилась.
         cell = ttk.Frame(f)
-        cell.grid(row=0, column=len(ART_ROWS), padx=10, sticky="n")
+        cell.grid(row=1, column=len(ART_ROWS), padx=10, sticky="n")
         head = ttk.Frame(cell)
         head.pack(fill="x")
         ttk.Label(head, text="Сезон").pack(side="left")
@@ -141,7 +237,7 @@ class MetaTab:
 
     def _art_cell(self, parent, col, label, kind):
         cell = ttk.Frame(parent)
-        cell.grid(row=0, column=col, padx=10, sticky="n")
+        cell.grid(row=1, column=col, padx=10, sticky="n")
         ttk.Label(cell, text=label).pack()
         preview = ttk.Label(cell, text="—", anchor="center", width=12)
         preview.pack(pady=4)
@@ -177,9 +273,13 @@ class MetaTab:
 
     def _build_actions(self, parent):
         # Две строки, а не одна: в одну этот набор не влезает в окно 1080 и
-        # правый край (выбор политики) обрезается.
+        # правый край (выбор политики) обрезается. Ряд кнопок пакуется первым,
+        # поэтому при side="bottom" он оказывается ниже ряда галок.
+        f = ttk.Frame(parent, padding=(10, 6))
+        f.pack(fill="x", side="bottom")
+
         opts = ttk.Frame(parent, padding=(10, 4, 10, 0))
-        opts.pack(fill="x")
+        opts.pack(fill="x", side="bottom")
 
         self.delete_junk = tk.BooleanVar(value=self.settings.junk_action == metaconf.JUNK_DELETE)
         self.junk_check = ttk.Checkbutton(opts, text="удалять мусор в Корзину",
@@ -200,8 +300,6 @@ class MetaTab:
         self.policy_combo.pack(side="left")
         self.policy_combo.bind("<<ComboboxSelected>>", lambda e: self._on_policy_change())
 
-        f = ttk.Frame(parent, padding=(10, 6))
-        f.pack(fill="x")
         self.plan_btn = ttk.Button(f, text="Построить план", command=self.build_plan,
                                    state="disabled")
         self.plan_btn.pack(side="left")
@@ -504,11 +602,23 @@ class MetaTab:
         self.build_plan()
 
     # --------------------------------------------------------------- арт --
+    def art_languages(self) -> list[str]:
+        """Приоритет языков картинок с учётом выбора на вкладке.
+
+        Выбранный язык поднимается наверх, остальные из настроек остаются
+        запасными — иначе у тайтла без русского постера не нашлось бы ничего.
+        """
+        code = ART_LANG_CHOICES.get(self.art_lang_combo.get())
+        base = list(self.settings.art_languages)
+        if code is None:
+            return base
+        return [code] + [lang for lang in base if lang != code]
+
     def _auto_choose_art(self):
         self.chosen.clear()
         if self.info is None:
             return
-        langs = self.settings.art_languages
+        langs = self.art_languages()
         for kind, _ in ART_ROWS:
             best = metadata.best_art(self.info.art, kind, langs)
             if best:
@@ -553,16 +663,8 @@ class MetaTab:
 
     def _thumb(self, url: str, box=_THUMB_BOX):
         """URL → PhotoImage нужного размера. Без Pillow или без сети → None."""
-        if ImageTk is None or not url:
-            return None
-        try:
-            import io
-            data = artwork.thumbnail_bytes(url)
-            img = Image.open(io.BytesIO(data))
-            img.thumbnail(box)
-            return ImageTk.PhotoImage(img)
-        except Exception:  # noqa: BLE001 — превью необязательно, молча без картинки
-            return None
+        image = _load_image(url, box)
+        return _to_photo(image)
 
     def choose_art(self, kind: str):
         if self.info is None:
@@ -581,10 +683,12 @@ class MetaTab:
                                   values=["все", "ru", "en", "без текста"])
         lang_combo.current(0)
         lang_combo.pack(side="left", padx=6)
+        status = tk.StringVar(value="")
+        ttk.Label(top, textvariable=status).pack(side="left", padx=10)
 
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
-        canvas = tk.Canvas(body, width=760, height=420, highlightthickness=0)
+        canvas = tk.Canvas(body, width=780, height=460, highlightthickness=0)
         scroll = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
         grid = ttk.Frame(canvas)
         grid.bind("<Configure>",
@@ -593,47 +697,89 @@ class MetaTab:
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
+        _bind_wheel(canvas, win)
 
-        keep: list = []
+        win.thumb_refs: list = []      # ссылки на PhotoImage — иначе Tk их удалит
+        win.thumb_token = 0            # смена языка обесценивает незавершённую загрузку
 
         def pick(candidate):
-            self.chosen[(kind, season)] = candidate
             win.destroy()
+            self.chosen[(kind, season)] = candidate
             self._refresh_art_cells()
             self.log(f"Выбрана картинка: {kind} — {candidate.label()}")
 
         def fill():
             for child in grid.winfo_children():
                 child.destroy()
-            keep.clear()
-            wanted = lang_combo.get()
-            items = metadata.rank_art(pool, self.settings.art_languages)
-            if wanted == "ru":
-                items = [c for c in items if c.lang == "ru"]
-            elif wanted == "en":
-                items = [c for c in items if c.lang == "en"]
-            elif wanted == "без текста":
-                items = [c for c in items if not c.lang]
+            win.thumb_refs.clear()
+            win.thumb_token += 1
+            token = win.thumb_token
+
+            items = _filter_by_lang(metadata.rank_art(pool, self.art_languages()),
+                                    lang_combo.get())
             if not items:
                 ttk.Label(grid, text="С таким языком вариантов нет.").grid(row=0, column=0)
+                status.set("")
                 return
-            for i, candidate in enumerate(items[:40]):
+
+            items = items[:_GRID_LIMIT]
+            buttons = []
+            for i, candidate in enumerate(items):
                 cell = ttk.Frame(grid, padding=6)
-                cell.grid(row=i // 4, column=i % 4, sticky="n")
-                image = self._thumb(candidate.thumb_url, (170, 250))
-                if image is not None:
-                    keep.append(image)
-                    btn = ttk.Button(cell, image=image, command=lambda c=candidate: pick(c))
-                else:
-                    btn = ttk.Button(cell, text="(нет превью)",
-                                     command=lambda c=candidate: pick(c))
+                cell.grid(row=i // _GRID_COLUMNS, column=i % _GRID_COLUMNS, sticky="n")
+                btn = ttk.Button(cell, text="загрузка…", width=22,
+                                 command=lambda c=candidate: pick(c))
                 btn.pack()
                 ttk.Label(cell, text=candidate.label()).pack()
+                buttons.append((btn, candidate))
+            status.set(f"Загрузка миниатюр: 0 из {len(items)}")
+            self._load_grid_thumbs(win, buttons, token, status)
 
         lang_combo.bind("<<ComboboxSelected>>", lambda e: fill())
         fill()
-        win.grid_keep = keep          # держим ссылки на изображения живыми
         self._center(win)
+
+    def _load_grid_thumbs(self, win, buttons, token: int, status) -> None:
+        """Качает миниатюры сетки параллельно и в фоне.
+
+        Раньше сорок картинок скачивались подряд прямо в потоке интерфейса, и
+        окно не отрисовывалось, пока не придёт последняя. Теперь оно открывается
+        сразу, а картинки появляются по мере готовности.
+        """
+        if ImageTk is None:
+            status.set("Нет пакета pillow — миниатюры не показываются")
+            return
+        done = [0]
+        total = len(buttons)
+
+        def show(btn, image):
+            if not win.winfo_exists() or win.thumb_token != token:
+                return
+            done[0] += 1
+            status.set("" if done[0] >= total
+                       else f"Загрузка миниатюр: {done[0]} из {total}")
+            photo = _to_photo(image)
+            if photo is None:
+                btn.configure(text="(нет превью)")
+                return
+            win.thumb_refs.append(photo)
+            btn.configure(image=photo, text="")
+
+        def work():
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                futures = {pool.submit(_load_image, c.thumb_url, _GRID_BOX): btn
+                           for btn, c in buttons}
+                for future in as_completed(futures):
+                    if win.thumb_token != token:
+                        return
+                    btn = futures[future]
+                    try:
+                        image = future.result()
+                    except Exception:  # noqa: BLE001 — одна картинка не должна ронять сетку
+                        image = None
+                    self.root.after(0, lambda b=btn, im=image: show(b, im))
+
+        threading.Thread(target=work, daemon=True).start()
 
     # --------------------------------------------------------------- план --
     def build_plan(self):

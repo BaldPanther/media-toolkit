@@ -287,14 +287,14 @@ def _fanart_art(block, kind: str, season: int | None = None) -> list[ArtCandidat
 def _collect_tmdb_art(kind: str, tmdb_id: int, key: str, seasons, settings) -> list[ArtCandidate]:
     data = tmdb.images(kind, tmdb_id, key)
     art = []
-    art += _tmdb_art(data.get("posters"), ART_POSTER, settings.poster_size, "w342")
+    art += _tmdb_art(data.get("posters"), ART_POSTER, settings.poster_size, "w185")
     art += _tmdb_art(data.get("backdrops"), ART_FANART, settings.fanart_size, "w300")
     art += _tmdb_art(data.get("logos"), ART_LOGO, settings.logo_size, "w300")
     if kind == TV:
         for n in seasons:
             season_data = tmdb.season_images(tmdb_id, n, key)
             art += _tmdb_art(season_data.get("posters"), ART_SEASON,
-                             settings.poster_size, "w342", season=n)
+                             settings.poster_size, "w185", season=n)
     return art
 
 
