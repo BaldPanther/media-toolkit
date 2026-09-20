@@ -496,6 +496,10 @@ class App:
             messagebox.showerror("Ошибка", "Укажите существующую папку или файл.")
             return
         save_app_settings({**load_app_settings(), "last_path": folder})
+        # Нажатие «Сканировать» — тоже подтверждение выбора папки, так что
+        # вкладка «Медиатека» подставляет по ней название, если его ещё нет.
+        if getattr(self, "meta", None) is not None:
+            self.meta.fill_from_path()
         try:
             core.find_tools()
         except FileNotFoundError as e:
