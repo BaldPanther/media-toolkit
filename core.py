@@ -185,8 +185,16 @@ def scan_file(mkvmerge: str, path: Path) -> MkvFile:
 
 
 def list_mkv(folder, recursive: bool) -> list[Path]:
-    folder = Path(folder)
-    globber = folder.rglob if recursive else folder.glob
+    """Список MKV по пути. Путь может быть и одним файлом — вернётся он сам.
+
+    Одиночный файл — это фильм, лежащий в корне библиотеки без своей папки.
+    Дорожки и субтитры в нём настраиваются ровно так же, как в сериале, так
+    что запрещать такой выбор незачем.
+    """
+    path = Path(folder)
+    if path.is_file():
+        return [path] if path.suffix.lower() == ".mkv" else []
+    globber = path.rglob if recursive else path.glob
     return sorted(p for p in globber("*.mkv") if p.is_file())
 
 

@@ -166,3 +166,26 @@ def test_apply_plan_dry_run_and_skip():
 
     res2 = core.apply_plan("mkvpropedit.exe", plans[1], dry_run=True)
     assert res2.ok and res2.skipped
+
+
+def test_list_mkv_accepts_single_file(tmp_path):
+    # Фильм может лежать в корне библиотеки одним файлом; кнопка «Файл…»
+    # указывает прямо на него, и «Сканировать» обязано это принять.
+    video = tmp_path / "It Chapter Two (2019).mkv"
+    video.write_bytes(b"")
+    assert core.list_mkv(video, recursive=False) == [video]
+    assert core.list_mkv(video, recursive=True) == [video]
+
+
+def test_list_mkv_single_file_of_other_format(tmp_path):
+    other = tmp_path / "movie.mp4"
+    other.write_bytes(b"")
+    assert core.list_mkv(other, recursive=False) == []
+
+
+def test_list_mkv_folder_unchanged(tmp_path):
+    (tmp_path / "a.mkv").write_bytes(b"")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.mkv").write_bytes(b"")
+    assert [p.name for p in core.list_mkv(tmp_path, recursive=False)] == ["a.mkv"]
+    assert [p.name for p in core.list_mkv(tmp_path, recursive=True)] == ["a.mkv", "b.mkv"]

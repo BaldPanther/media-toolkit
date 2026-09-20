@@ -490,8 +490,10 @@ class App:
         if self.busy:
             return
         folder = self.path_var.get().strip()
-        if not folder or not Path(folder).is_dir():
-            messagebox.showerror("Ошибка", "Укажите существующую папку.")
+        # Путь может указывать и на одиночный файл фильма — его выбирают
+        # кнопкой «Файл…», и дорожки в нём настраиваются так же, как в сериале.
+        if not folder or not Path(folder).exists():
+            messagebox.showerror("Ошибка", "Укажите существующую папку или файл.")
             return
         save_app_settings({**load_app_settings(), "last_path": folder})
         try:
@@ -557,6 +559,12 @@ class App:
         msg = f"Найдено MKV: {len(files)} (ошибок: {errs}). Раскладок аудио: {len(groups)}."
         if len(groups) > 1:
             msg += "  ⚠ Раскладки различаются между файлами — выбирайте дорожку по названию."
+        target = Path(self.path_var.get().strip() or ".")
+        if not files and target.is_file():
+            # Указан одиночный файл не того формата: mkvpropedit работает
+            # только с MKV, но вкладка «Медиатека» такой файл всё равно разложит.
+            msg = (f"«{target.name}» — не MKV, дорожки в нём менять нечем. "
+                   "Разложить его по папкам можно на вкладке «Медиатека».")
         self.summary_var.set(msg)
         self.progress.configure(value=0)
         self.log_line(msg)
