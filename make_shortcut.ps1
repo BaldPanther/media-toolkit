@@ -1,4 +1,4 @@
-# Creates "MKV default tracks" shortcuts (Desktop + project folder) that launch the
+# Creates "Media Toolkit" shortcuts (Desktop + project folder) that launch the
 # tool via pythonw.exe (an EXE, not blocked like .bat) with a default start folder.
 # Run:  powershell -NoProfile -File make_shortcut.ps1
 $ErrorActionPreference = 'Stop'
@@ -22,11 +22,11 @@ function New-Lnk([string]$path) {
     $lnk.Arguments        = $argLine
     $lnk.WorkingDirectory = $workDir
     $lnk.IconLocation     = "$iconPath,0"
-    $lnk.Description       = 'MKV: set default audio/subtitle tracks'
+    $lnk.Description       = 'Kodi media library: metadata, artwork, default tracks, EDL'
     $lnk.Save()
     Write-Host "Shortcut created: $path"
 }
 
 $desktop = [Environment]::GetFolderPath('Desktop')
-New-Lnk (Join-Path $desktop 'MKV default tracks.lnk')
-New-Lnk (Join-Path $workDir 'MKV default tracks.lnk')
+New-Lnk (Join-Path $desktop 'Media Toolkit.lnk')
+New-Lnk (Join-Path $workDir 'Media Toolkit.lnk')
