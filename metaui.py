@@ -200,8 +200,13 @@ class MetaTab:
         self.overrides: dict[Path, tuple[int, int]] = {}
         self.row_by_iid: dict[str, library.Row] = {}
         self._images: dict[str, object] = {}     # ссылки на PhotoImage — иначе Tk их удалит
+        self._auto_query = ""        # что подставили сами — это можно перезаписать
+        self._last_path = ""
 
         self._build(parent)
+        # Сменили папку или файл наверху — название и год подставляются сами,
+        # как это делает «Взять в работу». Вручную введённое не трогаем.
+        self.host.path_var.trace_add("write", self._on_path_changed)
 
     # ------------------------------------------------------------------ UI --
     def _build(self, parent):
@@ -415,15 +420,33 @@ class MetaTab:
         self.settings.existing_policy = metaconf.POLICIES[self.policy_combo.current()]
         metaconf.save_settings(self.settings)
 
+    def _on_path_changed(self, *_args):
+        """Путь наверху сменился — подставить название и год из его имени."""
+        raw = self.host.path_var.get().strip()
+        if raw == self._last_path:
+            return
+        self._last_path = raw
+        if not raw or not Path(raw).exists():
+            return
+        # Если в поле лежит наш же прежний автоподбор — заменяем. Если человек
+        # правил название руками, оставляем как есть.
+        if self.query_var.get().strip() not in ("", self._auto_query):
+            return
+        self._apply_guess(Path(raw))
+
+    def _apply_guess(self, path: Path) -> None:
+        # У одиночного файла фильма расширение в название попасть не должно.
+        name = path.stem if path.is_file() else path.name
+        title, year = library.guess_title_year(name)
+        self.query_var.set(title)
+        self.year_var.set(str(year) if year else "")
+        self._auto_query = title
+
     def fill_from_folder(self):
         folder = self._need_folder()
         if folder is None:
             return
-        # У одиночного файла фильма расширение в название попасть не должно.
-        name = folder.stem if folder.is_file() else folder.name
-        title, year = library.guess_title_year(name)
-        self.query_var.set(title)
-        self.year_var.set(str(year) if year else "")
+        self._apply_guess(folder)
 
     # ------------------------------------------- что в библиотеке не готово --
     def scan_library(self):
