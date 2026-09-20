@@ -12,54 +12,22 @@
 """
 from __future__ import annotations
 
-import json
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
 from edl import Segment
-
-_UA = "mkv-default-tracks/1.0 (+edl)"
-_TIMEOUT = 25
+# Сетевой слой общий с клиентами метаданных (tmdb/fanart/omdb) — см. net.py.
+# OnlineError оставлен именем-синонимом: его ловит app.py и проверяют тесты.
+from net import NetError as OnlineError
+from net import get_json as _get_json
 
 ANISKIP_BASE = "https://api.aniskip.com/v2"
 THEINTRODB_BASE = "https://api.theintrodb.org/v3"
 JIKAN_BASE = "https://api.jikan.moe/v4"
 TVMAZE_BASE = "https://api.tvmaze.com"
-
-
-class OnlineError(Exception):
-    """Сетевая или парсинг-ошибка запроса к онлайн-источнику."""
-
-
-def _get_json(url: str, retries: int = 2):
-    """GET → распарсенный JSON. 404 → None (нет данных). 429 → пауза и повтор."""
-    import time
-    for attempt in range(retries + 1):
-        req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-                return json.loads(r.read().decode("utf-8", "replace"))
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            if e.code == 429 and attempt < retries:
-                wait = e.headers.get("Retry-After", "1") if e.headers else "1"
-                try:
-                    time.sleep(min(float(wait or 1), 5))
-                except ValueError:
-                    time.sleep(1)
-                continue
-            raise OnlineError(f"HTTP {e.code} для {url}") from e
-        except urllib.error.URLError as e:
-            raise OnlineError(f"Сеть: {getattr(e, 'reason', e)}") from e
-        except (json.JSONDecodeError, ValueError) as e:
-            raise OnlineError(f"Битый ответ {url}: {e}") from e
-    return None
 
 
 # --------------------------------------------------------------------------- #
