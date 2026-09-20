@@ -23,6 +23,7 @@ from tkinter.scrolledtext import ScrolledText
 import core
 import edl
 import metaui
+import theme
 from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme держим в API модуля
 
 NOTOUCH = "— не трогать —"
@@ -128,7 +129,7 @@ class App:
 
         self.recursive_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Включая вложенные папки", variable=self.recursive_var).pack(side="left", padx=10)
-        self.scan_btn = ttk.Button(f, text="Сканировать", command=self.scan)
+        self.scan_btn = theme.accent_button(f, text="Сканировать", command=self.scan)
         self.scan_btn.pack(side="left")
 
         self.summary_var = tk.StringVar(value="Папка не выбрана.")

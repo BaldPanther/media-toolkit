@@ -45,6 +45,14 @@ _THUMB_BOX = (90, 130)
 _GRID_BOX = (170, 250)
 _GRID_COLUMNS = 4
 _GRID_LIMIT = 40
+# Ячейка фиксированного размера: иначе кнопка-заглушка с текстом оказывается
+# шире картинки, колонки разъезжаются, последняя уходит за край, а по мере
+# загрузки всё это ещё и прыгает.
+_CELL_W = _GRID_BOX[0] + 16
+_CELL_H = _GRID_BOX[1] + 40
+# Сколько миниатюр подгружать за раз и за сколько пикселей до появления ячейки
+# в поле зрения начинать её грузить.
+_LAZY_MARGIN = 300
 
 # Выбор языка сразу для всех видов арта. «как в настройках» — приоритет из
 # meta_settings.json, остальное поднимает выбранный язык на первое место.
@@ -53,6 +61,15 @@ ART_LANG_CHOICES = {
     "русский": "ru",
     "английский": "en",
     "без текста": "",
+}
+
+# Размеры постера у TMDb. Крупнее «original» не бывает, мельче w500 постер
+# заметно мылит на большом экране.
+POSTER_SIZE_LABELS = {
+    "w342": "342 px (экономно)",
+    "w500": "500 px",
+    "w780": "780 px",
+    "original": "оригинал (до 2000 px)",
 }
 
 # Страницы выдачи ключей — их открывает кнопка «Получить…» в настройках.
@@ -101,11 +118,16 @@ def _filter_by_lang(items, choice: str):
     return list(items)
 
 
-def _bind_wheel(canvas: tk.Canvas, win: tk.Toplevel) -> None:
+_WHEEL_EVENTS = ("<MouseWheel>", "<Button-4>", "<Button-5>")
+
+
+def _bind_wheel(canvas: tk.Canvas, win: tk.Toplevel, after=None) -> None:
     """Прокрутка колесом мыши внутри окна.
 
     Canvas сам колесо не слушает: на macOS и Windows событие приходит как
     <MouseWheel> с разным масштабом delta, на X11 — как Button-4/5.
+    Привязка ставится и на сам canvas, и глобально через bind_all: под курсором
+    оказываются кнопки сетки, и полагаться на один путь доставки события ненадёжно.
     """
     def on_wheel(event):
         if event.delta:
@@ -115,15 +137,17 @@ def _bind_wheel(canvas: tk.Canvas, win: tk.Toplevel) -> None:
         else:
             step = -1 if event.num == 4 else 1
         canvas.yview_scroll(step, "units")
+        if after is not None:
+            after()
         return "break"
 
-    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+    for sequence in _WHEEL_EVENTS:
+        canvas.bind(sequence, on_wheel)
         win.bind_all(sequence, on_wheel)
     # bind_all глобальна — снимаем привязку вместе с окном, иначе прокрутка
     # продолжит уезжать в уничтоженный canvas.
-    win.bind("<Destroy>", lambda e: [win.unbind_all(s) for s in
-                                     ("<MouseWheel>", "<Button-4>", "<Button-5>")]
-             if e.widget is win else None)
+    win.bind("<Destroy>",
+             lambda e: [win.unbind_all(s) for s in _WHEEL_EVENTS] if e.widget is win else None)
 
 
 class MetaTab:
@@ -171,7 +195,7 @@ class MetaTab:
         self.year_var = tk.StringVar()
         ttk.Entry(f, textvariable=self.year_var, width=6).grid(row=0, column=5, padx=6)
 
-        self.find_btn = ttk.Button(f, text="Найти", command=self.find)
+        self.find_btn = theme.accent_button(f, text="Найти", command=self.find)
         self.find_btn.grid(row=0, column=6)
 
         self.hit_var = tk.StringVar(value="Тайтл не выбран. Укажите папку, нажмите «Найти».")
@@ -183,10 +207,9 @@ class MetaTab:
 
         bottom = ttk.Frame(f)
         bottom.grid(row=2, column=0, columnspan=7, sticky="ew", pady=(8, 0))
-        # С этой кнопки начинается работа, поэтому она первая и названа так,
-        # чтобы было понятно без чтения документации.
-        self.pending_btn = ttk.Button(bottom, text="▸ Что в библиотеке не обработано…",
-                                      command=self.scan_library)
+        # С этой кнопки начинается работа — она первая в ряду и подсвечена.
+        self.pending_btn = theme.accent_button(bottom, text="Что не обработано…",
+                                               command=self.scan_library)
         self.pending_btn.pack(side="left")
         ttk.Button(bottom, text="Настройки скрапера…",
                    command=self.settings_dialog).pack(side="left", padx=6)
@@ -303,8 +326,8 @@ class MetaTab:
         self.plan_btn = ttk.Button(f, text="Построить план", command=self.build_plan,
                                    state="disabled")
         self.plan_btn.pack(side="left")
-        self.apply_btn = ttk.Button(f, text="Применить", command=self.apply,
-                                    state="disabled")
+        self.apply_btn = theme.accent_button(f, text="Применить", command=self.apply,
+                                             state="disabled")
         self.apply_btn.pack(side="left", padx=6)
 
         self.status_var = tk.StringVar(value="")
@@ -688,7 +711,10 @@ class MetaTab:
 
         body = ttk.Frame(win, padding=12)
         body.pack(fill="both", expand=True)
-        canvas = tk.Canvas(body, width=780, height=460, highlightthickness=0)
+        # Ширина ровно под колонки, иначе последняя уходит за край, а
+        # горизонтальной прокрутки у сетки нет и быть не должно.
+        canvas = tk.Canvas(body, width=_CELL_W * _GRID_COLUMNS,
+                           height=_CELL_H * 2 + 20, highlightthickness=0)
         scroll = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
         grid = ttk.Frame(canvas)
         grid.bind("<Configure>",
@@ -697,10 +723,10 @@ class MetaTab:
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="left", fill="y")
-        _bind_wheel(canvas, win)
 
         win.thumb_refs: list = []      # ссылки на PhotoImage — иначе Tk их удалит
         win.thumb_token = 0            # смена языка обесценивает незавершённую загрузку
+        state = {"cells": [], "pending": None}
 
         def pick(candidate):
             win.destroy()
@@ -708,12 +734,30 @@ class MetaTab:
             self._refresh_art_cells()
             self.log(f"Выбрана картинка: {kind} — {candidate.label()}")
 
+        def schedule_lazy(_event=None):
+            """Догрузка отложена: при прокрутке событий много, запрос нужен один."""
+            if state["pending"] is not None:
+                win.after_cancel(state["pending"])
+            state["pending"] = win.after(80, load_visible)
+
+        def load_visible():
+            state["pending"] = None
+            if not win.winfo_exists():
+                return
+            top = canvas.canvasy(0) - _LAZY_MARGIN
+            bottom = top + canvas.winfo_height() + 2 * _LAZY_MARGIN
+            batch = [c for c in state["cells"]
+                     if not c["queued"] and top <= c["frame"].winfo_y() + _CELL_H
+                     and c["frame"].winfo_y() <= bottom]
+            if batch:
+                self._load_thumbs(win, batch, win.thumb_token, status, state["cells"])
+
         def fill():
             for child in grid.winfo_children():
                 child.destroy()
             win.thumb_refs.clear()
             win.thumb_token += 1
-            token = win.thumb_token
+            state["cells"] = []
 
             items = _filter_by_lang(metadata.rank_art(pool, self.art_languages()),
                                     lang_combo.get())
@@ -722,62 +766,70 @@ class MetaTab:
                 status.set("")
                 return
 
-            items = items[:_GRID_LIMIT]
-            buttons = []
-            for i, candidate in enumerate(items):
-                cell = ttk.Frame(grid, padding=6)
-                cell.grid(row=i // _GRID_COLUMNS, column=i % _GRID_COLUMNS, sticky="n")
-                btn = ttk.Button(cell, text="загрузка…", width=22,
-                                 command=lambda c=candidate: pick(c))
-                btn.pack()
-                ttk.Label(cell, text=candidate.label()).pack()
-                buttons.append((btn, candidate))
-            status.set(f"Загрузка миниатюр: 0 из {len(items)}")
-            self._load_grid_thumbs(win, buttons, token, status)
+            for i, candidate in enumerate(items[:_GRID_LIMIT]):
+                cell = tk.Frame(grid, width=_CELL_W, height=_CELL_H)
+                cell.grid(row=i // _GRID_COLUMNS, column=i % _GRID_COLUMNS)
+                cell.grid_propagate(False)      # размер держим сами, без прыжков
+                btn = ttk.Button(cell, text="…", command=lambda c=candidate: pick(c))
+                btn.place(x=8, y=0, width=_GRID_BOX[0], height=_GRID_BOX[1])
+                ttk.Label(cell, text=candidate.label()).place(
+                    x=8, y=_GRID_BOX[1] + 4, width=_GRID_BOX[0])
+                state["cells"].append({"frame": cell, "btn": btn,
+                                       "candidate": candidate, "queued": False})
+            grid.update_idletasks()
+            status.set(f"Миниатюр: 0 из {len(state['cells'])}")
+            load_visible()
 
+        def on_scroll(*args):
+            canvas.yview(*args)
+            schedule_lazy()
+
+        scroll.configure(command=on_scroll)
+        canvas.bind("<Configure>", schedule_lazy)
+        _bind_wheel(canvas, win, schedule_lazy)
         lang_combo.bind("<<ComboboxSelected>>", lambda e: fill())
         fill()
         self._center(win)
 
-    def _load_grid_thumbs(self, win, buttons, token: int, status) -> None:
-        """Качает миниатюры сетки параллельно и в фоне.
+    def _load_thumbs(self, win, batch, token: int, status, all_cells) -> None:
+        """Качает миниатюры видимых ячеек параллельно и в фоне.
 
-        Раньше сорок картинок скачивались подряд прямо в потоке интерфейса, и
-        окно не отрисовывалось, пока не придёт последняя. Теперь оно открывается
-        сразу, а картинки появляются по мере готовности.
+        Грузим только то, что попало в поле зрения (с запасом), а не все сорок
+        сразу: до нижних рядов пользователь может и не долистать.
         """
         if ImageTk is None:
             status.set("Нет пакета pillow — миниатюры не показываются")
             return
-        done = [0]
-        total = len(buttons)
+        for cell in batch:
+            cell["queued"] = True
 
-        def show(btn, image):
+        def show(cell, image):
             if not win.winfo_exists() or win.thumb_token != token:
                 return
-            done[0] += 1
-            status.set("" if done[0] >= total
-                       else f"Загрузка миниатюр: {done[0]} из {total}")
+            done = sum(1 for c in all_cells if c.get("shown"))
+            cell["shown"] = True
+            total = len(all_cells)
+            status.set("" if done + 1 >= total else f"Миниатюр: {done + 1} из {total}")
             photo = _to_photo(image)
             if photo is None:
-                btn.configure(text="(нет превью)")
+                cell["btn"].configure(text="(нет превью)")
                 return
             win.thumb_refs.append(photo)
-            btn.configure(image=photo, text="")
+            cell["btn"].configure(image=photo, text="")
 
         def work():
             with ThreadPoolExecutor(max_workers=6) as pool:
-                futures = {pool.submit(_load_image, c.thumb_url, _GRID_BOX): btn
-                           for btn, c in buttons}
+                futures = {pool.submit(_load_image, c["candidate"].thumb_url,
+                                       _GRID_BOX): c for c in batch}
                 for future in as_completed(futures):
                     if win.thumb_token != token:
                         return
-                    btn = futures[future]
+                    cell = futures[future]
                     try:
                         image = future.result()
                     except Exception:  # noqa: BLE001 — одна картинка не должна ронять сетку
                         image = None
-                    self.root.after(0, lambda b=btn, im=image: show(b, im))
+                    self.root.after(0, lambda c=cell, im=image: show(c, im))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -1077,6 +1129,20 @@ class MetaTab:
         ttk.Entry(frm, textvariable=art_var, width=44).grid(row=row, column=1, sticky="ew", pady=2)
 
         row += 1
+        ttk.Label(frm, text="Размер постера:").grid(row=row, column=0, sticky="e",
+                                                    padx=(0, 6), pady=2)
+        size_combo = ttk.Combobox(frm, state="readonly", width=24,
+                                  values=list(POSTER_SIZE_LABELS.values()))
+        size_codes = list(POSTER_SIZE_LABELS)
+        size_combo.current(size_codes.index(s.poster_size)
+                           if s.poster_size in size_codes else len(size_codes) - 1)
+        size_combo.grid(row=row, column=1, sticky="w", pady=2)
+
+        row += 1
+        ttk.Label(frm, text="(на скорость программы не влияет — файл скачивается один раз)"
+                  ).grid(row=row, column=1, sticky="w")
+
+        row += 1
         ttk.Label(frm, justify="left", text=(
             "Корни библиотеки — по ним программа сама понимает, фильм перед ней\n"
             "или сериал, когда тип стоит «авто». Папок может быть несколько.")
@@ -1097,6 +1163,7 @@ class MetaTab:
             s.meta_language = codes[lang_combo.current()]
             s.art_languages = [("" if part.strip() in ("без текста", "") else part.strip())
                                for part in art_var.get().split(",")] or ["ru", "en", ""]
+            s.poster_size = size_codes[size_combo.current()]
             s.movies_roots = list(movies_list.get(0, "end"))
             s.tv_roots = list(tv_list.get(0, "end"))
             metaconf.save_settings(s)
