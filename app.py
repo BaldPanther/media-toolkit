@@ -31,6 +31,40 @@ EDL_TRACK_AUTO = "Оригинал (авто)"
 _SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
 
 
+def is_dark_theme(widget) -> bool:
+    """Тёмная ли системная тема.
+
+    На macOS ttk (тема aqua) следует системной автоматически, и в тёмной теме текст
+    в таблицах становится белым. Светлая заливка строки, заданная без явного
+    foreground, делает её нечитаемой — белое по светло-зелёному.
+    На Windows системного цвета нет, TclError → считаем тему светлой.
+    """
+    try:
+        r, g, b = widget.winfo_rgb("systemTextBackgroundColor")
+    except tk.TclError:
+        return False
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 65535 < 0.5
+
+
+def row_colors(widget) -> dict[str, dict[str, str]]:
+    """Цвета подсветки строк под текущую тему. Светлая — как было на Windows."""
+    if is_dark_theme(widget):
+        return {
+            "warn":     {"background": "#4a3020", "foreground": "#ffdcc4"},
+            "change":   {"background": "#1e3a24", "foreground": "#d7f0d7"},
+            "nochange": {"foreground": "#9a9a9a"},
+            "error":    {"background": "#5c2020", "foreground": "#ffd9d9"},
+            "accent":   {"foreground": "#6fa8ff"},
+        }
+    return {
+        "warn":     {"background": "#ffd9d9"},
+        "change":   {"background": "#dff5df"},
+        "nochange": {"foreground": "#888888"},
+        "error":    {"background": "#ffbcbc"},
+        "accent":   {"foreground": "#0a58ca"},
+    }
+
+
 def load_app_settings() -> dict:
     try:
         return json.loads(_SETTINGS_FILE.read_text("utf-8"))
@@ -170,10 +204,11 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="left", fill="y")
 
-        self.tree.tag_configure("warn", background="#ffd9d9")
-        self.tree.tag_configure("change", background="#dff5df")
-        self.tree.tag_configure("nochange", foreground="#888888")
-        self.tree.tag_configure("error", background="#ffbcbc")
+        c = row_colors(self.tree)
+        self.tree.tag_configure("warn", **c["warn"])
+        self.tree.tag_configure("change", **c["change"])
+        self.tree.tag_configure("nochange", **c["nochange"])
+        self.tree.tag_configure("error", **c["error"])
 
     def _build_tracks_apply(self, parent):
         f = ttk.Frame(parent, padding=(10, 6))
@@ -217,7 +252,8 @@ class App:
         self.edl_track_combo.grid(row=1, column=1, columnspan=2, sticky="w", padx=(6, 0), pady=(6, 0))
         self.edl_track_combo.bind("<<ComboboxSelected>>", lambda e: self._update_track_info())
         self.edl_track_info = tk.StringVar(value="")
-        ttk.Label(opt, textvariable=self.edl_track_info, foreground="#0a58ca").grid(
+        ttk.Label(opt, textvariable=self.edl_track_info,
+                  **row_colors(opt)["accent"]).grid(
             row=1, column=3, columnspan=3, sticky="w", padx=(8, 0), pady=(6, 0))
 
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
@@ -326,7 +362,8 @@ class App:
         self.online_take_loc_btn = ttk.Button(online_f, text="Вернуть локальные (по scope)", command=self.take_local)
         self.online_take_loc_btn.pack(side="left", padx=(8, 0))
         self.online_status = tk.StringVar(value="")
-        ttk.Label(online_f, textvariable=self.online_status, foreground="#0a58ca").pack(side="left", padx=10)
+        ttk.Label(online_f, textvariable=self.online_status,
+                  **row_colors(online_f)["accent"]).pack(side="left", padx=10)
 
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
@@ -345,8 +382,9 @@ class App:
         self.edl_tree.configure(yscrollcommand=vsb.set)
         self.edl_tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="left", fill="y")
-        self.edl_tree.tag_configure("first", foreground="#0a58ca")
-        self.edl_tree.tag_configure("has", background="#dff5df")
+        c = row_colors(self.edl_tree)
+        self.edl_tree.tag_configure("first", **c["accent"])
+        self.edl_tree.tag_configure("has", **c["change"])
         self.edl_tree.bind("<Double-1>", self._edl_edit_row)
         self.edl_tree.bind("<<TreeviewSelect>>", self._update_scope_count)
 
