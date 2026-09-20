@@ -59,7 +59,12 @@ class App:
 
         root.title("MKV — дорожки, субтитры, пропуск заставок")
         self._set_window_icon()
-        root.geometry("1080x760")
+        # Позицию задаём явно, не только размер: при запуске из Dock на macOS окно
+        # без координат уезжает в левый нижний угол. По вертикали ставим чуть выше
+        # центра — иначе окно выглядит утопленным под строкой меню.
+        w, h = 1080, 760
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
         root.minsize(900, 640)
 
         self._build_top(start_folder)
