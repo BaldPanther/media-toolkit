@@ -198,12 +198,55 @@ def test_build_and_write_outro_not_to_end(tmp_path):
     assert "1200.000\t1400.000" in video.with_suffix(".edl").read_text("utf-8")
 
 
+def test_build_and_write_keeps_hand_set_outro_end(tmp_path):
+    """Заданный руками конец попадает в файл даже при включённой галке.
+
+    Случай фильма Marvel: титры с 1:59:45, дальше сцена — конец указан явно, и
+    растягивать его до конца файла нельзя, иначе сцену проглотит.
+    """
+    video = tmp_path / "Movie.mkv"
+    video.write_text("")
+    ep = EpisodeEdl(video, duration=7706.0,
+                    outro=Segment(7185.0, 7520.0), outro_fixed_end=True)
+
+    edl.build_and_write(ep, Padding(), keep_first_intro=False, outro_to_end=True)
+    assert "7185.000\t7520.000" in video.with_suffix(".edl").read_text("utf-8")
+
+
 def test_final_outro_applies_outro_end_padding():
     ep = EpisodeEdl(Path("Show.S01E02.mkv"), duration=1400.0,
                     outro=Segment(1200.0, 1340.0))
     seg = edl.final_outro(ep, Padding(outro_start=-5.0, outro_end=10.0), outro_to_end=False)
     assert (seg.start, seg.end) == (1195.0, 1350.0)
     assert edl.final_outro(EpisodeEdl(Path("x.mkv")), Padding()) is None
+
+
+def test_final_outro_keeps_hand_set_end_despite_to_end_flag():
+    """Заданный руками конец главнее галки «до конца файла».
+
+    Иначе указанное время молча растягивалось бы до конца файла, и сцена после
+    титров всё равно проглатывалась бы — ради чего конец и задавали.
+    """
+    ep = EpisodeEdl(Path("Movie.mkv"), duration=7706.0,
+                    outro=Segment(7185.0, 7520.0), outro_fixed_end=True)
+    seg = edl.final_outro(ep, Padding(), outro_to_end=True)
+    assert (seg.start, seg.end) == (7185.0, 7520.0)
+
+
+def test_final_outro_stretches_when_end_is_not_fixed():
+    """Без явного конца галка работает как раньше — тянем до конца файла."""
+    ep = EpisodeEdl(Path("Movie.mkv"), duration=7706.0,
+                    outro=Segment(7185.0, 7520.0))
+    seg = edl.final_outro(ep, Padding(), outro_to_end=True)
+    assert (seg.start, seg.end) == (7185.0, 7706.0)
+
+
+def test_final_outro_fixed_end_still_takes_padding():
+    """Отступ сезона к заданному концу применяется — он правит саму границу."""
+    ep = EpisodeEdl(Path("Movie.mkv"), duration=7706.0,
+                    outro=Segment(7185.0, 7520.0), outro_fixed_end=True)
+    seg = edl.final_outro(ep, Padding(outro_end=-20.0), outro_to_end=True)
+    assert (seg.start, seg.end) == (7185.0, 7500.0)
 
 
 # ------------------------------------------- поиск внешних инструментов --

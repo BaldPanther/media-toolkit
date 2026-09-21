@@ -313,9 +313,12 @@ class App:
         # Обычно после титров ничего нет и пропуск честнее вести до самого конца.
         # Но если там сцена после титров, её бы тоже проглотило — тогда галку
         # снимают, и конец берётся по найденной границе плюс отступ «конец титров».
+        # Это политика на случай «конец неизвестен»: заданный вручную конец титров
+        # галка не трогает, иначе вписанное время молча отменялось бы.
         self.edl_outro_to_end = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            opt, text="Титры — до конца файла (снимите, если после титров есть сцена)",
+            opt, text="Титры — до конца файла, когда конец не задан "
+                      "(снимите, если после титров есть сцена)",
             variable=self.edl_outro_to_end, command=self._on_outro_to_end,
         ).grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
@@ -329,8 +332,8 @@ class App:
         manual.pack(fill="x", padx=10, pady=(0, 4))
         self.edl_manual = {k: tk.StringVar(value="")
                            for k in ("intro_start", "intro_end", "intro_dur",
-                                     "outro_start", "outro_last", "outro_from_start",
-                                     "recap_end")}
+                                     "outro_start", "outro_end", "outro_last",
+                                     "outro_from_start", "recap_end")}
         self.edl_scope = tk.StringVar(value="all")
 
         scope_row = ttk.Frame(manual)
@@ -362,11 +365,18 @@ class App:
             row=2, column=3, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(manual, text="Задать", command=self.apply_intro_dur_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
 
+        # Конец титров необязателен: пусто — до конца файла, как было всегда. Но если
+        # после титров идёт сцена (Marvel и прочие), её задают явно, и тогда указанное
+        # время главнее галки «до конца файла» — см. edl.final_outro.
         ttk.Label(manual, text="Титры:").grid(row=3, column=0, sticky="e", pady=(6, 0))
         ttk.Label(manual, text="начало").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
         ttk.Entry(manual, textvariable=self.edl_manual["outro_start"], width=8).grid(row=3, column=2, pady=(6, 0))
-        ttk.Label(manual, text="(до конца файла)").grid(row=3, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(manual, text="конец").grid(row=3, column=3, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_end"], width=8).grid(row=3, column=4, pady=(6, 0))
         ttk.Button(manual, text="Задать", command=self.apply_outro_all).grid(row=3, column=5, padx=(10, 0), pady=(6, 0))
+        ttk.Label(manual, text="пусто — до конца файла; укажите, если после титров есть сцена",
+                  **row_colors(manual)["nochange"]).grid(
+            row=3, column=6, sticky="w", padx=(10, 0), pady=(6, 0))
 
         # Титры «последние N сек от конца» — устойчиво к разной длине серий (титры обычно
         # фиксированной длительности), для каждой серии начало = длительность − N.
@@ -1091,10 +1101,23 @@ class App:
             self._pad_val("outro_start"), self._pad_val("outro_end"),
         )
 
+    def _sync_outro_end_spin(self):
+        """Гасит отступ конца титров, пока он ни на что не влияет.
+
+        Влиять ему не на что, только если титры у всех серий тянутся до конца
+        файла. Там, где конец задан руками, отступ ложится поверх него — и тогда
+        поле должно быть доступным, иначе забытое в нём значение применялось бы
+        втихую, а поправить его было бы нечем.
+
+        Состояние виджета и перерисовка таблицы разведены намеренно: перерисовка
+        сама вызывает этот метод, и объединение их замкнуло бы рекурсию.
+        """
+        fixed = any(ep.outro_fixed_end for ep in getattr(self, "edl_eps", []))
+        active = not self.edl_outro_to_end.get() or fixed
+        self.edl_outro_end_spin.configure(state="normal" if active else "disabled")
+
     def _on_outro_to_end(self):
-        """Пока титры тянутся до конца файла, отступ их конца ни на что не влияет."""
-        self.edl_outro_end_spin.configure(
-            state="disabled" if self.edl_outro_to_end.get() else "normal")
+        self._sync_outro_end_spin()
         self.refresh_edl_preview()
 
     # Настройки вкладки EDL переживают перезапуск: отступы и дорожка детекта
@@ -1145,6 +1168,7 @@ class App:
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
+                e.outro_fixed_end = old.outro_fixed_end
                 e.local_intro, e.local_outro, e.local_recap = \
                     old.local_intro, old.local_outro, old.local_recap
                 e.online_intro, e.online_outro, e.online_recap = \
@@ -1158,6 +1182,11 @@ class App:
                 e.recap, e.intro, e.outro = edl.read_edl(f.path)
                 if e.recap or e.intro or e.outro:
                     e.note = "из .edl"
+                # Титры, не доходящие до конца файла, кто-то задал руками — иначе
+                # их дотянули бы до самого конца. Не пометив это, следующая запись
+                # растянула бы их обратно и съела сцену после титров.
+                if e.outro and e.duration and e.outro.end < e.duration - edl.END_EPS:
+                    e.outro_fixed_end = True
             eps.append(e)
         self.edl_eps = eps
         # Список пересобран в порядке скана — прежняя сортировка к нему не относится.
@@ -1270,13 +1299,21 @@ class App:
             return
         s = self._parse_time(self.edl_manual["outro_start"].get())
         if s is None:
-            messagebox.showinfo("Титры", "Укажите начало титров (например 20:30) — конец берётся до конца файла.")
+            messagebox.showinfo("Титры", "Укажите начало титров (например 20:30). "
+                                         "Конец можно не указывать — тогда до конца файла.")
+            return
+        fixed = self._parse_time(self.edl_manual["outro_end"].get())
+        if fixed is not None and fixed <= s:
+            messagebox.showinfo("Титры", "Конец титров должен быть позже начала.")
             return
         for ep in eps:
-            end = ep.duration or (s + 60)
+            end = fixed if fixed is not None else (ep.duration or (s + 60))
             ep.outro = edl.Segment(s, end) if end > s else None
+            ep.outro_fixed_end = ep.outro is not None and fixed is not None
         self.refresh_edl_preview()
-        self.log_line(f"Титры заданы {self._scope_word(len(eps))}: с {self._fmt_time(s)} до конца файла.")
+        tail = (f"по {self._fmt_time(fixed)}" if fixed is not None else "до конца файла")
+        self.log_line(f"Титры заданы {self._scope_word(len(eps))}: "
+                      f"с {self._fmt_time(s)} {tail}.")
 
     def apply_outro_last_all(self):
         eps = self._edl_scope_eps()
@@ -1291,6 +1328,7 @@ class App:
         for ep in eps:
             if ep.duration:
                 ep.outro = edl.Segment(max(0.0, ep.duration - n), ep.duration)
+                ep.outro_fixed_end = False
                 done += 1
         self.refresh_edl_preview()
         self.log_line(f"Титры заданы как последние {self._fmt_time(n)} "
@@ -1358,6 +1396,8 @@ class App:
         label = {"intro": "интро", "outro": "титры", "recap": "recap"}[kind]
         for ep in eps:
             setattr(ep, kind, None)
+            if kind == "outro":
+                ep.outro_fixed_end = False
         self.refresh_edl_preview()
         self.log_line(f"Убрано «{label}» у {len(eps)} серий.")
 
@@ -1370,6 +1410,7 @@ class App:
             return
         for ep in eps:
             ep.intro = ep.outro = ep.recap = None
+            ep.outro_fixed_end = False
         self.refresh_edl_preview()
         self.log_line(f"Сброшены интро/титры/recap у {len(eps)} серий.")
 
@@ -1386,7 +1427,9 @@ class App:
             if ep.online_intro:
                 ep.intro = ep.online_intro; got = True
             if ep.online_outro:
-                ep.outro = ep.online_outro; got = True
+                ep.outro = ep.online_outro
+                ep.outro_fixed_end = False
+                got = True
             if ep.online_recap:
                 ep.recap = ep.online_recap; got = True
             n += 1 if got else 0
@@ -1405,7 +1448,9 @@ class App:
             if ep.local_intro:
                 ep.intro = ep.local_intro; got = True
             if ep.local_outro:
-                ep.outro = ep.local_outro; got = True
+                ep.outro = ep.local_outro
+                ep.outro_fixed_end = False
+                got = True
             if ep.local_recap:
                 ep.recap = ep.local_recap; got = True
             n += 1 if got else 0
@@ -1679,6 +1724,9 @@ class App:
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
             return
+        # Доступность отступа конца титров зависит от того, задан ли где-то конец
+        # вручную, а это меняется на каждой правке — пересчитываем здесь.
+        self._sync_outro_end_spin()
         # Строки пересоздаются целиком, и выделение вместе с ними пропадало —
         # а по нему теперь работают и детект, и запись. Запоминаем выделенные
         # серии по пути и возвращаем выделение на их новые строки.
@@ -2062,6 +2110,9 @@ class App:
         "конец интро": ("ie", "intro_end"),
         "начало интро": ("is", "intro_start"),
         "начало титров": ("os", "outro_start"),
+        # Пусто, пока титры идут до конца файла. Для сцены после титров это как раз
+        # та граница, которую глазами и ищут: где титры кончились, а сцена началась.
+        "конец титров": ("oe", "outro_end"),
         "конец recap": ("rc", None),
     }
     _FRAME_COLS = 4
@@ -2291,7 +2342,8 @@ class App:
         ttk.Label(
             frm,
             text="Время: MM:SS, H:MM:SS или секунды. Пусто — сегмента нет.\n"
-                 "Recap идёт с начала файла; титры — до конца файла (конец не задаётся).\n"
+                 "Recap идёт с начала файла. Конец титров пуст — они идут до конца\n"
+                 "файла; задайте его, если после титров есть сцена.\n"
                  "Конец интро можно не заполнять, если в блоке «Задать всем» указана\n"
                  "длительность интро — тогда конец = начало + длительность.\n"
                  "Отступы сезона применяются к интро/титрам поверх этих значений.",
@@ -2302,7 +2354,9 @@ class App:
             ("Recap до (с начала, пусто = нет):", "rc", e.recap.end if e.recap else None),
             ("Интро начало:", "is", e.intro.start if e.intro else None),
             ("Интро конец:", "ie", e.intro.end if e.intro else None),
-            ("Титры начало (до конца файла):", "os", e.outro.start if e.outro else None),
+            ("Титры начало:", "os", e.outro.start if e.outro else None),
+            ("Титры конец (пусто = до конца файла):", "oe",
+             e.outro.end if (e.outro and e.outro_fixed_end) else None),
         ]
         varmap = {}
         # Продолжительность сегмента рядом с полями: начало не всегда нулевое, и
@@ -2313,7 +2367,7 @@ class App:
             v = tk.StringVar(value=self._fmt_time(val) if val is not None else "")
             varmap[key] = v
             ttk.Entry(frm, textvariable=v, width=12).grid(row=i, column=1, sticky="w", pady=2)
-            if key in ("rc", "ie", "os"):      # строки, на которых сегмент замыкается
+            if key in ("rc", "ie", "oe"):      # строки, на которых сегмент замыкается
                 lengths[key] = tk.StringVar(value="")
                 ttk.Label(frm, textvariable=lengths[key],
                           **row_colors(frm)["nochange"]).grid(
@@ -2331,8 +2385,10 @@ class App:
             end = self._parse_time(varmap["ie"].get())
             put(lengths["ie"], (end - start) if (start is not None and end is not None) else None)
             outro = self._parse_time(varmap["os"].get())
-            put(lengths["os"], (e.duration - outro) if (outro is not None and e.duration) else None,
-                " (до конца файла)")
+            outro_end = self._parse_time(varmap["oe"].get())
+            end = outro_end if outro_end is not None else e.duration
+            put(lengths["oe"], (end - outro) if (outro is not None and end) else None,
+                "" if outro_end is not None else " (до конца файла)")
 
         for var in varmap.values():
             var.trace_add("write", show_lengths)
@@ -2347,7 +2403,7 @@ class App:
         ttk.Button(clear_frm, text="интро", width=7,
                    command=lambda: (varmap["is"].set(""), varmap["ie"].set(""))).pack(side="left", padx=2)
         ttk.Button(clear_frm, text="титры", width=7,
-                   command=lambda: varmap["os"].set("")).pack(side="left", padx=2)
+                   command=lambda: (varmap["os"].set(""), varmap["oe"].set(""))).pack(side="left", padx=2)
         ttk.Button(clear_frm, text="recap", width=7,
                    command=lambda: varmap["rc"].set("")).pack(side="left", padx=2)
 
@@ -2368,11 +2424,17 @@ class App:
                 if dur and dur > 0:
                     ie = is_ + dur
             e.intro = edl.Segment(is_, ie) if (is_ is not None and ie is not None and ie > is_) else None
-            if os_ is not None:
+            oe = self._parse_time(varmap["oe"].get())
+            if os_ is not None and oe is not None and oe > os_:
+                # Конец указан руками — он главнее галки «титры до конца файла».
+                e.outro, e.outro_fixed_end = edl.Segment(os_, oe), True
+            elif os_ is not None:
                 end = e.duration or (e.outro.end if e.outro else os_ + 60)
                 e.outro = edl.Segment(os_, end) if end > os_ else None
+                e.outro_fixed_end = False
             else:
                 e.outro = None
+                e.outro_fixed_end = False
             win.destroy()
             self.refresh_edl_preview()
 

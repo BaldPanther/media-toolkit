@@ -31,6 +31,11 @@ from pathlib import Path
 # action 3 = commercial break: авто-пропуск один раз, с возможностью отмотать назад.
 EDL_ACTION_SKIP = 3
 
+# Насколько конец титров должен не доходить до конца файла, чтобы считать его
+# заданным руками, а не «до конца». Время в .edl пишется с тремя знаками, а
+# длительность из ffprobe может отличаться на доли секунды — секунды хватает.
+END_EPS = 1.0
+
 _HERE = Path(__file__).resolve().parent
 
 
@@ -116,6 +121,10 @@ class EpisodeEdl:
     duration: float | None = None
     intro: Segment | None = None      # найденное/заданное интро (до фичи первой серии)
     outro: Segment | None = None
+    # Конец титров задан руками, а не «до конца файла». Такой конец главнее общей
+    # галки outro_to_end: иначе указанное время молча растягивалось бы до конца
+    # файла и сцена после титров всё равно проглатывалась бы.
+    outro_fixed_end: bool = False
     recap: Segment | None = None      # начальный recap «в предыдущих сериях» (0..X), вручную
     note: str = ""                    # диагностика детекта (для показа в таблице)
     chapters: int = 0                 # сколько глав уже в файле (из скана, см. core.MkvFile)
@@ -265,9 +274,13 @@ def final_outro(ep: EpisodeEdl, padding: Padding,
     идёт сцена (post-credits), так она бы тоже проглатывалась: для этого
     outro_to_end=False оставляет найденную границу, к которой применён
     padding.outro_end.
+
+    Галка — политика на случай «конец неизвестен». Если конец задан руками
+    (ep.outro_fixed_end), он главнее: растягивать до конца файла именно то время,
+    которое пользователь только что вписал, значит молча его отменить.
     """
     outro = apply_padding(ep.outro, padding.outro_start, padding.outro_end, ep.duration)
-    if outro is not None and outro_to_end and ep.duration:
+    if outro is not None and outro_to_end and ep.duration and not ep.outro_fixed_end:
         outro = Segment(outro.start, ep.duration)
     return outro
 
