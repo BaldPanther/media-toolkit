@@ -65,13 +65,7 @@ class App:
 
         root.title("Медиатека Kodi — метаданные, дорожки, пропуск заставок")
         self._set_window_icon()
-        # Позицию задаём явно, не только размер: при запуске из Dock на macOS окно
-        # без координат уезжает в левый нижний угол. По вертикали ставим чуть выше
-        # центра — иначе окно выглядит утопленным под строкой меню.
-        w, h = 1080, 760
-        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-        root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
-        root.minsize(900, 640)
+        root.minsize(900, 700)
 
         self._build_top(start_folder)
 
@@ -94,10 +88,29 @@ class App:
         self._build_common_bottom()
         self.meta = metaui.MetaTab(self.tab_meta, self)
 
+        self._place_window()
         self._enable_entry_clipboard()
         self._check_tools()
         # Путь (последний/аргумент) только подставляется в поле — сканирование вручную
         # кнопкой «Сканировать»: если папка уже обрабатывалась, повторный скан не нужен.
+
+    def _place_window(self):
+        """Размер по содержимому, а не зашитый.
+
+        Зашитые 1080×760 были меньше, чем окну нужно: таблица предпросмотра
+        сжималась до трёх строк, а лог выдавливался за нижний край совсем.
+        Берём то, что виджеты запросили, и подрезаем по экрану.
+
+        Позицию задаём явно, не только размер: при запуске из Dock на macOS окно
+        без координат уезжает в левый нижний угол. По вертикали ставим чуть выше
+        центра — иначе окно выглядит утопленным под строкой меню.
+        """
+        root = self.root
+        root.update_idletasks()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        w = min(max(root.winfo_reqwidth(), 1080), sw - 80)
+        h = min(max(root.winfo_reqheight(), 760), sh - 120)
+        root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
 
     def _set_window_icon(self):
         assets = Path(__file__).resolve().parent / "assets"

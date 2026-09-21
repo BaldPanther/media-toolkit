@@ -357,7 +357,11 @@ class MetaTab:
         cols = ("sel", "now", "next", "status")
         heads = {"sel": "", "now": "Сейчас", "next": "Станет", "status": "Статус"}
         widths = {"sel": 28, "now": 250, "next": 330, "status": 280}
-        self.tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse")
+        # Высота задана явно: строк в плане всегда много, а без неё вкладка
+        # просила бы под таблицу десять строк и полагалась на то, что соседняя
+        # вкладка выше и вытянет окно за собой.
+        self.tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="browse",
+                                 height=16)
         for c in cols:
             self.tree.heading(c, text=heads[c])
             self.tree.column(c, width=widths[c], anchor="center" if c == "sel" else "w",
