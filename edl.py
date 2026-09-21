@@ -15,11 +15,15 @@ break): Kodi авто-пропускает сегмент один раз за �
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -389,10 +393,97 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, creationflags=_CREATE_NO_WINDOW)
 
 
-def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
-                audio_index: int = 0):
-    """Отпечаток окна аудио. Возвращает (np.uint32 array | None, reported_duration)."""
+# --------------------------------------------------------------------------- #
+# Кэш отпечатков
+# --------------------------------------------------------------------------- #
+#
+# Отпечаток считается из нескольких минут звука, но чтобы добраться до звука в
+# MKV, ffmpeg вынужден прочитать весь этот кусок вместе с видео: дорожки в
+# контейнере переплетены. На сетевой шаре это сотни мегабайт на окно и почти всё
+# время детекта — при том, что от прогона к прогону данные те же, файл не менялся.
+# Поэтому посчитанное складываем на диск и при повторном детекте берём оттуда:
+# повторный запуск и подбор порогов становятся мгновенными.
+#
+# В ключ входит всё, от чего отпечаток зависит: файл (путь, размер, время правки),
+# номер дорожки и границы окна. Пороги сравнения (BIT_THR и прочие) в ключ не
+# входят намеренно — на извлечение они не влияют, и крутить их можно бесплатно.
+
+CACHE_TTL_DAYS = 90            # записи, которых столько не касались, удаляем
+
+
+def _cache_key(path, window: float, from_end: bool, audio_index: int) -> str | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    raw = (f"{os.fspath(path)}|{st.st_size}|{st.st_mtime_ns}"
+           f"|{audio_index}|{window:.0f}|{int(from_end)}")
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _cache_load(cache_dir, key: str):
+    """(fp, dur) из кэша или None. Битую или чужую запись молча игнорируем."""
     import numpy as np
+    f = Path(cache_dir) / f"{key}.json"
+    try:
+        data = json.loads(f.read_text("utf-8"))
+        fp = np.frombuffer(base64.b64decode(data["fp"]), dtype="<u4").astype(np.uint32)
+    except Exception:  # noqa: BLE001 — нет файла, битый JSON, чужой формат: считаем заново
+        return None
+    if fp.size == 0:
+        return None
+    try:
+        os.utime(f, None)      # запись живая — по этой метке чистим старьё
+    except OSError:
+        pass
+    return fp, data.get("dur")
+
+
+def _cache_store(cache_dir, key: str, fp, dur) -> None:
+    import numpy as np  # noqa: F401 — нужен вызывающему, здесь только для симметрии
+    d = Path(cache_dir)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        payload = {"fp": base64.b64encode(fp.astype("<u4").tobytes()).decode("ascii"),
+                   "dur": dur}
+        tmp = d / f"{key}.tmp"
+        tmp.write_text(json.dumps(payload), "utf-8")
+        tmp.replace(d / f"{key}.json")   # подмена целиком: недописанного файла не увидим
+    except Exception:  # noqa: BLE001 — кэш это ускорение, а не обязанность
+        pass
+
+
+def prune_cache(cache_dir, ttl_days: int = CACHE_TTL_DAYS) -> int:
+    """Удаляет записи, которых давно не касались. Возвращает число удалённых."""
+    cutoff = time.time() - ttl_days * 86400
+    removed = 0
+    try:
+        entries = list(Path(cache_dir).glob("*.json"))
+    except OSError:
+        return 0
+    for f in entries:
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
+                audio_index: int = 0, cache_dir=None):
+    """Отпечаток окна аудио → (np.uint32 array | None, reported_duration, из_кэша).
+
+    cache_dir=None отключает кэш и всегда считает заново.
+    """
+    import numpy as np
+    key = _cache_key(path, window, from_end, audio_index) if cache_dir else None
+    if key:
+        hit = _cache_load(cache_dir, key)
+        if hit is not None:
+            return hit[0], hit[1], True
+
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
     try:
@@ -400,7 +491,7 @@ def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
         cp = _run([ffmpeg, "-v", "error", *pos, "-i", str(path), "-t", f"{window:.0f}",
                    "-map", f"0:a:{audio_index}", "-ac", "1", "-ar", "11025", "-y", tmp.name])
         if cp.returncode != 0:
-            return None, None
+            return None, None, False
         cp2 = _run([fpcalc, "-raw", "-length", "100000", tmp.name])
         out = cp2.stdout.decode("utf-8", "replace")
         fp = None
@@ -414,7 +505,9 @@ def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
                     dur = float(line[len("DURATION="):])
                 except ValueError:
                     pass
-        return fp, dur
+        if key and fp is not None:
+            _cache_store(cache_dir, key, fp, dur)
+        return fp, dur, False
     finally:
         try:
             os.unlink(tmp.name)
@@ -508,7 +601,8 @@ def _assign(eps, fps, durs, kind, from_end, window,
 def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
                   intro_window=INTRO_WINDOW, outro_window=OUTRO_WINDOW,
                   max_shift_s=MAX_SHIFT_S, bit_thr=BIT_THR, min_len_s=MIN_LEN_S,
-                  prefer_lang: str | None = None, progress=None, stop=None):
+                  prefer_lang: str | None = None, progress=None, stop=None,
+                  cache_dir=None, stats=None):
     """Проставляет intro/outro для серий ОДНОГО сезона по аудио-фингерпринтингу.
 
     episodes — список EpisodeEdl (желательно одного сезона, отсортированы).
@@ -517,6 +611,11 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
     каждого отпечатка (i — число готовых). stop() -> True прерывает работу:
     недосчитанный kind не проставляется, уже готовые остаются. Заполняет
     ep.intro/ep.outro и ep.note; возвращает тот же список.
+
+    cache_dir — куда складывать отпечатки (None = считать всё заново). stats —
+    словарь, в который дописываются ключи «cached» и «total»: сколько окон взято
+    из кэша и сколько всего. Обновляется из потока, который зовёт detect_season,
+    поэтому блокировка не нужна.
     """
     eps = list(episodes)
     n = len(eps)
@@ -535,7 +634,7 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
         def extract(i, from_end=from_end, window=window):
             e = eps[i]
             idx = pick_audio_index(e.audio_langs, prefer_lang)
-            return _extract_fp(ffmpeg, fpcalc, e.path, window, from_end, idx)
+            return _extract_fp(ffmpeg, fpcalc, e.path, window, from_end, idx, cache_dir)
 
         # ffmpeg+fpcalc — внешние процессы, гоним пачкой; ffmpeg CPU-тяжёлый,
         # поэтому пул скромнее, чем при скане.
@@ -550,7 +649,10 @@ def detect_season(episodes, fpcalc: str, ffmpeg: str, kinds=("intro", "outro"),
                         f.cancel()
                     break
                 i = futures[fut]
-                fps[i], durs[i] = fut.result()
+                fps[i], durs[i], from_cache = fut.result()
+                if stats is not None:
+                    stats["total"] = stats.get("total", 0) + 1
+                    stats["cached"] = stats.get("cached", 0) + int(from_cache)
                 done += 1
                 if progress:
                     progress(kind, done, n, eps[i].path)

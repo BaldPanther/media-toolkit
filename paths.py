@@ -1,4 +1,4 @@
-"""Где лежат настройки: в пользовательском каталоге ОС, а не рядом с программой.
+"""Где лежат настройки и кэш: в пользовательских каталогах ОС, а не рядом с программой.
 
 Раньше `settings.json`, `meta_settings.json` и `subs_settings.json` лежали в папке
 с кодом, то есть внутри репозитория. В git они не попадали (`.gitignore`), но
@@ -33,6 +33,25 @@ def config_dir() -> Path:
         base = Path.home() / "Library" / "Application Support"
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / APP_NAME
+
+
+def cache_dir() -> Path:
+    """Каталог кэша текущей ОС — для того, что можно удалить без потерь.
+
+    Отдельно от настроек намеренно: настройки терять нельзя, а кэш отпечатков
+    весит и восстанавливается сам. Пути — те, где ОС держит кэши приложений:
+
+        macOS    ~/Library/Caches/media-toolkit/
+        Windows  %LOCALAPPDATA%\\media-toolkit\\
+        Linux    ~/.cache/media-toolkit/   (или $XDG_CACHE_HOME)
+    """
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches"
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
     return Path(base) / APP_NAME
 
 

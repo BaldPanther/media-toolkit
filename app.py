@@ -1722,14 +1722,21 @@ class App:
         def progress(kind, i, n, path):
             self.root.after(0, self._edl_detect_progress, kind, path)
 
+        # Отпечатки переживают прогон: повторный детект и подбор порогов идут
+        # из кэша, не вычитывая гигабайты с диска или сетевой шары заново.
+        cache = paths.cache_dir() / "fingerprints"
+        self._edl_detect_stats = stats = {}
+
         def work():
             try:
-                for season, paths in sorted(seasons.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
+                edl.prune_cache(cache)
+                for season, eps_paths in sorted(seasons.items(), key=lambda kv: (kv[0] is None, kv[0] or 0)):
                     if self.cancel_event.is_set():
                         break
-                    eps = [by_path[str(p)] for p in paths]
+                    eps = [by_path[str(p)] for p in eps_paths]
                     edl.detect_season(eps, fpcalc, ffmpeg, prefer_lang=prefer, progress=progress,
-                                      stop=self.cancel_event.is_set)
+                                      stop=self.cancel_event.is_set,
+                                      cache_dir=cache, stats=stats)
             except Exception as ex:  # noqa: BLE001
                 self.root.after(0, lambda: self._edl_detect_error(ex))
                 return
@@ -1756,10 +1763,14 @@ class App:
         fi = sum(1 for e in scope if e.intro)
         fo = sum(1 for e in scope if e.outro)
         n = len(scope)
+        st = getattr(self, "_edl_detect_stats", None) or {}
+        cached = (f" Отпечатков из кэша: {st.get('cached', 0)} из {st['total']}."
+                  if st.get("total") else "")
         if self.cancel_event.is_set():
-            self.log_line(f"Детект отменён. Найдено до отмены: интро {fi}/{n}, титры {fo}/{n}.")
+            self.log_line(f"Детект отменён. Найдено до отмены: интро {fi}/{n}, титры {fo}/{n}.{cached}")
         else:
-            self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
+            self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}."
+                          f"{cached} Проверьте таблицу и при нужде поправьте.")
         # Снимок локального детекта — чтобы «Вернуть локальные» восстанавливал именно его,
         # даже если активные значения потом заменили онлайновыми.
         for e in scope:

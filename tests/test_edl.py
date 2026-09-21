@@ -223,3 +223,50 @@ def test_install_hint_lists_only_missing(monkeypatch):
     assert edl.install_hint([]) == ""
     assert "brew install chromaprint" in edl.install_hint(["fpcalc"])
     assert "brew install chromaprint ffmpeg" in edl.install_hint(["fpcalc", "ffmpeg"])
+
+
+# ------------------------------------------------- кэш отпечатков --
+
+def _fake_np_fp():
+    np = pytest.importorskip("numpy")
+    return np.array([1, 2, 3, 4294967295], dtype=np.uint32)
+
+
+def test_cache_roundtrip(tmp_path):
+    fp = _fake_np_fp()
+    edl._cache_store(tmp_path, "abc", fp, 240.0)
+    got = edl._cache_load(tmp_path, "abc")
+    assert got is not None
+    assert list(got[0]) == list(fp) and got[1] == 240.0
+
+
+def test_cache_miss_and_garbage(tmp_path):
+    assert edl._cache_load(tmp_path, "нет-такого") is None
+    (tmp_path / "bad.json").write_text("не json", encoding="utf-8")
+    assert edl._cache_load(tmp_path, "bad") is None
+
+
+def test_cache_key_follows_file_and_window(tmp_path):
+    video = tmp_path / "Show.S01E01.mkv"
+    video.write_text("a")
+    base = edl._cache_key(video, 240.0, False, 0)
+    assert base is not None
+    assert base == edl._cache_key(video, 240.0, False, 0)          # тот же файл — тот же ключ
+    assert base != edl._cache_key(video, 120.0, False, 0)          # другое окно
+    assert base != edl._cache_key(video, 240.0, True, 0)           # другой край файла
+    assert base != edl._cache_key(video, 240.0, False, 1)          # другая дорожка
+    video.write_text("другое содержимое")                          # файл изменился
+    assert base != edl._cache_key(video, 240.0, False, 0)
+    assert edl._cache_key(tmp_path / "нет.mkv", 240.0, False, 0) is None
+
+
+def test_prune_cache_by_age(tmp_path):
+    import os, time
+    fresh, stale = tmp_path / "fresh.json", tmp_path / "stale.json"
+    for f in (fresh, stale):
+        f.write_text("{}", encoding="utf-8")
+    old = time.time() - 100 * 86400
+    os.utime(stale, (old, old))
+    assert edl.prune_cache(tmp_path, ttl_days=90) == 1
+    assert fresh.exists() and not stale.exists()
+    assert edl.prune_cache(tmp_path / "нет-каталога") == 0
