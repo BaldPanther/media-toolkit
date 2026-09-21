@@ -64,10 +64,12 @@ def test_sanitize_name_keeps_tight_separator_tight():
     assert library.sanitize_name("Face/Off") == "Face-Off"
 
 
-def test_sanitize_name_separator_spacing_follows_the_title():
-    # Одно правило на оба вида: пробелы вокруг дефиса такие же, как были.
+def test_sanitize_name_counts_one_space_for_both_sides():
+    # «Eddie Murphy: Delirious» — пробел только справа, а дефис отбивается с
+    # обеих сторон: половинчатое «Eddie Murphy- Delirious» не нужно никому.
     assert library.sanitize_name("A: B") == "A - B"
     assert library.sanitize_name("A :B") == "A - B"
+    assert library.sanitize_name("A : B") == "A - B"
     assert library.sanitize_name("A:B") == "A-B"
 
 
