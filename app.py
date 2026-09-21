@@ -1913,7 +1913,7 @@ class App:
                                    values=list(self._EDL_BOUNDS))
         bound_combo.pack(side="left", padx=(6, 12))
         ttk.Label(top, text="шаг:").pack(side="left")
-        step_var = tk.StringVar(value="2")
+        step_var = tk.StringVar(value=f"{edl.FRAME_STEP:.0f}")
         ttk.Combobox(top, state="readonly", width=3, textvariable=step_var,
                      values=["1", "2", "5", "10"]).pack(side="left", padx=(4, 12))
         show_btn = ttk.Button(top, text="Показать кадры")

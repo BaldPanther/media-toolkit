@@ -530,7 +530,7 @@ def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
 FRAME_WIDTH = 190              # ширина снимка в точках
 FRAME_HEIGHT = 107             # высота: 16:9 от ширины
 FRAME_COUNT = 8                # сколько кадров в полосе
-FRAME_STEP = 2.0               # шаг между ними по умолчанию, секунды
+FRAME_STEP = 1.0               # шаг между ними по умолчанию, секунды
 
 
 def grab_frame(ffmpeg: str, path, at: float, width: int = FRAME_WIDTH,
@@ -592,14 +592,21 @@ def grab_frames(ffmpeg: str, path, times, width: int = FRAME_WIDTH,
 # при этом всегда лежит внутри бандла, поэтому shutil.which его не находит, а
 # запустить можно. Отсюда и поиск по явным путям, а не только по PATH.
 
-# --no-stdin у IINA обязателен. Её справка: «sometimes iina-cli can detect whether
-# stdin has file, but sometimes not». Запущенная из программы, она получает stdin,
-# который не является терминалом, принимает его за поданный поток и пытается играть
-# его вместо файла — наружу это выходит ошибкой «не удаётся открыть файл или поток».
+# Два обязательных флага для IINA, оба выяснены опытом.
+#
+# --no-stdin: её справка честно предупреждает — «sometimes iina-cli can detect
+# whether stdin has file, but sometimes not». Запущенная из программы, она
+# получает нетерминальный stdin, принимает его за поданный поток и играет его
+# вместо файла: наружу это выходит ошибкой «не удаётся открыть файл или поток».
+#
+# --mpv-resume-playback=no: IINA (и mpv) держат сохранённую позицию просмотра в
+# watch_later-файлах строкой «start=<секунды>», и при возобновлении она побеждает
+# --start из командной строки. Замерено через IPC mpv: просим 5-ю секунду у файла
+# с сохранёнными 45 — открывается на 45. С этим флагом открывается на 5.
 _PLAYERS = (
     ("IINA", ("/Applications/IINA.app/Contents/MacOS/iina-cli",),
-     lambda t: ["--no-stdin", f"--mpv-start={t:.3f}"]),
-    ("mpv", ("mpv",), lambda t: [f"--start={t:.3f}"]),
+     lambda t: ["--no-stdin", "--mpv-resume-playback=no", f"--mpv-start={t:.3f}"]),
+    ("mpv", ("mpv",), lambda t: ["--no-resume-playback", f"--start={t:.3f}"]),
     ("VLC", ("vlc", "/Applications/VLC.app/Contents/MacOS/VLC",
              r"C:\Program Files\VideoLAN\VLC\vlc.exe",
              r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe"),
