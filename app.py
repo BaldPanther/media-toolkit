@@ -314,6 +314,10 @@ class App:
         self.edl_scope_sel_rb = ttk.Radiobutton(scope_row, text="к выделенным (0)", value="sel",
                                                  variable=self.edl_scope)
         self.edl_scope_sel_rb.pack(side="left", padx=(6, 0))
+        # Переключатель живёт в блоке ручного ввода, но правит и детект, и запись —
+        # иначе об этом никак не догадаться.
+        ttk.Label(scope_row, text="— действует и на детект, и на запись/удаление .edl",
+                  **row_colors(scope_row)["nochange"]).pack(side="left", padx=(10, 0))
 
         ttk.Label(manual, text="Интро:").grid(row=1, column=0, sticky="e")
         ttk.Label(manual, text="нач").grid(row=1, column=1, sticky="e", padx=(8, 2))
@@ -1138,6 +1142,11 @@ class App:
     def _scope_word(self, n: int) -> str:
         return f"выделенным ({n})" if self.edl_scope.get() == "sel" else f"всем ({n})"
 
+    def _scope_phrase(self) -> str:
+        """«по чему» работает действие — для текста в диалогах подтверждения."""
+        return ("выделенным сериям" if self.edl_scope.get() == "sel"
+                else "всем просканированным сериям")
+
     def apply_intro_all(self):
         eps = self._edl_scope_eps()
         if eps is None:
@@ -1550,6 +1559,12 @@ class App:
     def refresh_edl_preview(self):
         if not hasattr(self, "edl_tree"):
             return
+        # Строки пересоздаются целиком, и выделение вместе с ними пропадало —
+        # а по нему теперь работают и детект, и запись. Запоминаем выделенные
+        # серии по пути и возвращаем выделение на их новые строки.
+        selected = {str(self.edl_row_ep[i].path) for i in self.edl_tree.selection()
+                    if i in self.edl_row_ep}
+        reselect: list[str] = []
         self.edl_tree.delete(*self.edl_tree.get_children())
         self.edl_row_ep = {}
         keep = self.edl_keep_first.get()
@@ -1598,6 +1613,11 @@ class App:
                                                outro_txt, outro_on_txt, has, note_txt),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
+            if str(e.path) in selected:
+                reselect.append(iid)
+        if reselect:
+            self.edl_tree.selection_set(reselect)
+        self._update_scope_count()
         self.edl_status.set(
             f"Серий: {len(self.edl_eps)}. К пропуску интро: {n_intro}, титры: {n_outro}."
         )
@@ -1607,31 +1627,43 @@ class App:
     def detect_edl(self):
         if self.busy:
             return
-        if not self.edl_eps:
-            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+        scope = self._edl_scope_eps()
+        if scope is None:
             return
         missing = edl.missing_tools()
         if missing:
             messagebox.showerror("Нет инструментов для детекта", edl.install_hint(missing))
+            return
+        # Детект ищет то, что повторяется между сериями, поэтому по выделению он
+        # сравнивает серии ТОЛЬКО внутри выделенного. Так и нужно, когда сезон-папка
+        # склеена из двух cours с разными заставками: эталон должен быть из своего
+        # cours. Но одной серии для сравнения не хватит.
+        if len(scope) < 2:
+            messagebox.showinfo(
+                "Мало серий",
+                "Детект сравнивает серии между собой — нужно хотя бы две.\n"
+                "Выделите больше строк или переключите «Применять к: ко всем сериям».")
             return
         fpcalc = edl.find_fpcalc()
         ffmpeg = edl.find_ffmpeg()
 
         # Свежий прогон — свежие заметки: detect_season дописывает через «; »,
         # без сброса текст копился бы между запусками.
-        for e in self.edl_eps:
+        for e in scope:
             e.note = ""
 
-        seasons = edl.group_by_season([e.path for e in self.edl_eps])
-        by_path = {str(e.path): e for e in self.edl_eps}
-        total = len(self.edl_eps)
+        self._edl_detect_scope = scope
+        seasons = edl.group_by_season([e.path for e in scope])
+        by_path = {str(e.path): e for e in scope}
+        total = len(scope)
         prefer = None if self.edl_track_var.get() == EDL_TRACK_AUTO else self.edl_track_var.get()
 
         self.set_busy(True)
         self._edl_prog = 0
         self._edl_prog_total = total * 2                     # intro + outro
         self.progress.configure(value=0, maximum=self._edl_prog_total)
-        self.log_line(f"АВТОДЕТЕКТ: {total} серий, сезонов {len(seasons)}, дорожка: {self.edl_track_var.get()}…")
+        self.log_line(f"АВТОДЕТЕКТ по {self._scope_word(total)}: сезонов {len(seasons)}, "
+                      f"дорожка: {self.edl_track_var.get()}…")
 
         def progress(kind, i, n, path):
             self.root.after(0, self._edl_detect_progress, kind, path)
@@ -1664,29 +1696,33 @@ class App:
 
     def _edl_detect_done(self):
         self.progress.configure(value=0)
-        fi = sum(1 for e in self.edl_eps if e.intro)
-        fo = sum(1 for e in self.edl_eps if e.outro)
-        n = len(self.edl_eps)
+        # Считаем по тому, что гоняли: при детекте по выделению остальные серии
+        # не трогались, и мешать их в итог нечестно.
+        scope = getattr(self, "_edl_detect_scope", None) or self.edl_eps
+        fi = sum(1 for e in scope if e.intro)
+        fo = sum(1 for e in scope if e.outro)
+        n = len(scope)
         if self.cancel_event.is_set():
             self.log_line(f"Детект отменён. Найдено до отмены: интро {fi}/{n}, титры {fo}/{n}.")
         else:
             self.log_line(f"Детект готов: интро {fi}/{n}, титры {fo}/{n}. Проверьте таблицу и при нужде поправьте.")
         # Снимок локального детекта — чтобы «Вернуть локальные» восстанавливал именно его,
         # даже если активные значения потом заменили онлайновыми.
-        for e in self.edl_eps:
+        for e in scope:
             e.local_intro, e.local_outro, e.local_recap = e.intro, e.outro, e.recap
         self.set_busy(False)
         self.refresh_edl_preview()
 
     def write_edl_files(self):
-        if self.busy or not self.edl_eps:
-            if not self.edl_eps:
-                messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+        if self.busy:
+            return
+        scope = self._edl_scope_eps()
+        if scope is None:
             return
         keep = self.edl_keep_first.get()
         to_end = self.edl_outro_to_end.get()
         pad = self.edl_padding()
-        to_write = [e for e in self.edl_eps
+        to_write = [e for e in scope
                     if edl.apply_padding(edl.effective_intro(e, keep), pad.intro_start, pad.intro_end, e.duration)
                     or edl.final_outro(e, pad, to_end)
                     or e.recap]
@@ -1696,13 +1732,13 @@ class App:
             return
         if not messagebox.askyesno(
             "Запись .edl",
-            f"Записать {len(to_write)} файлов .edl рядом с сериями?\n"
+            f"Записать {len(to_write)} файлов .edl — по {self._scope_phrase()}?\n"
             "Существующие .edl будут перезаписаны. Видео не трогается.",
         ):
             return
 
         written = 0
-        for e in self.edl_eps:
+        for e in scope:
             p = edl.build_and_write(e, pad, keep, to_end)
             if p:
                 written += 1
@@ -1714,11 +1750,16 @@ class App:
     def delete_edl_files(self):
         if self.busy:
             return
-        existing = [e for e in self.edl_eps if edl.has_external_edl(e.path)]
-        if not existing:
-            messagebox.showinfo("Нет .edl", "Рядом с сериями нет .edl файлов.")
+        scope = self._edl_scope_eps()
+        if scope is None:
             return
-        if not messagebox.askyesno("Удаление .edl", f"Удалить {len(existing)} файлов .edl рядом с сериями?"):
+        existing = [e for e in scope if edl.has_external_edl(e.path)]
+        if not existing:
+            messagebox.showinfo("Нет .edl", f"Рядом с этими сериями ({self._scope_phrase()}) "
+                                            "нет .edl файлов.")
+            return
+        if not messagebox.askyesno("Удаление .edl",
+                                   f"Удалить {len(existing)} файлов .edl — по {self._scope_phrase()}?"):
             return
         n = sum(1 for e in existing if edl.delete_edl(e.path))
         self.log_line(f"Удалено .edl: {n}.")
