@@ -621,10 +621,32 @@ def _row_for(src: Path, dst: Path, what: str) -> Row:
     return Row(src, dst, A_RENAME, status, what)
 
 
-def _add_with_sidecars(rows: list[Row], video: Path, dst: Path) -> None:
+def _add_with_sidecars(rows: list[Row], video: Path, dst: Path,
+                       movie_extras: Path | None = None,
+                       drop_nfo: bool = False) -> None:
+    """Видео и его спутники: `.nfo`, `.edl`, субтитры, превью.
+
+    `movie_extras` задан (это фильм) — спутники-картинки уезжают туда мусором:
+    `Фильм (1994)-fanart.jpg` от tinyMediaManager это тот же самый `fanart.jpg`,
+    что программа держит в папке тайтла, и двух комплектов быть не должно.
+
+    `drop_nfo` добавляет к ним и `Фильм (1994).nfo` — но только когда рядом
+    уже лежит `movie.nfo`. Пока его нет, старый файл единственный, и в нём
+    отметки просмотра; он переезжает как обычно, а дублем станет на следующем
+    прогоне, когда `movie.nfo` будет записан.
+
+    У серий `S01E01.nfo` и `S01E01-thumb.jpg` — единственно верные имена,
+    поэтому для сериала правило не включается.
+    """
     rows.append(_row_for(video, dst, "video"))
     for side in find_sidecars(video):
         rest = side.name[len(video.stem):]
+        duplicate = movie_extras is not None and (
+            rest.lower().endswith(SIDECAR_SUFFIXES) or (drop_nfo and rest.lower() == ".nfo"))
+        if duplicate:
+            rows.append(Row(side, movie_extras / side.name, A_JUNK, S_JUNK, "junk",
+                            note="то же самое уже есть в папке тайтла"))
+            continue
         rows.append(_row_for(side, dst.with_name(dst.stem + rest), "sidecar"))
 
 
@@ -748,11 +770,16 @@ def build_movie_plan(path, info, settings, overrides=None) -> Plan:
 
     videos = sorted(scan.videos, key=lambda p: p.stat().st_size if p.exists() else 0,
                     reverse=True)
+    # Есть ли у фильма свой movie.nfo — от этого зависит, считать ли дублем
+    # старый `Фильм (1994).nfo` от tinyMediaManager.
+    has_title_nfo = any(a.name.lower() == "movie.nfo" for a in scan.arts)
     for i, video in enumerate(videos):
         if i == 0:
             dst = movie_root / movie_file_name(info.folder_title, info.year,
                                                video.suffix.lower())
-            _add_with_sidecars(plan.rows, video, dst)
+            _add_with_sidecars(plan.rows, video, dst,
+                               movie_extras=movie_root / settings.extras_folder,
+                               drop_nfo=has_title_nfo)
         else:
             # Второй видеофайл в папке фильма — трейлер, сэмпл или «бонус».
             # Сам фильм угадан по размеру, остальное уезжает в Extras.

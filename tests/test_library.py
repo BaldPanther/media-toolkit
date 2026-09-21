@@ -974,3 +974,65 @@ def test_cleanup_keeps_a_folder_that_still_holds_something(tmp_path):
 
     assert (src / "keep.txt").read_bytes() == b"keep"
     assert src.is_dir() and (src / ".DS_Store").exists()
+
+
+# --------------------- старый комплект tinyMediaManager у фильма --
+
+def _tmm_movie(folder, stem="Old Name (1994)", with_title_nfo=True):
+    """Фильм, как его оставил tinyMediaManager: комплект в папке и дубли рядом."""
+    touch(folder / f"{stem}.avi", b"v")
+    touch(folder / f"{stem}.nfo", b"<movie/>")
+    touch(folder / f"{stem}-fanart.jpg", b"f")
+    touch(folder / f"{stem}-thumb.jpg", b"t")
+    touch(folder / f"{stem}-poster.jpg", b"p")
+    touch(folder / f"{stem}.ru.srt", b"s")
+    touch(folder / f"{stem}.edl", b"e")
+    if with_title_nfo:
+        touch(folder / "movie.nfo", b"<movie/>")
+    touch(folder / "poster.jpg", b"P")
+    return folder
+
+
+def test_movie_tmm_duplicates_go_to_junk(tmp_path):
+    # Регрессия с живых данных «Martin Lawrence You So Crazy»: рядом с видео
+    # лежал второй комплект от tinyMediaManager, и -fanart.jpg переезжал
+    # спутником, а -poster.jpg уезжал в Extras. Теперь все они мусор.
+    movies = tmp_path / "movies"
+    src = _tmm_movie(movies / "Old Name (1994)")
+    plan = library.build_movie_plan(src, movie_info("New Name", 1994), make_settings())
+
+    junk = {r.src.name for r in plan.rows if r.what == "junk"}
+    assert junk == {"Old Name (1994).nfo", "Old Name (1994)-fanart.jpg",
+                    "Old Name (1994)-thumb.jpg", "Old Name (1994)-poster.jpg"}
+    # Субтитры и .edl — не дубли, они переезжают вместе с видео.
+    assert dst_of(plan, ".ru.srt").name == "New Name (1994).ru.srt"
+    assert dst_of(plan, ".edl").name == "New Name (1994).edl"
+    # Комплект самой папки остаётся комплектом.
+    assert dst_of(plan, "poster.jpg").name == "poster.jpg"
+
+
+def test_movie_keeps_its_only_nfo(tmp_path):
+    # Без movie.nfo рядом старый файл — единственный источник отметок просмотра.
+    movies = tmp_path / "movies"
+    src = _tmm_movie(movies / "Old Name (1994)", with_title_nfo=False)
+    plan = library.build_movie_plan(src, movie_info("New Name", 1994), make_settings())
+
+    junk = {r.src.name for r in plan.rows if r.what == "junk"}
+    assert "Old Name (1994).nfo" not in junk
+    assert dst_of(plan, "Old Name (1994).nfo").name == "New Name (1994).nfo"
+
+
+def test_episode_nfo_and_thumb_are_not_duplicates(tmp_path):
+    # У серий эти имена единственно верные — правило фильма их не касается.
+    tv = tmp_path / "tv"
+    src = tv / "Show.S01"
+    touch(src / "Show.S01E01.mkv", b"v")
+    touch(src / "Show.S01E01.nfo", b"<episodedetails/>")
+    touch(src / "Show.S01E01-thumb.jpg", b"t")
+
+    plan = library.build_tv_plan(src, show_info("Show", 2020, [(1, 1, "Pilot")]),
+                                 make_settings())
+
+    assert [r for r in plan.rows if r.what == "junk"] == []
+    assert dst_of(plan, ".nfo").name == "Show - S01E01 - Pilot.nfo"
+    assert dst_of(plan, "-thumb.jpg").name == "Show - S01E01 - Pilot-thumb.jpg"
