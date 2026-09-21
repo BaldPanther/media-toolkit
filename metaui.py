@@ -60,7 +60,23 @@ ART_LANG_CHOICES = {
     "как в настройках": None,
     "русский": "ru",
     "английский": "en",
+    "язык оригинала": metaconf.ART_ORIGINAL,
     "без текста": "",
+}
+
+# Как приоритет языков картинок выглядит в поле настроек. Всё, чего здесь нет,
+# пишется и читается кодом языка как есть.
+ART_LANG_WORDS = {"": "без текста", metaconf.ART_ORIGINAL: "оригинал"}
+
+# Язык имени для одного тайтла. «как в настройках» — исключения нет,
+# остальное кладётся в `name_overrides` и переживает перезапуск. «Русское» —
+# это язык описаний (`meta_language`); подписано так, потому что он русский.
+NAME_CHOICES = {
+    "как в настройках": None,
+    "английское": metaconf.NAME_EN,
+    "русское": metaconf.NAME_LOCAL,
+    "оригинальное": metaconf.NAME_ORIGINAL,
+    "авто по языку оригинала": metaconf.NAME_AUTO,
 }
 
 # Размеры постера у TMDb. Крупнее «original» не бывает, мельче w500 постер
@@ -250,8 +266,22 @@ class MetaTab:
                                      state="disabled")
         self.change_btn.grid(row=1, column=5, columnspan=2, sticky="e", pady=(8, 0))
 
+        # Язык имени отдельно для этого тайтла. Нужен там, где общее правило
+        # даёт бессмыслицу: «Il bisbetico domato» не говорит ни о чём ни в
+        # оригинале, ни по-английски, а «Укрощение строптивого» — говорит.
+        ttk.Label(f, text="Язык имени:").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.name_combo = ttk.Combobox(f, state="readonly", width=22,
+                                       values=list(NAME_CHOICES))
+        self.name_combo.current(0)
+        self.name_combo.state(["disabled"])
+        self.name_combo.grid(row=2, column=1, columnspan=2, sticky="w", padx=(6, 16),
+                             pady=(8, 0))
+        self.name_combo.bind("<<ComboboxSelected>>", lambda e: self._on_name_language())
+        self.name_hint = ttk.Label(f, text="")
+        self.name_hint.grid(row=2, column=3, columnspan=4, sticky="w", pady=(8, 0))
+
         bottom = ttk.Frame(f)
-        bottom.grid(row=2, column=0, columnspan=7, sticky="ew", pady=(8, 0))
+        bottom.grid(row=3, column=0, columnspan=7, sticky="ew", pady=(8, 0))
         # С этой кнопки начинается работа — она первая в ряду и подсвечена.
         self.pending_btn = theme.accent_button(bottom, text="Что не обработано…",
                                                command=self.scan_library)
@@ -695,9 +725,58 @@ class MetaTab:
         self.info = info
         self.log(f"Метаданные готовы: {info.folder_title} ({info.year}), "
                  f"серий {len(info.episodes)}, вариантов арта {len(info.art)}")
+        self._show_name_language()
         self._auto_choose_art()
         self.plan_btn.configure(state="normal")
         self.build_plan()
+
+    # ------------------------------------------------------- язык имени --
+    def _show_name_language(self):
+        """Подставить в выпадающий список исключение этого тайтла и подсказку."""
+        info = self.info
+        if info is None:
+            return
+        saved = self.settings.name_overrides.get(
+            metaconf.title_key(info.kind, info.tmdb_id))
+        label = next((k for k, v in NAME_CHOICES.items() if v == saved),
+                     list(NAME_CHOICES)[0])
+        self.name_combo.state(["!disabled"])
+        self.name_combo.set(label)
+        self.name_hint.configure(
+            text=f"язык оригинала: {info.original_language or '?'} · "
+                 f"папка: {library.title_with_year(info.folder_title, info.year)}")
+
+    def _refresh_name_language(self):
+        """Пересчитать язык имени текущего тайтла по настройкам и обновить план.
+
+        Зовётся и после правки настроек: иначе смена общего режима ничего бы не
+        делала до следующей загрузки метаданных.
+        """
+        info = self.info
+        if info is None:
+            return
+        info.name_language = metadata.resolve_name_language(
+            metaconf.name_language_for(self.settings, info.kind, info.tmdb_id),
+            info.original_language, self.settings.meta_language)
+        self._show_name_language()
+        self.build_plan()
+
+    def _on_name_language(self):
+        """Выбор языка имени: пишем исключение в настройки и пересобираем план."""
+        info = self.info
+        if info is None:
+            return
+        choice = self.name_combo.get()
+        mode = NAME_CHOICES[choice]
+        key = metaconf.title_key(info.kind, info.tmdb_id)
+        if mode is None:
+            self.settings.name_overrides.pop(key, None)
+        else:
+            self.settings.name_overrides[key] = mode
+        metaconf.save_settings(self.settings)
+        self._refresh_name_language()
+        self.log(f"Язык имени ({choice}): "
+                 f"{library.title_with_year(info.folder_title, info.year)}")
 
     # --------------------------------------------------------------- арт --
     def art_languages(self) -> list[str]:
@@ -708,9 +787,27 @@ class MetaTab:
         """
         code = ART_LANG_CHOICES.get(self.art_lang_combo.get())
         base = list(self.settings.art_languages)
-        if code is None:
-            return base
-        return [code] + [lang for lang in base if lang != code]
+        if code is not None:
+            base = [code] + [lang for lang in base if lang != code]
+        return self._resolve_art_original(base)
+
+    def _resolve_art_original(self, langs: list[str]) -> list[str]:
+        """Псевдоязык «оригинал» → код языка оригинала тайтла.
+
+        Делается здесь, а не в `metadata.rank_art`: та функция чистая и про
+        тайтл ничего не знает. Тайтл ещё не загружен или язык оригинала уже есть
+        в списке — псевдоязык просто выпадает.
+        """
+        original = self.info.original_language if self.info else ""
+        out: list[str] = []
+        for lang in langs:
+            if lang == metaconf.ART_ORIGINAL:
+                if not original:
+                    continue
+                lang = original
+            if lang not in out:
+                out.append(lang)
+        return out
 
     def _auto_choose_art(self):
         self.chosen.clear()
@@ -1201,13 +1298,31 @@ class MetaTab:
         lang_combo.grid(row=row, column=1, sticky="w", pady=(10, 2))
 
         row += 1
-        ttk.Label(frm, text="(имена папок и файлов всегда английские)").grid(
-            row=row, column=1, sticky="w")
+        ttk.Label(frm, text="Язык имён папок и файлов:").grid(
+            row=row, column=0, sticky="e", padx=(0, 6), pady=2)
+        name_combo = ttk.Combobox(frm, state="readonly", width=32,
+                                  values=[metaconf.NAME_LABELS[m]
+                                          for m in metaconf.NAME_MODES])
+        name_combo.current(metaconf.NAME_MODES.index(s.name_language)
+                           if s.name_language in metaconf.NAME_MODES else 0)
+        name_combo.grid(row=row, column=1, sticky="w", pady=2)
+
+        row += 1
+        ttk.Label(frm, justify="left", text=(
+            "⚠ Смена режима переименует уже разложенное — таблица предпросмотра\n"
+            "покажет это до того, как что-то будет тронуто. Отдельному тайтлу язык\n"
+            "имени задаётся на вкладке, там же где «Найти».")
+        ).grid(row=row, column=1, columnspan=2, sticky="w")
 
         row += 1
         ttk.Label(frm, text="Языки картинок:").grid(row=row, column=0, sticky="e", padx=(0, 6), pady=2)
-        art_var = tk.StringVar(value=", ".join(x or "без текста" for x in s.art_languages))
+        art_var = tk.StringVar(value=", ".join(ART_LANG_WORDS.get(x, x)
+                                               for x in s.art_languages))
         ttk.Entry(frm, textvariable=art_var, width=44).grid(row=row, column=1, sticky="ew", pady=2)
+
+        row += 1
+        ttk.Label(frm, text="(через запятую: ru, en, оригинал, без текста)").grid(
+            row=row, column=1, sticky="w")
 
         row += 1
         ttk.Label(frm, text="Размер постера:").grid(row=row, column=0, sticky="e",
@@ -1242,7 +1357,9 @@ class MetaTab:
             for attr, var in vars_.items():
                 setattr(s, attr, var.get().strip())
             s.meta_language = codes[lang_combo.current()]
-            s.art_languages = [("" if part.strip() in ("без текста", "") else part.strip())
+            s.name_language = metaconf.NAME_MODES[name_combo.current()]
+            words = {v: k for k, v in ART_LANG_WORDS.items()}
+            s.art_languages = [words.get(part.strip(), part.strip())
                                for part in art_var.get().split(",")] or ["ru", "en", ""]
             s.poster_size = size_codes[size_combo.current()]
             s.movies_roots = list(movies_list.get(0, "end"))
@@ -1250,6 +1367,11 @@ class MetaTab:
             metaconf.save_settings(s)
             win.destroy()
             self.log("Настройки скрапера сохранены.")
+            # Тайтл уже загружен — показать новые язык имени и приоритет
+            # картинок сразу, не заставляя жать «Найти» заново.
+            if self.info is not None:
+                self._auto_choose_art()
+                self._refresh_name_language()
 
         ttk.Button(btns, text="Сохранить", command=save).pack(side="right")
         ttk.Button(btns, text="Отмена", command=win.destroy).pack(side="right", padx=6)

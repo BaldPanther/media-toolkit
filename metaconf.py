@@ -28,9 +28,28 @@ JUNK_EXTRAS = "extras"
 JUNK_DELETE = "delete"
 JUNK_LABELS = {JUNK_EXTRAS: "складывать в Extras", JUNK_DELETE: "удалять в Корзину"}
 
-# Языки описаний. Имена файлов и папок от этой настройки не зависят —
-# они всегда английские.
+# Языки описаний. На имена файлов и папок влияют только через режим «на языке
+# описаний» ниже — в остальных режимах эта настройка их не касается.
 LANGUAGES = {"ru-RU": "русский", "en-US": "английский"}
+
+# Язык имён папок и файлов. «Оригинал» — как тайтл называется на родине
+# (`original_title` у TMDb), «на языке описаний» — то же, что идёт в <title>
+# внутри .nfo, то есть у нас русское.
+NAME_AUTO = "auto"
+NAME_EN = "en"
+NAME_LOCAL = "local"
+NAME_ORIGINAL = "original"
+NAME_MODES = (NAME_AUTO, NAME_EN, NAME_LOCAL, NAME_ORIGINAL)
+NAME_LABELS = {
+    NAME_AUTO: "оригинал, если он на языке описаний",
+    NAME_EN: "всегда английские",
+    NAME_LOCAL: "всегда на языке описаний",
+    NAME_ORIGINAL: "всегда оригинальные",
+}
+
+# Псевдоязык в приоритете картинок: на его месте подставляется язык оригинала
+# тайтла. Настоящие коды у TMDb двухбуквенные, так что столкнуться не с чем.
+ART_ORIGINAL = "orig"
 
 
 @dataclass
@@ -39,10 +58,18 @@ class Settings:
     fanart_key: str = ""
     omdb_key: str = ""
 
-    # Язык <title>/<plot> в .nfo. Имена на диске всегда английские.
+    # Язык <title>/<plot> в .nfo.
     meta_language: str = "ru-RU"
-    # Приоритет языка картинок; "" — вариант без текста (null у TMDb).
+    # Приоритет языка картинок; "" — вариант без текста (null у TMDb),
+    # ART_ORIGINAL — язык оригинала тайтла.
     art_languages: list[str] = field(default_factory=lambda: ["ru", "en", ""])
+
+    # Язык имён папок и файлов — один из NAME_MODES.
+    name_language: str = NAME_AUTO
+    # Исключения из него по тайтлам: {"movie:10986": NAME_LOCAL}. Список личных
+    # решений, а не состояние библиотеки: «Il bisbetico domato» ни на английском,
+    # ни в оригинале ничего не говорит, и такой тайтл хочется видеть по-русски.
+    name_overrides: dict[str, str] = field(default_factory=dict)
 
     poster_size: str = "original"
     fanart_size: str = "original"
@@ -71,6 +98,26 @@ def _as_str_list(value, default: list[str]) -> list[str]:
     return [str(v) for v in value]
 
 
+def _as_str_dict(value) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): str(v) for k, v in value.items()}
+
+
+def title_key(kind: str, tmdb_id) -> str:
+    """Ключ тайтла в списке исключений.
+
+    Фильмы и сериалы у TMDb нумеруются порознь, поэтому одного номера мало:
+    10986 — это и «Il bisbetico domato», и какой-то сериал.
+    """
+    return f"{kind}:{tmdb_id}"
+
+
+def name_language_for(settings, kind: str, tmdb_id) -> str:
+    """Режим имени конкретного тайтла: личное исключение или общая настройка."""
+    return settings.name_overrides.get(title_key(kind, tmdb_id), settings.name_language)
+
+
 def load_settings() -> Settings:
     if _SETTINGS.is_file():
         try:
@@ -82,6 +129,8 @@ def load_settings() -> Settings:
                 omdb_key=str(d.get("omdb_key", "")),
                 meta_language=str(d.get("meta_language", base.meta_language)),
                 art_languages=_as_str_list(d.get("art_languages"), base.art_languages),
+                name_language=str(d.get("name_language", base.name_language)),
+                name_overrides=_as_str_dict(d.get("name_overrides")),
                 poster_size=str(d.get("poster_size", base.poster_size)),
                 fanart_size=str(d.get("fanart_size", base.fanart_size)),
                 logo_size=str(d.get("logo_size", base.logo_size)),

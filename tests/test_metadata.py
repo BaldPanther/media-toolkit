@@ -393,3 +393,83 @@ def test_fetch_without_sizes_does_not_query_groups(monkeypatch):
         {"episodes": []} if "/season/" in url
         else {"id": 1, "name": "X", "external_ids": {}, "episode_run_time": []}))
     metadata.fetch("tv", 1, settings(meta_language="en-US"), seasons=[2])
+
+
+# ------------------------------------------- язык имён папок и файлов --
+
+def title_info(**kw):
+    base = dict(kind="movie", tmdb_id=10986, title="Укрощение строптивого",
+                title_en="The Taming of the Scoundrel",
+                original_title="Il bisbetico domato", original_language="it")
+    base.update(kw)
+    return metadata.MediaInfo(**base)
+
+
+def test_auto_takes_original_when_it_is_in_the_reading_language():
+    # «Что было дальше?» — оригинал русский, значит имя папки русское.
+    assert metadata.resolve_name_language(
+        metaconf.NAME_AUTO, "ru", "ru-RU") == metaconf.NAME_ORIGINAL
+
+
+def test_auto_falls_back_to_english_for_foreign_originals():
+    # Японский оригинал нечитаем — «Solo Leveling», а не «俺だけレベルアップな件».
+    for code in ("ja", "it", "fr", "en", ""):
+        assert metadata.resolve_name_language(
+            metaconf.NAME_AUTO, code, "ru-RU") == metaconf.NAME_EN
+
+
+def test_explicit_modes_are_passed_through():
+    for mode in (metaconf.NAME_EN, metaconf.NAME_LOCAL, metaconf.NAME_ORIGINAL):
+        assert metadata.resolve_name_language(mode, "ru", "ru-RU") == mode
+
+
+def test_folder_title_per_mode():
+    info = title_info()
+    info.name_language = metaconf.NAME_EN
+    assert info.folder_title == "The Taming of the Scoundrel"
+    info.name_language = metaconf.NAME_LOCAL
+    assert info.folder_title == "Укрощение строптивого"
+    info.name_language = metaconf.NAME_ORIGINAL
+    assert info.folder_title == "Il bisbetico domato"
+
+
+def test_folder_title_falls_back_when_translation_is_missing():
+    # У TMDb перевода может не оказаться — без имени папки остаться нельзя.
+    info = title_info(title="", title_en="")
+    info.name_language = metaconf.NAME_LOCAL
+    assert info.folder_title == "Il bisbetico domato"
+
+
+def test_episode_name_follows_the_title_language():
+    # Иначе выходит «Что было дальше - S06E01 - Episode 1».
+    info = title_info(kind="tv")
+    ep = metadata.EpisodeInfo(season=6, episode=1, title="Серия 1", title_en="Episode 1")
+    info.name_language = metaconf.NAME_EN
+    assert info.episode_name(ep) == "Episode 1"
+    for mode in (metaconf.NAME_LOCAL, metaconf.NAME_ORIGINAL):
+        info.name_language = mode
+        assert info.episode_name(ep) == "Серия 1"
+
+
+def test_fetch_resolves_name_language_and_honours_override(monkeypatch):
+    def fake(url, **kw):
+        return {"id": 10986, "title": "Укрощение строптивого",
+                "original_title": "Il bisbetico domato", "original_language": "it",
+                "release_date": "1980-12-19", "external_ids": {}}
+
+    monkeypatch.setattr(tmdb, "_get_json", fake)
+    s = settings()
+    info = metadata.fetch("movie", 10986, s)
+    assert info.original_language == "it"
+    assert info.name_language == metaconf.NAME_EN         # «авто»: оригинал не русский
+
+    s.name_overrides[metaconf.title_key("movie", 10986)] = metaconf.NAME_LOCAL
+    assert metadata.fetch("movie", 10986, s).name_language == metaconf.NAME_LOCAL
+
+
+def test_art_request_adds_the_original_language():
+    # Без этого постера на языке оригинала просто не придёт: TMDb отдаёт
+    # только те языки, которые спросили.
+    assert metadata.art_languages_param("fr") == "ru,en,null,fr"
+    for known in ("ru", "en", ""):
+        assert metadata.art_languages_param(known) == "ru,en,null"

@@ -11,7 +11,8 @@
                       /Season 01/Archer - S01E01 - Mole Hunt.mkv + .nfo + .edl
                       /Specials/Archer - S00E03 - Heart of Archness (1).mkv
 
-Имена всегда английские — язык описаний внутри .nfo на них не влияет.
+На каком языке названия в именах, решает `metadata.MediaInfo.folder_title`:
+здесь берётся уже готовая строка, и про настройку языка этот модуль не знает.
 
 Файлы никуда не «переносятся» в смысле копирования: и сериал, и фильм уже лежат
 в корне библиотеки, поэтому всё — переименование в пределах тома, мгновенное.
@@ -686,7 +687,7 @@ def build_tv_plan(folder, info, settings, overrides=None) -> Plan:
         # файл в уже разложенной медиатеке («S14E09-E11 - Into the Cold»).
         ep = info.episodes.get((season, numbers[0]))
         if ep:
-            title, note = ep.title_en, ""
+            title, note = info.episode_name(ep), ""
         else:
             # У TMDb такой серии нет — сохраняем название, уже стоящее в имени,
             # вместо того чтобы его потерять.

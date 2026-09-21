@@ -9,6 +9,9 @@
 отдельным решением, жанры со студиями: в существующей медиатеке они английские
 даже там, где описание русское (сверено с `Solo Leveling (2024)/tvshow.nfo`).
 
+Какое из трёх названий уходит в имена на диске, решает настройка — см.
+`resolve_name_language` и `MediaInfo.folder_title`.
+
 Сеть дёргается только в `search()` и `fetch()`; остальное — чистые функции.
 """
 from __future__ import annotations
@@ -17,6 +20,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 import fanart
+import metaconf
 import net
 import omdb
 import tmdb
@@ -134,8 +138,12 @@ class MediaInfo:
     tvdb_id: str = ""
 
     title: str = ""           # локализованное
-    title_en: str = ""        # английское — основа имени папки и файлов
+    title_en: str = ""        # английское
     original_title: str = ""
+    original_language: str = ""   # ISO-639-1 языка оригинала: "ru", "ja", "fr"
+    # Какое из трёх названий идёт в имена на диске. Здесь уже разрешённый режим:
+    # «авто» превращается в конкретный ещё в `resolve_name_language`.
+    name_language: str = metaconf.NAME_EN
     year: int | None = None
 
     plot: str = ""
@@ -165,8 +173,42 @@ class MediaInfo:
 
     @property
     def folder_title(self) -> str:
-        """Название для папки: английское, с откатом на оригинальное."""
+        """Название для имён на диске — по режиму `name_language`.
+
+        Откат всегда есть: у TMDb нет-нет да и не окажется перевода, и остаться
+        без имени папки из-за этого нельзя.
+        """
+        if self.name_language == metaconf.NAME_LOCAL:
+            return self.title or self.title_en or self.original_title
+        if self.name_language == metaconf.NAME_ORIGINAL:
+            return self.original_title or self.title_en or self.title
         return self.title_en or self.title or self.original_title
+
+    def episode_name(self, episode: "EpisodeInfo") -> str:
+        """Название серии для имени файла — в паре с названием тайтла.
+
+        Переключать их порознь нельзя: получится «Что было дальше - S06E01 -
+        Episode 1». Оригинального названия у серий нет — в ответе по сезону TMDb
+        отдаёт только запрошенный язык, — поэтому в режиме «оригинал» серии
+        подписываются локализованно. Для аниме это и лучше: японское название
+        серии в имени файла не читается.
+        """
+        if self.name_language == metaconf.NAME_EN:
+            return episode.title_en or episode.title
+        return episode.title or episode.title_en
+
+
+def resolve_name_language(mode: str, original_language: str, meta_language: str) -> str:
+    """Режим имён из настроек → конкретный язык названия.
+
+    Разрешается только «авто»: оригинал, если он на языке описаний (у TMDb для
+    этого есть готовое `original_language`), иначе английское. Остальные режимы
+    возвращаются как есть.
+    """
+    if mode != metaconf.NAME_AUTO:
+        return mode
+    local = (meta_language or "")[:2].lower()
+    return metaconf.NAME_ORIGINAL if local and original_language == local else metaconf.NAME_EN
 
 
 # --------------------------------------------------------------------------- #
@@ -284,15 +326,29 @@ def _fanart_art(block, kind: str, season: int | None = None) -> list[ArtCandidat
     return out
 
 
-def _collect_tmdb_art(kind: str, tmdb_id: int, key: str, seasons, settings) -> list[ArtCandidate]:
-    data = tmdb.images(kind, tmdb_id, key)
+def art_languages_param(original_language: str) -> str:
+    """Какие языки картинок просить у TMDb.
+
+    К «ru,en,null» добавляется язык оригинала — иначе постера на нём и не
+    придёт, а в приоритете языков его выбрать можно.
+    """
+    code = (original_language or "").strip()
+    if code and code not in tmdb.ART_LANGS.split(","):
+        return f"{tmdb.ART_LANGS},{code}"
+    return tmdb.ART_LANGS
+
+
+def _collect_tmdb_art(kind: str, tmdb_id: int, key: str, seasons, settings,
+                      original_language: str = "") -> list[ArtCandidate]:
+    langs = art_languages_param(original_language)
+    data = tmdb.images(kind, tmdb_id, key, languages=langs)
     art = []
     art += _tmdb_art(data.get("posters"), ART_POSTER, settings.poster_size, "w185")
     art += _tmdb_art(data.get("backdrops"), ART_FANART, settings.fanart_size, "w300")
     art += _tmdb_art(data.get("logos"), ART_LOGO, settings.logo_size, "w300")
     if kind == TV:
         for n in seasons:
-            season_data = tmdb.season_images(tmdb_id, n, key)
+            season_data = tmdb.season_images(tmdb_id, n, key, languages=langs)
             art += _tmdb_art(season_data.get("posters"), ART_SEASON,
                              settings.poster_size, "w185", season=n)
     return art
@@ -547,6 +603,7 @@ def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
 
     info = MediaInfo(
         kind=kind, tmdb_id=tmdb_id, imdb_id=ids["imdb"], tvdb_id=ids["tvdb"],
+        original_language=loc.get("original_language") or "",
         # Жанры и студии берём из английского ответа — так в текущей медиатеке.
         genres=[g.get("name", "") for g in eng.get("genres", [])],
         countries=[c.get("iso_3166_1", "") for c in eng.get("production_countries", [])],
@@ -591,6 +648,9 @@ def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
                                jobs=("Director",))
 
     info.year = _year(info.premiered)
+    info.name_language = resolve_name_language(
+        metaconf.name_language_for(settings, kind, tmdb_id),
+        info.original_language, lang)
 
     if info.imdb_id and settings.has_omdb():
         step("Рейтинг IMDb…")
@@ -637,6 +697,7 @@ def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
             info.runtime = lengths[len(lengths) // 2]     # медиана, а не первая серия:
                                                           # пилот и финал часто длиннее
     step("Картинки…")
-    info.art = _collect_tmdb_art(kind, tmdb_id, key, season_numbers, settings)
+    info.art = _collect_tmdb_art(kind, tmdb_id, key, season_numbers, settings,
+                                 info.original_language)
     info.art += _collect_fanart_art(kind, ids, season_numbers, settings)
     return info

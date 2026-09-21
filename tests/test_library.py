@@ -743,3 +743,44 @@ def test_season_folder_wins_over_assumption(tmp_path):
     info = show_info("Show", 2020, [(3, 4, "Fourth")])
     plan = library.build_tv_plan(root, info, make_settings())
     assert dst_of(plan, "- 04").name == "Show - S03E04 - Fourth.mkv"
+
+
+# ----------------------------------------- язык имён папок и файлов --
+
+def test_movie_plan_renames_to_the_chosen_language(tmp_path):
+    # Личное исключение для тайтла: «Il bisbetico domato» и «The Taming of the
+    # Scoundrel» одинаково ни о чём не говорят, а «Укрощение строптивого» — нет.
+    movies = tmp_path / "movies"
+    root = movies / "The Taming of the Scoundrel (1980)"
+    touch(root / "The Taming of the Scoundrel (1980).mkv")
+
+    info = MediaInfo(kind=library.MOVIE, tmdb_id=10986, year=1980,
+                     title="Укрощение строптивого",
+                     title_en="The Taming of the Scoundrel",
+                     original_title="Il bisbetico domato", original_language="it")
+    info.name_language = metaconf.NAME_LOCAL
+    plan = library.build_movie_plan(root, info, make_settings())
+
+    assert plan.root == movies / "Укрощение строптивого (1980)"
+    assert dst_of(plan, ".mkv").name == "Укрощение строптивого (1980).mkv"
+
+
+def test_tv_plan_switches_episode_titles_with_the_show(tmp_path):
+    # Иначе выходит «Что было дальше - S06E01 - Episode 1».
+    tv = tmp_path / "tv"
+    src = tv / "Chto.bylo.dalshe.S06"
+    touch(src / "S06E01.mkv")
+
+    info = MediaInfo(kind=library.TV, tmdb_id=2, year=2020,
+                     title="Что было дальше?", title_en="What Happened Next",
+                     original_title="Что было дальше?", original_language="ru")
+    info.episodes[(6, 1)] = EpisodeInfo(season=6, episode=1,
+                                        title="Гость — Сергей Бурунов",
+                                        title_en="Episode 1")
+    info.name_language = metaconf.NAME_ORIGINAL
+    plan = library.build_tv_plan(src, info, make_settings())
+
+    # Вопросительный знак в имени на диске жить не может — его срезает sanitize_name.
+    assert plan.root == tv / "Что было дальше (2020)"
+    assert dst_of(plan, "S06E01").name == \
+        "Что было дальше - S06E01 - Гость — Сергей Бурунов.mkv"
