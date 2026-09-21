@@ -218,6 +218,7 @@ class MetaTab:
         self._images: dict[str, object] = {}     # ссылки на PhotoImage — иначе Tk их удалит
         self._auto_query = ""        # что подставили сами — это можно перезаписать
         self._last_path = ""
+        self._plan_status = ""       # базовый текст строки состояния; записи дописывает _fill_table
 
         self._build(parent)
         # Сменили папку или файл наверху — название и год подставляются сами,
@@ -462,6 +463,7 @@ class MetaTab:
     def _on_policy_change(self):
         self.settings.existing_policy = metaconf.POLICIES[self.policy_combo.current()]
         metaconf.save_settings(self.settings)
+        self._fill_table()          # меняется судьба .nfo и картинок в предпросмотре
 
     def _on_path_changed(self, *_args):
         """Путь наверху сменился — подставить название и год из его имени."""
@@ -493,6 +495,7 @@ class MetaTab:
         self.season_combo.configure(values=[])
         self.season_combo.set("")
         self._refresh_art_cells()
+        self._plan_status = ""
         self.status_var.set("")
         for btn in (self.change_btn, self.plan_btn, self.apply_btn):
             btn.configure(state="disabled")
@@ -975,6 +978,10 @@ class MetaTab:
         for kind, _ in ART_ROWS:
             self._refresh_cell(kind, None)
         self._refresh_cell(metadata.ART_SEASON, self._current_season())
+        # Выбор картинки виден и в предпросмотре: там сказано, заменит она
+        # лежащий файл или ляжет на пустое место.
+        if self.plan is not None:
+            self._fill_table()
 
     def _refresh_cell(self, kind, season):
         preview, info_label, btn = self.art_widgets[kind]
@@ -1157,7 +1164,6 @@ class MetaTab:
             return
         self.plan = library.build_plan(folder, self.info.kind, self.info,
                                        self.settings, self.overrides)
-        self._fill_table()
         changed = len(self.plan.changed())
         conflicts = len(self.plan.conflicts())
         msg = f"В плане изменений: {changed}"
@@ -1173,8 +1179,11 @@ class MetaTab:
             self.log("⚠ " + msg)
             self.apply_btn.configure(state="disabled")
             return
-        self.status_var.set(msg)
-        self.log(msg + f". Папка тайтла: {self.plan.root}")
+        # Строку достраивает _fill_table: число записей .nfo и картинок зависит
+        # от политики, а она переключается без пересборки плана.
+        self._plan_status = msg
+        self._fill_table()
+        self.log(self.status_var.get() + f". Папка тайтла: {self.plan.root}")
         # Кнопка активна и при нуле переименований: .nfo и картинки могут быть
         # ещё не записаны, хотя имена уже верные.
         self.apply_btn.configure(state="normal")
@@ -1200,6 +1209,82 @@ class MetaTab:
                 values=(sel, self._rel(row.src, base), self._dst_text(row),
                         row.status + (f" · {row.note}" if row.note else "")))
             self.row_by_iid[iid] = row
+        # Записи .nfo и картинок плана не касаются, но в предпросмотре им место:
+        # иначе смена политики на «перезаписывать всё» ничем себя не выдаёт.
+        writes = self._write_preview()
+        for now, nxt, status, tag in writes:
+            self.tree.insert("", "end", tags=(tag,), values=("", now, nxt, status))
+        if self._plan_status:
+            pending = sum(1 for *_, tag in writes if tag != "nochange")
+            self.status_var.set(self._plan_status
+                                + (f", записей: {pending}" if pending else ""))
+
+    def _will_exist(self, path: Path) -> bool:
+        """Будет ли файл лежать по этому пути после применения плана.
+
+        Картинки и .nfo сейчас лежат в папке под старым именем и переедут
+        только при применении, поэтому `path.exists()` в предпросмотре врёт.
+        """
+        target = library.norm(path)
+        for row in self.plan.rows:
+            if (row.dst is not None and row.action != library.A_SKIP
+                    and library.norm(row.dst) == target):
+                return True
+        return path.exists()
+
+    def _write_preview(self) -> list[tuple[str, str, str, str]]:
+        """Что случится с .nfo и картинками: строки (сейчас, станет, статус, тег)."""
+        if self.plan is None or self.info is None:
+            return []
+        policy = self.settings.existing_policy
+        # «спрашивать каждый раз» решается уже при «Применить» — до вопроса
+        # честнее показать, что файл существует, а судьба его пока открыта.
+        base = self.plan.root.parent
+        rows = []
+
+        name = "movie.nfo" if self.info.kind == library.MOVIE else "tvshow.nfo"
+        rows.append(self._write_row(self.plan.root / name, base, policy))
+        if self.info.kind == library.TV:
+            episodes = [r for r in self.plan.rows
+                        if r.what == "video" and r.dst is not None
+                        and r.action != library.A_SKIP]
+            if episodes:
+                rows.append(self._episodes_row(episodes, policy))
+
+        for task in artwork.plan_art(self.plan.root, self.chosen, policy,
+                                     exists=self._will_exist):
+            rows.append(self._write_row(task.dest, base, policy,
+                                        exists=task.action != artwork.DO_DOWNLOAD))
+        return rows
+
+    def _episodes_row(self, episodes: list, policy: str) -> tuple[str, str, str, str]:
+        """Одна строка на все `.nfo` серий: их бывает и полторы сотни."""
+        have = sum(1 for r in episodes if self._will_exist(r.dst.with_suffix(".nfo")))
+        missing = len(episodes) - have
+        label = f".nfo серий: {len(episodes)}"
+        now = f"есть {have}" if have else ""
+        if not have:
+            return (now, label, f"запишется {missing}", "change")
+        if policy == metaconf.POLICY_MISSING:
+            if not missing:
+                return (now, label, "уже есть — пропуск", "nochange")
+            return (now, label, f"допишется {missing}", "change")
+        if policy == metaconf.POLICY_ASK:
+            return (now, label, "спросит при применении", "warn")
+        return (now, label, f"перезапишется {have}"
+                + (f", запишется {missing}" if missing else ""), "change")
+
+    def _write_row(self, dest: Path, base: Path, policy: str,
+                   exists: bool | None = None) -> tuple[str, str, str, str]:
+        if exists is None:
+            exists = self._will_exist(dest)
+        if not exists:
+            return ("", self._rel(dest, base), "запишется", "change")
+        if policy == metaconf.POLICY_MISSING:
+            return ("есть", self._rel(dest, base), "уже есть — пропуск", "nochange")
+        if policy == metaconf.POLICY_ASK:
+            return ("есть", self._rel(dest, base), "спросит при применении", "warn")
+        return ("есть", self._rel(dest, base), "перезапишется", "change")
 
     def _dst_text(self, row: library.Row) -> str:
         """Что показать в «Станет».

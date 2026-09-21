@@ -70,14 +70,20 @@ class ArtResult:
     skipped: bool = False
 
 
-def plan_art(root, chosen: dict, policy: str = POLICY_MISSING) -> list[ArtTask]:
+def plan_art(root, chosen: dict, policy: str = POLICY_MISSING,
+             exists=None) -> list[ArtTask]:
     """Выбранные кандидаты → список задач на скачивание.
 
     `chosen` — {(вид, сезон): ArtCandidate}; сезон у постера тайтла None.
     Политика решает судьбу уже лежащего файла: пропустить, перезаписать или
     спросить (тогда решение проставит UI, заменив DO_ASK).
+
+    `exists` подменяет проверку «файл уже на месте». Нужно предпросмотру: там
+    картинки ещё лежат в папке под старым именем и переедут только при
+    применении плана, так что `dest.exists()` соврал бы.
     """
     root = Path(root)
+    present = exists or (lambda p: p.exists())
     tasks = []
     def order(item):
         (kind, season), _ = item
@@ -87,7 +93,7 @@ def plan_art(root, chosen: dict, policy: str = POLICY_MISSING) -> list[ArtTask]:
         if candidate is None:
             continue
         dest = root / target_name(kind, season)
-        if not dest.exists():
+        if not present(dest):
             action = DO_DOWNLOAD
         elif policy == POLICY_OVERWRITE:
             action = DO_REPLACE
