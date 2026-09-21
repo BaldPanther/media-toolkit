@@ -1,16 +1,18 @@
 """Настройки скрапера медиатеки: ключи API, языки, корни библиотек, политики.
 
-Хранятся рядом с программой в `meta_settings.json` (в .gitignore — там личные
-ключи). Формат и повадки те же, что у настроек OpenSubtitles в `subs.py`:
-битый или отсутствующий файл молча даёт значения по умолчанию.
+Хранятся в `meta_settings.json` в пользовательском каталоге настроек (см.
+`paths.py` — там же личные ключи, поэтому не рядом с кодом). Формат и повадки
+те же, что у настроек OpenSubtitles в `subs.py`: битый или отсутствующий файл
+молча даёт значения по умолчанию.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
 
-_SETTINGS = Path(__file__).resolve().parent / "meta_settings.json"
+import paths
+
+_SETTINGS_NAME = "meta_settings.json"
 
 # Что делать с уже существующими .nfo и картинками при повторном прогоне.
 POLICY_ASK = "ask"
@@ -119,9 +121,10 @@ def name_language_for(settings, kind: str, tmdb_id) -> str:
 
 
 def load_settings() -> Settings:
-    if _SETTINGS.is_file():
+    path = paths.settings_path(_SETTINGS_NAME)
+    if path.is_file():
         try:
-            d = json.loads(_SETTINGS.read_text("utf-8"))
+            d = json.loads(path.read_text("utf-8"))
             base = Settings()
             return Settings(
                 tmdb_key=str(d.get("tmdb_key", "")),
@@ -146,4 +149,5 @@ def load_settings() -> Settings:
 
 
 def save_settings(s: Settings) -> None:
-    _SETTINGS.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")
+    path = paths.settings_path(_SETTINGS_NAME)
+    path.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")

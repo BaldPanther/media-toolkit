@@ -20,9 +20,11 @@ import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-# Локальные настройки OpenSubtitles (в .gitignore).
-_HERE = Path(__file__).resolve().parent
-_SETTINGS = _HERE / "subs_settings.json"
+import paths
+
+# Личные настройки OpenSubtitles (логин и пароль) — в пользовательском
+# каталоге настроек, а не рядом с кодом; см. paths.py.
+_SETTINGS_NAME = "subs_settings.json"
 
 LANG_RU = "rus"
 # Запасные провайдеры без аккаунта — для русского почти всегда пусто, но иногда выручают.
@@ -54,9 +56,10 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    if _SETTINGS.is_file():
+    path = paths.settings_path(_SETTINGS_NAME)
+    if path.is_file():
         try:
-            d = json.loads(_SETTINGS.read_text("utf-8"))
+            d = json.loads(path.read_text("utf-8"))
             return Settings(
                 username=d.get("username", ""),
                 password=d.get("password", ""),
@@ -69,7 +72,8 @@ def load_settings() -> Settings:
 
 
 def save_settings(s: Settings) -> None:
-    _SETTINGS.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")
+    path = paths.settings_path(_SETTINGS_NAME)
+    path.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")
 
 
 def providers_for(s: Settings) -> list[str]:

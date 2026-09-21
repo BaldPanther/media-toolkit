@@ -23,6 +23,7 @@ from tkinter.scrolledtext import ScrolledText
 import core
 import edl
 import metaui
+import paths
 import theme
 from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme держим в API модуля
 
@@ -30,20 +31,22 @@ NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
 EDL_TRACK_AUTO = "Оригинал (авто)"
 
-# Локальные настройки приложения (последний путь и т.п.), рядом с программой.
-_SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
+# Локальные настройки приложения (последний путь и т.п.) — в пользовательском
+# каталоге настроек; см. paths.py.
+_SETTINGS_NAME = "settings.json"
 
 
 def load_app_settings() -> dict:
     try:
-        return json.loads(_SETTINGS_FILE.read_text("utf-8"))
+        return json.loads(paths.settings_path(_SETTINGS_NAME).read_text("utf-8"))
     except Exception:  # noqa: BLE001 — нет файла/битый JSON: просто пустые настройки
         return {}
 
 
 def save_app_settings(data: dict) -> None:
     try:
-        _SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        path = paths.settings_path(_SETTINGS_NAME)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
     except Exception:  # noqa: BLE001 — не критично, просто не сохранили
         pass
 
