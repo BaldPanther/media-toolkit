@@ -268,6 +268,27 @@ class App:
                   **row_colors(opt)["accent"]).grid(
             row=1, column=3, columnspan=3, sticky="w", padx=(8, 0), pady=(6, 0))
 
+        # Окно поиска — сколько звука слушать с каждого края серии. Время детекта
+        # ему прямо пропорционально: чтобы добраться до звука в MKV, ffmpeg читает
+        # весь этот кусок вместе с видео. Но заставка должна уложиться в окно
+        # ЦЕЛИКОМ: то, что за край не влезло, обрезается по краю окна.
+        self.edl_window = {"intro": tk.StringVar(value=f"{edl.INTRO_WINDOW:.0f}"),
+                           "outro": tk.StringVar(value=f"{edl.OUTRO_WINDOW:.0f}")}
+
+        def window_spin(col, label, key):
+            ttk.Label(opt, text=label).grid(row=2, column=col, sticky="e", padx=(12, 2), pady=(6, 0))
+            ttk.Spinbox(opt, from_=30, to=900, increment=30, width=5,
+                        textvariable=self.edl_window[key]).grid(
+                row=2, column=col + 1, sticky="w", pady=(6, 0))
+
+        ttk.Label(opt, text="Окно поиска (сек):").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        window_spin(1, "с начала:", "intro")
+        window_spin(3, "с конца:", "outro")
+        ttk.Label(opt, text=f"по умолчанию {edl.INTRO_WINDOW:.0f}; заставка должна "
+                            "уложиться в окно целиком",
+                  **row_colors(opt)["nochange"]).grid(
+            row=2, column=5, sticky="w", padx=(10, 0), pady=(6, 0))
+
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
         self.edl_pad = {k: tk.StringVar(value="0") for k in
                         ("intro_start", "intro_end", "outro_start", "outro_end")}
@@ -281,11 +302,11 @@ class App:
             return sb
 
         ttk.Label(opt, text="Отступы (сек): + сдвинуть позже, − раньше").grid(
-            row=2, column=0, sticky="w", pady=(6, 0))
-        spin(2, 1, "начало интро:", "intro_start")
-        spin(2, 3, "конец интро:", "intro_end")
-        spin(3, 1, "начало титров:", "outro_start")
-        self.edl_outro_end_spin = spin(3, 3, "конец титров:", "outro_end")
+            row=3, column=0, sticky="w", pady=(6, 0))
+        spin(3, 1, "начало интро:", "intro_start")
+        spin(3, 3, "конец интро:", "intro_end")
+        spin(4, 1, "начало титров:", "outro_start")
+        self.edl_outro_end_spin = spin(4, 3, "конец титров:", "outro_end")
 
         # Обычно после титров ничего нет и пропуск честнее вести до самого конца.
         # Но если там сцена после титров, её бы тоже проглотило — тогда галку
@@ -294,7 +315,7 @@ class App:
         ttk.Checkbutton(
             opt, text="Титры — до конца файла (снимите, если после титров есть сцена)",
             variable=self.edl_outro_to_end, command=self._on_outro_to_end,
-        ).grid(row=4, column=0, columnspan=6, sticky="w", pady=(6, 0))
+        ).grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         # --- Задать вручную (когда детект промахнулся или его нет) ---
         # В некоторых сериалах интро/титры одинаковы по времени во всех сериях, но
@@ -1027,6 +1048,16 @@ class App:
     def _pad_val(self, key: str) -> float:
         return self._parse_time(self.edl_pad[key].get()) or 0.0
 
+    def _window_val(self, key: str) -> float:
+        """Окно поиска в секундах. Мусор или совсем мало — берём умолчание.
+
+        Нижняя граница не придирка: сегмент короче MIN_LEN_S детект отбрасывает,
+        так что окно в пару секунд гарантированно не нашло бы ничего.
+        """
+        default = edl.INTRO_WINDOW if key == "intro" else edl.OUTRO_WINDOW
+        value = self._parse_time(self.edl_window[key].get())
+        return value if value and value >= 30 else default
+
     def edl_padding(self) -> edl.Padding:
         return edl.Padding(
             self._pad_val("intro_start"), self._pad_val("intro_end"),
@@ -1048,6 +1079,7 @@ class App:
             "outro_to_end": self.edl_outro_to_end.get(),
             "track": self.edl_track_var.get(),
             "pad": {k: v.get() for k, v in self.edl_pad.items()},
+            "window": {k: v.get() for k, v in self.edl_window.items()},
         }})
 
     def _load_edl_settings(self):
@@ -1064,6 +1096,9 @@ class App:
         for key, value in (data.get("pad") or {}).items():
             if key in self.edl_pad:
                 self.edl_pad[key].set(str(value))
+        for key, value in (data.get("window") or {}).items():
+            if key in self.edl_window:
+                self.edl_window[key].set(str(value))
         self._on_outro_to_end()
 
     def _rebuild_edl_eps(self):
@@ -1719,8 +1754,10 @@ class App:
         self._edl_prog = 0
         self._edl_prog_total = total * 2                     # intro + outro
         self.progress.configure(value=0, maximum=self._edl_prog_total)
+        win_in, win_out = self._window_val("intro"), self._window_val("outro")
         self.log_line(f"АВТОДЕТЕКТ по {self._scope_word(total)}: сезонов {len(seasons)}, "
-                      f"дорожка: {self.edl_track_var.get()}…")
+                      f"дорожка: {self.edl_track_var.get()}, "
+                      f"окно {win_in:.0f}/{win_out:.0f} с…")
 
         def progress(kind, i, n, path):
             self.root.after(0, self._edl_detect_progress, kind, path)
@@ -1739,6 +1776,7 @@ class App:
                     eps = [by_path[str(p)] for p in eps_paths]
                     edl.detect_season(eps, fpcalc, ffmpeg, prefer_lang=prefer, progress=progress,
                                       stop=self.cancel_event.is_set,
+                                      intro_window=win_in, outro_window=win_out,
                                       cache_dir=cache, stats=stats)
             except Exception as ex:  # noqa: BLE001
                 self.root.after(0, lambda: self._edl_detect_error(ex))
