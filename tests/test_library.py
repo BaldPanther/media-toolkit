@@ -938,3 +938,39 @@ def test_prune_empty_dirs_never_removes_a_library_root(tmp_path):
     junk.unlink()
     assert library.prune_empty_dirs([junk], keep=[movies]) == []
     assert movies.is_dir()
+
+
+def test_cleanup_removes_folder_left_with_only_a_ds_store(tmp_path):
+    # Регрессия с живых данных: Finder роняет .DS_Store в каждую открытую папку,
+    # и папка от старого имени тайтла оставалась висеть после переименования.
+    movies = tmp_path / "movies"
+    src = movies / "Martin Lawrence You So Crazy (1994)"
+    touch(src / "Martin Lawrence You So Crazy (1994).avi", b"v")
+    touch(src / ".DS_Store", b"d")
+
+    info = movie_info("Martin Lawrence - You So Crazy", 1994)
+    plan = library.build_movie_plan(src, info, make_settings())
+    library.apply_plan(plan)
+
+    assert not src.exists()
+    assert (movies / "Martin Lawrence - You So Crazy (1994)" /
+            "Martin Lawrence - You So Crazy (1994).avi").read_bytes() == b"v"
+
+
+def test_cleanup_keeps_a_folder_that_still_holds_something(tmp_path):
+    # С мусора сняли галку — он остаётся на месте, и папку удалять нельзя,
+    # даже если кроме него там один только .DS_Store.
+    src = tmp_path / "tv" / "Show.S01"
+    touch(src / "Show.S01E01.mkv", b"v")
+    touch(src / "keep.txt", b"keep")
+    touch(src / ".DS_Store", b"d")
+
+    plan = library.build_tv_plan(src, show_info("Show", 2020, [(1, 1, "Pilot")]),
+                                 make_settings())
+    for row in plan.rows:
+        if row.what == "junk":
+            row.selected = False
+    library.apply_plan(plan)
+
+    assert (src / "keep.txt").read_bytes() == b"keep"
+    assert src.is_dir() and (src / ".DS_Store").exists()

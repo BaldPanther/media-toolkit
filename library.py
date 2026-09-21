@@ -927,8 +927,29 @@ def _trash_func():
     return send2trash
 
 
+def _only_system_junk(folder: Path) -> list[Path] | None:
+    """Содержимое папки, если в ней не осталось ничего, кроме служебных файлов.
+
+    Иначе None. Finder роняет `.DS_Store` в каждую открытую папку, и из-за
+    одного такого файла папка от старого имени тайтла оставалась висеть после
+    переименования — она формально не пустая.
+    """
+    try:
+        items = list(folder.iterdir())
+    except OSError:
+        return None
+    if any(p.is_dir() or not is_system_junk(p) for p in items):
+        return None
+    return items
+
+
 def _cleanup_empty_dirs(plan: Plan) -> None:
-    """Убирает опустевшие папки раздачи — но никогда сам корень тайтла."""
+    """Убирает опустевшие папки раздачи — но никогда сам корень тайтла.
+
+    Оставшийся в такой папке `.DS_Store` или `Thumbs.db` удаляется вместе с ней:
+    это кэш, который система создаёт заново, и держать из-за него пустую папку
+    от старого имени незачем.
+    """
     roots = {r.src.parent for r in plan.rows if r.src is not None}
     for d in sorted(roots, key=lambda p: len(p.parts), reverse=True):
         try:
@@ -936,8 +957,12 @@ def _cleanup_empty_dirs(plan: Plan) -> None:
                 continue
             if _is_within(plan.root, d):
                 continue                 # это родитель целевой папки, не трогаем
-            if not any(d.iterdir()):
-                d.rmdir()
+            leftovers = _only_system_junk(d)
+            if leftovers is None:
+                continue
+            for item in leftovers:
+                item.unlink()
+            d.rmdir()
         except OSError:
             pass
 
