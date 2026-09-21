@@ -835,13 +835,15 @@ def test_delete_files_reports_failures(tmp_path, monkeypatch):
     assert results[0].ok is False and results[0].error
 
 
-def test_junk_goes_to_extras_when_volume_has_no_trash(tmp_path, monkeypatch):
-    # Регрессия с живых данных: Thumbs.db на NAS остался лежать, а прогон
-    # отчитался об ошибке. Теперь он уезжает в Extras, а причина — в примечании.
-    def no_trash(path):
-        raise OSError("Корзина в этом томе отсутствует.")
+def _no_trash(path):
+    raise OSError("Корзина в этом томе отсутствует.")
 
-    monkeypatch.setattr(library, "_trash_func", lambda: no_trash)
+
+def test_junk_is_deleted_outright_when_volume_has_no_trash(tmp_path, monkeypatch):
+    # Регрессия с живых данных: Thumbs.db на NAS остался лежать, а прогон
+    # отчитался об ошибке. Галка «удалять мусор» — это уже принятое решение,
+    # так что при отсутствии Корзины файл удаляется насовсем, как и в Finder.
+    monkeypatch.setattr(library, "_trash_func", lambda: _no_trash)
     src = tmp_path / "movies" / "Deadpool.2024"
     touch(src / "movie.mkv", b"v")
     touch(src / "Thumbs.db", b"t")
@@ -850,10 +852,41 @@ def test_junk_goes_to_extras_when_volume_has_no_trash(tmp_path, monkeypatch):
     results = library.apply_plan(plan, delete_junk=True)
 
     assert all(r.ok for r in results), [r.error for r in results if not r.ok]
+    assert not (src / "Thumbs.db").exists()
     extras = tmp_path / "movies" / "Deadpool & Wolverine (2024)" / "Extras"
-    assert (extras / "Thumbs.db").read_bytes() == b"t"
-    junk_row = [r for r in plan.rows if r.what == "junk"][0]
-    assert "Корзина недоступна" in junk_row.note
+    assert not extras.exists()
+    junk = [r for r in results if r.row.what == "junk"][0]
+    assert junk.disposal == library.DISPOSE_DELETE
+    assert "нет Корзины" in junk.row.note
+
+
+def test_junk_folder_is_deleted_whole_without_trash(tmp_path, monkeypatch):
+    # Мусором бывает и папка целиком («Screens» из раздачи) — unlink её не возьмёт.
+    monkeypatch.setattr(library, "_trash_func", lambda: _no_trash)
+    src = tmp_path / "movies" / "Deadpool.2024"
+    touch(src / "movie.mkv", b"v")
+    touch(src / "Screens" / "01.png", b"s")
+
+    plan = library.build_movie_plan(src, movie_info(), make_settings())
+    library.apply_plan(plan, delete_junk=True)
+
+    assert not (src / "Screens").exists()
+
+
+def test_junk_goes_to_trash_when_the_volume_has_one(tmp_path, monkeypatch):
+    # На обычном диске ничего не меняется: мусор уходит в Корзину, а не насовсем.
+    trashed = []
+    monkeypatch.setattr(library, "_trash_func", lambda: trashed.append)
+    src = tmp_path / "movies" / "Deadpool.2024"
+    touch(src / "movie.mkv", b"v")
+    touch(src / "Thumbs.db", b"t")
+
+    plan = library.build_movie_plan(src, movie_info(), make_settings())
+    results = library.apply_plan(plan, delete_junk=True)
+
+    assert [Path(p).name for p in trashed] == ["Thumbs.db"]
+    junk = [r for r in results if r.row.what == "junk"][0]
+    assert junk.disposal == library.DISPOSE_TRASH
 
 
 def test_prune_empty_dirs_removes_only_what_emptied(tmp_path):

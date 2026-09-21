@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -818,11 +819,30 @@ def _move(src: Path, dst: Path) -> None:
     src.rename(dst)
 
 
+# Как именно избавились от мусора — у тома может не быть Корзины.
+DISPOSE_TRASH = "trash"
+DISPOSE_DELETE = "delete"
+
+
+def _delete(path: Path) -> None:
+    """Удаление без Корзины. Мусором бывает и папка целиком («Sample»)."""
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+# Как именно избавились от мусора — у тома может не быть Корзины.
+DISPOSE_TRASH = "trash"
+DISPOSE_DELETE = "delete"
+
+
 @dataclass
 class ApplyResult:
     row: Row
     ok: bool
     error: str = ""
+    disposal: str = ""       # DISPOSE_* — только у строк мусора
 
 
 def apply_plan(plan: Plan, delete_junk: bool = False,
@@ -851,14 +871,15 @@ def apply_plan(plan: Plan, delete_junk: bool = False,
                     raise RuntimeError("нет пакета send2trash — удаление недоступно")
                 try:
                     trash(str(row.src))
-                    results.append(ApplyResult(row, True))
-                    continue
-                except OSError as e:
+                    results.append(ApplyResult(row, True, disposal=DISPOSE_TRASH))
+                except OSError:
                     # У сетевого тома Корзины нет вовсе («Корзина в этом томе
-                    # отсутствует»), и Finder там тоже удаляет сразу. Стирать
-                    # чужой файл насовсем без спроса нельзя — увозим в Extras,
-                    # а причину показываем в строке плана.
-                    row.note = f"Корзина недоступна ({e}) — в Extras"
+                    # отсутствует»), и Finder там тоже удаляет сразу. Галка —
+                    # это уже принятое решение удалить, так что удаляем.
+                    _delete(row.src)
+                    row.note = "на этом томе нет Корзины — удалено насовсем"
+                    results.append(ApplyResult(row, True, disposal=DISPOSE_DELETE))
+                continue
             if row.dst in sources:
                 # Цель занята файлом, который сам ещё поедет: паркуем во временное имя.
                 tmp = row.src.with_name(f".stage-{os.getpid()}-{row.src.name}")
@@ -993,7 +1014,7 @@ def delete_files(paths, to_trash: bool = True, stop=None, progress=None) -> list
             except OSError:
                 pass                     # у тома нет Корзины — удаляем обычным способом
         try:
-            path.unlink()
+            _delete(path)
             results.append(DeleteResult(path, True))
         except OSError as e:
             results.append(DeleteResult(path, False, error=str(e)))

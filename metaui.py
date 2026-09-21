@@ -383,13 +383,16 @@ class MetaTab:
         opts.pack(fill="x", side="bottom")
 
         self.delete_junk = tk.BooleanVar(value=self.settings.junk_action == metaconf.JUNK_DELETE)
-        self.junk_check = ttk.Checkbutton(opts, text="удалять мусор в Корзину",
+        # Без «в Корзину»: у сетевого тома её нет, и там удаление безвозвратное.
+        # Обещать Корзину нельзя, а сама галка — уже принятое решение удалить.
+        self.junk_check = ttk.Checkbutton(opts, text="удалять мусор",
                                           variable=self.delete_junk,
                                           command=self._on_junk_toggle)
         self.junk_check.pack(side="left")
         if not library.send_to_trash_available():
-            # Без send2trash «удалить» означало бы удалить безвозвратно — не предлагаем.
-            self.junk_check.configure(text="удалять мусор в Корзину (нужен send2trash)")
+            # Без send2trash безвозвратным станет вообще всякое удаление, даже
+            # на локальном диске, где Корзина есть. Такое не предлагаем.
+            self.junk_check.configure(text="удалять мусор (нужен send2trash)")
             self.junk_check.state(["disabled"])
             self.delete_junk.set(False)
 
@@ -1201,12 +1204,12 @@ class MetaTab:
     def _dst_text(self, row: library.Row) -> str:
         """Что показать в «Станет».
 
-        У мусора путь в плане всегда ведёт в Extras — это запасной вариант на
-        случай, если Корзина недоступна. При включённой галке файл поедет всё же
-        в Корзину, и столбец должен говорить именно это.
+        У мусора путь в плане всегда ведёт в Extras, но при включённой галке
+        файл туда не поедет. Пишем «удалить», а не «в Корзину»: есть ли она у
+        тома, выяснится только при удалении — у сетевого её нет.
         """
         if row.what == "junk" and row.selected and self.delete_junk.get():
-            return "Корзина"
+            return "удалить"
         return self._rel(row.dst, self.plan.root.parent)
 
     @staticmethod
@@ -1276,7 +1279,8 @@ class MetaTab:
             return
         changed = self.plan.changed()
         junk = [r for r in changed if r.what == "junk" and r.selected]
-        action = "удалены в Корзину" if self.delete_junk.get() else "перенесены в Extras"
+        action = ("удалены — в Корзину, а если у тома её нет, то насовсем"
+                  if self.delete_junk.get() else "перенесены в Extras")
         text = (f"Файлов будет переименовано: {len(changed) - len(junk)}\n"
                 f"Посторонних файлов ({action}): {len(junk)}\n"
                 f"Папка тайтла: {self.plan.root}\n\n"
@@ -1317,6 +1321,10 @@ class MetaTab:
         failed = [r for r in results if not r.ok]
         for r in failed:
             self.root.after(0, lambda r=r: self.log(f"✗ {r.row.src}: {r.error}"))
+        # Удалённое насовсем называем поимённо: восстановить его уже неоткуда.
+        for r in results:
+            if r.disposal == library.DISPOSE_DELETE:
+                self.root.after(0, lambda r=r: self.log(f"Удалено насовсем: {r.row.src}"))
 
         written = 0
         if not stop():
@@ -1333,7 +1341,11 @@ class MetaTab:
             art_urls, season_urls = artwork.chosen_urls(tasks)
             # Пишется после картинок: в .nfo идут URL именно тех, что легли на диск.
             written += self._write_title_nfo(policy, art_urls, season_urls)
-        return {"renamed": len(results) - len(failed), "failed": len(failed),
+        return {"renamed": len(results) - len(failed) - len(
+                    [r for r in results if r.disposal]),
+                "failed": len(failed),
+                "trashed": len([r for r in results if r.disposal == library.DISPOSE_TRASH]),
+                "deleted": len([r for r in results if r.disposal == library.DISPOSE_DELETE]),
                 "nfo": written, "art": art_done, "art_skipped": art_skipped,
                 "cancelled": stop()}
 
@@ -1387,6 +1399,10 @@ class MetaTab:
         self.host.set_busy(False)
         self.host.progress.configure(value=0)
         parts = [f"переименовано {summary['renamed']}"]
+        if summary["trashed"]:
+            parts.append(f"в Корзину {summary['trashed']}")
+        if summary["deleted"]:
+            parts.append(f"удалено насовсем {summary['deleted']}")
         if summary["failed"]:
             parts.append(f"ошибок {summary['failed']}")
         parts.append(f".nfo {summary['nfo']}")

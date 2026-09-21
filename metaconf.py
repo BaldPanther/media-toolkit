@@ -26,7 +26,7 @@ POLICY_LABELS = {
 # Что делать с посторонними файлами из раздачи.
 JUNK_EXTRAS = "extras"
 JUNK_DELETE = "delete"
-JUNK_LABELS = {JUNK_EXTRAS: "складывать в Extras", JUNK_DELETE: "удалять в Корзину"}
+JUNK_LABELS = {JUNK_EXTRAS: "складывать в Extras", JUNK_DELETE: "удалять"}
 
 # Языки описаний. На имена файлов и папок влияют только через режим «на языке
 # описаний» ниже — в остальных режимах эта настройка их не касается.
