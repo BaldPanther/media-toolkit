@@ -45,12 +45,31 @@ def dst_of(plan, name_part):
 
 # ------------------------------------------------------------------ имена --
 
-def test_sanitize_name_colon_and_slash_become_space():
-    # Сверено с уже разложенной медиатекой: tinyMediaManager пишет именно так,
-    # и вариант с « - » вместо двоеточия переименовал бы готовые файлы.
-    assert library.sanitize_name("Mission: Difficult") == "Mission Difficult"
+def test_sanitize_name_subtitle_colon_becomes_dash():
+    # Двоеточие почти всегда отделяет подзаголовок, и пробел на его месте
+    # читается плохо: «The Lord of the Rings The Fellowship of the Ring».
+    assert library.sanitize_name("Mission: Difficult") == "Mission - Difficult"
+    assert library.sanitize_name("Solo Leveling: Ragnarok") == "Solo Leveling - Ragnarok"
+    assert library.sanitize_name("Eddie Murphy: Delirious") == "Eddie Murphy - Delirious"
+    # Уже стоящий в названии дефис вторым не обрастает.
+    assert library.sanitize_name("Mission: Impossible - Fallout") == \
+        "Mission - Impossible - Fallout"
+
+
+def test_sanitize_name_keeps_tight_colon_as_space():
+    # Без пробела следом двоеточие значит не подзаголовок — дефис там неуместен.
+    assert library.sanitize_name("Re:Zero") == "Re Zero"
+    assert library.sanitize_name("Aliens vs Predator 9:30") == "Aliens vs Predator 9 30"
+
+
+def test_sanitize_name_slash_becomes_space():
+    # Слэш стоит между словами пары, дефис с пробелами там выглядел бы чужеродно.
     assert library.sanitize_name("Arrival/Departure") == "Arrival Departure"
-    assert library.sanitize_name("Solo Leveling: Ragnarok") == "Solo Leveling Ragnarok"
+
+
+def test_sanitize_name_never_leaves_a_dangling_dash():
+    assert library.sanitize_name("Название:") == "Название"
+    assert library.sanitize_name(": Название") == "Название"
 
 
 def test_sanitize_name_strips_forbidden_and_trailing_dot():
