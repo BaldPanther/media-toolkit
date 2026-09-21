@@ -849,9 +849,16 @@ def apply_plan(plan: Plan, delete_junk: bool = False,
             if row.action == A_JUNK and delete_junk:
                 if trash is None:
                     raise RuntimeError("нет пакета send2trash — удаление недоступно")
-                trash(str(row.src))
-                results.append(ApplyResult(row, True))
-                continue
+                try:
+                    trash(str(row.src))
+                    results.append(ApplyResult(row, True))
+                    continue
+                except OSError as e:
+                    # У сетевого тома Корзины нет вовсе («Корзина в этом томе
+                    # отсутствует»), и Finder там тоже удаляет сразу. Стирать
+                    # чужой файл насовсем без спроса нельзя — увозим в Extras,
+                    # а причину показываем в строке плана.
+                    row.note = f"Корзина недоступна ({e}) — в Extras"
             if row.dst in sources:
                 # Цель занята файлом, который сам ещё поедет: паркуем во временное имя.
                 tmp = row.src.with_name(f".stage-{os.getpid()}-{row.src.name}")
@@ -895,3 +902,128 @@ def _cleanup_empty_dirs(plan: Plan) -> None:
                 d.rmdir()
         except OSError:
             pass
+
+
+# --------------------------------------------------------------------------- #
+# Служебные файлы систем
+# --------------------------------------------------------------------------- #
+
+# Кэши превью и настройки папок, которые Windows и macOS рассыпают по всей
+# медиатеке. Содержимого не несут и создаются заново сами, поэтому чистятся
+# оптом, а не разбираются по одному. Отключение их создания в системе помогает
+# не всегда: Thumbs.db возвращается после любого визита проводника.
+SYSTEM_JUNK_NAMES = {
+    "thumbs.db", "thumbs.db:encryptable", "ehthumbs.db", "ehthumbs_vista.db",
+    "desktop.ini",              # Windows: вид папки и её иконка
+    ".ds_store",                # macOS: положение окна Finder
+}
+# AppleDouble: macOS кладёт «._имя» рядом с файлом, когда том не умеет хранить
+# расширенные атрибуты. На SMB-шаре таких набегает больше всего.
+APPLEDOUBLE_PREFIX = "._"
+
+
+def is_system_junk(path: Path) -> bool:
+    name = path.name
+    if name.lower() in SYSTEM_JUNK_NAMES:
+        return True
+    return name.startswith(APPLEDOUBLE_PREFIX) and len(name) > len(APPLEDOUBLE_PREFIX)
+
+
+def find_system_junk(settings, stop=None, progress=None) -> list[Path]:
+    """Служебные файлы систем во всех корнях библиотеки.
+
+    Обход идёт по папкам тайтлов, а не одним `rglob` по корню: так виден
+    прогресс и обход можно прервать — медиатека лежит на сетевом диске, и
+    рекурсия по ней не мгновенная.
+    """
+    targets: list[tuple[Path, bool]] = []
+    for raw in list(settings.movies_roots) + list(settings.tv_roots):
+        root = Path(raw)
+        if not root.is_dir():
+            continue
+        targets.append((root, False))       # файлы самого корня, без рекурсии
+        try:
+            targets += [(d, True) for d in sorted(root.iterdir())
+                        if d.is_dir() and not d.name.startswith(".")]
+        except OSError:
+            continue
+    found: list[Path] = []
+    total = len(targets)
+    for i, (folder, deep) in enumerate(targets, 1):
+        if stop and stop():
+            break
+        if progress:
+            progress(i, total, folder.name)
+        try:
+            items = folder.rglob("*") if deep else folder.iterdir()
+            found += [p for p in items if is_system_junk(p) and p.is_file()]
+        except OSError:
+            continue
+    return sorted(found)
+
+
+@dataclass
+class DeleteResult:
+    path: Path
+    ok: bool
+    trashed: bool = False
+    error: str = ""
+
+
+def delete_files(paths, to_trash: bool = True, stop=None, progress=None) -> list[DeleteResult]:
+    """Удаляет файлы: по возможности в Корзину, иначе насовсем.
+
+    У сетевого тома Корзины нет, и Finder на нём тоже удаляет сразу — так что
+    откат на обычное удаление не «опаснее ручного», а ровно то же самое.
+    Применяется только к `find_system_junk`: там содержимого нет по определению.
+    """
+    trash = _trash_func() if to_trash else None
+    results: list[DeleteResult] = []
+    total = len(paths)
+    for i, path in enumerate(paths, 1):
+        if stop and stop():
+            break
+        if progress:
+            progress(i, total, path.name)
+        if trash is not None:
+            try:
+                trash(str(path))
+                results.append(DeleteResult(path, True, trashed=True))
+                continue
+            except OSError:
+                pass                     # у тома нет Корзины — удаляем обычным способом
+        try:
+            path.unlink()
+            results.append(DeleteResult(path, True))
+        except OSError as e:
+            results.append(DeleteResult(path, False, error=str(e)))
+    return results
+
+
+def prune_empty_dirs(paths, keep) -> list[Path]:
+    """Убирает папки, опустевшие после удаления файлов.
+
+    Ровно тот случай, ради которого нужно: в папке от старого имени тайтла
+    остался один `Thumbs.db`, и пока он там лежал, папка не удалялась.
+    Вверх поднимаемся, пока пусто; корни библиотеки не трогаем никогда.
+    """
+    protected = set()
+    for k in keep:
+        try:
+            protected.add(Path(k).resolve())
+        except OSError:
+            pass
+    removed: list[Path] = []
+    for folder in sorted({Path(p).parent for p in paths},
+                         key=lambda p: len(p.parts), reverse=True):
+        d = folder
+        while True:
+            try:
+                if not d.is_dir() or d.resolve() in protected or any(d.iterdir()):
+                    break
+                d.rmdir()
+            except OSError:
+                break
+            removed.append(d)
+            d = d.parent
+    return removed

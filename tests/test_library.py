@@ -4,6 +4,8 @@
 ни настоящих MKV. Главный смысл — гарантировать, что повторный прогон по уже
 разложенной библиотеке не меняет ни одного имени.
 """
+from pathlib import Path
+
 import library
 import metaconf
 from metadata import EpisodeInfo, MediaInfo
@@ -784,3 +786,97 @@ def test_tv_plan_switches_episode_titles_with_the_show(tmp_path):
     assert plan.root == tv / "Что было дальше (2020)"
     assert dst_of(plan, "S06E01").name == \
         "Что было дальше - S06E01 - Гость — Сергей Бурунов.mkv"
+
+
+# --------------------------------------- служебные файлы систем --
+
+def test_recognises_system_junk():
+    names = ["Thumbs.db", "thumbs.db", "desktop.ini", ".DS_Store",
+             "._Archer - S01E01.mkv", "ehthumbs.db"]
+    for name in names:
+        assert library.is_system_junk(Path(name)), name
+    for name in ["Archer - S01E01.mkv", "movie.nfo", "poster.jpg", "._", "database.db"]:
+        assert not library.is_system_junk(Path(name)), name
+
+
+def test_find_system_junk_walks_every_root(tmp_path):
+    movies, tv = tmp_path / "movies", tmp_path / "tv"
+    touch(movies / "Deadpool (2024)" / "Deadpool (2024).mkv")
+    touch(movies / "Deadpool (2024)" / "Thumbs.db")
+    touch(movies / ".DS_Store")                       # файл самого корня — тоже наш
+    touch(tv / "Archer (2009)" / "Season 01" / "._Archer - S01E01.mkv")  # в глубине
+    touch(tv / "Archer (2009)" / "poster.jpg")
+
+    found = library.find_system_junk(
+        make_settings(movies_roots=[str(movies)], tv_roots=[str(tv)]))
+
+    assert sorted(p.name for p in found) == [".DS_Store", "._Archer - S01E01.mkv",
+                                             "Thumbs.db"]
+
+
+def test_delete_files_falls_back_to_permanent_when_trash_refuses(tmp_path, monkeypatch):
+    # У сетевого тома Корзины нет: send2trash кидает OSError, и файл должен
+    # уйти обычным удалением — иначе кнопка не работает именно там, где нужна.
+    def no_trash(path):
+        raise OSError("Корзина в этом томе отсутствует.")
+
+    monkeypatch.setattr(library, "_trash_func", lambda: no_trash)
+    victim = touch(tmp_path / "Thumbs.db", b"x")
+    results = library.delete_files([victim])
+
+    assert [(r.ok, r.trashed) for r in results] == [(True, False)]
+    assert not victim.exists()
+
+
+def test_delete_files_reports_failures(tmp_path, monkeypatch):
+    monkeypatch.setattr(library, "_trash_func", lambda: None)
+    missing = tmp_path / "нет-такого.db"
+    results = library.delete_files([missing], to_trash=False)
+    assert results[0].ok is False and results[0].error
+
+
+def test_junk_goes_to_extras_when_volume_has_no_trash(tmp_path, monkeypatch):
+    # Регрессия с живых данных: Thumbs.db на NAS остался лежать, а прогон
+    # отчитался об ошибке. Теперь он уезжает в Extras, а причина — в примечании.
+    def no_trash(path):
+        raise OSError("Корзина в этом томе отсутствует.")
+
+    monkeypatch.setattr(library, "_trash_func", lambda: no_trash)
+    src = tmp_path / "movies" / "Deadpool.2024"
+    touch(src / "movie.mkv", b"v")
+    touch(src / "Thumbs.db", b"t")
+
+    plan = library.build_movie_plan(src, movie_info(), make_settings())
+    results = library.apply_plan(plan, delete_junk=True)
+
+    assert all(r.ok for r in results), [r.error for r in results if not r.ok]
+    extras = tmp_path / "movies" / "Deadpool & Wolverine (2024)" / "Extras"
+    assert (extras / "Thumbs.db").read_bytes() == b"t"
+    junk_row = [r for r in plan.rows if r.what == "junk"][0]
+    assert "Корзина недоступна" in junk_row.note
+
+
+def test_prune_empty_dirs_removes_only_what_emptied(tmp_path):
+    # Ровно случай с NAS: в папке от старого имени остался один Thumbs.db,
+    # и пока он лежал, папка не удалялась.
+    movies = tmp_path / "movies"
+    old = movies / "The Taming of the Scoundrel (1980)"
+    junk = touch(old / "Thumbs.db")
+    kept = touch(movies / "Deadpool (2024)" / "Thumbs.db")
+    touch(movies / "Deadpool (2024)" / "Deadpool (2024).mkv")
+
+    junk.unlink()
+    kept.unlink()
+    removed = library.prune_empty_dirs([junk, kept], keep=[movies])
+
+    assert removed == [old]
+    assert not old.exists()
+    assert (movies / "Deadpool (2024)").is_dir()      # там осталось видео
+
+
+def test_prune_empty_dirs_never_removes_a_library_root(tmp_path):
+    movies = tmp_path / "movies"
+    junk = touch(movies / ".DS_Store")
+    junk.unlink()
+    assert library.prune_empty_dirs([junk], keep=[movies]) == []
+    assert movies.is_dir()

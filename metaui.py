@@ -288,6 +288,9 @@ class MetaTab:
         self.pending_btn.pack(side="left")
         ttk.Button(bottom, text="Настройки скрапера…",
                    command=self.settings_dialog).pack(side="left", padx=6)
+        self.clean_btn = ttk.Button(bottom, text="Убрать служебные файлы…",
+                                    command=self.clean_system_junk)
+        self.clean_btn.pack(side="left")
         ttk.Button(bottom, text="Подставить из имени папки",
                    command=self.fill_from_folder).pack(side="right")
 
@@ -412,7 +415,7 @@ class MetaTab:
 
         self.host.extra_busy_buttons += [self.find_btn, self.change_btn,
                                          self.plan_btn, self.apply_btn,
-                                         self.pending_btn]
+                                         self.pending_btn, self.clean_btn]
 
     # ------------------------------------------------------------- helpers --
     def folder(self) -> Path | None:
@@ -451,6 +454,7 @@ class MetaTab:
         self.settings.junk_action = (metaconf.JUNK_DELETE if self.delete_junk.get()
                                      else metaconf.JUNK_EXTRAS)
         metaconf.save_settings(self.settings)
+        self._fill_table()          # в «Станет» у мусора меняется Extras ↔ Корзина
 
     def _on_policy_change(self):
         self.settings.existing_policy = metaconf.POLICIES[self.policy_combo.current()]
@@ -462,7 +466,33 @@ class MetaTab:
         if raw == self._last_path:
             return
         self._last_path = raw
+        # Папка другая — всё, что нашлось для прежней, к ней отношения не имеет.
+        # Иначе в «Картинках» висит постер предыдущего фильма, и кажется, будто
+        # он уже опознан.
+        self._reset_title()
         self.fill_from_path()
+
+    def _reset_title(self):
+        """Забыть прежний тайтл: картинки, таблицу, выбор и язык имени."""
+        self.hits = []
+        self.hit = None
+        self.info = None
+        self.plan = None
+        self.chosen.clear()
+        self.overrides.clear()
+        self._images.clear()
+        self.row_by_iid.clear()
+        self.tree.delete(*self.tree.get_children())
+        self.hit_var.set("Тайтл не выбран. Укажите папку, нажмите «Найти».")
+        self.name_combo.set(next(iter(NAME_CHOICES)))
+        self.name_combo.state(["disabled"])
+        self.name_hint.configure(text="")
+        self.season_combo.configure(values=[])
+        self.season_combo.set("")
+        self._refresh_art_cells()
+        self.status_var.set("")
+        for btn in (self.change_btn, self.plan_btn, self.apply_btn):
+            btn.configure(state="disabled")
 
     def fill_from_path(self) -> None:
         """Подставить название из текущего пути, если поле не занято вручную.
@@ -598,6 +628,112 @@ class MetaTab:
         ttk.Button(btns, text="Закрыть", command=win.destroy).pack(side="right", padx=6)
         tree.bind("<Double-1>", lambda e: take())
         self._center(win)
+
+    # ------------------------------------------- служебные файлы систем --
+    def clean_system_junk(self):
+        """Обход корней библиотеки: Thumbs.db, .DS_Store, desktop.ini, «._…»."""
+        if self.host.busy:
+            return
+        if not (self.settings.movies_roots or self.settings.tv_roots):
+            messagebox.showinfo(
+                "Не заданы корни",
+                "Укажите папки с фильмами и сериалами в «Настройках скрапера…» —\n"
+                "по ним и идёт уборка.")
+            return
+
+        self.host.set_busy(True)
+        self.status_var.set("Поиск служебных файлов…")
+        self.host.progress.configure(value=0, maximum=1)
+
+        def progress(i, total, name):
+            self.root.after(0, lambda: self._progress(i, total, name))
+
+        def work():
+            try:
+                items = library.find_system_junk(
+                    self.settings, stop=self.host.cancel_event.is_set, progress=progress)
+            except OSError as e:
+                self.root.after(0, lambda: self._fail("Поиск служебных файлов", e))
+                return
+            self.root.after(0, lambda: self._system_junk_found(items))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _system_junk_found(self, items: list[Path]):
+        self.host.set_busy(False)
+        self.host.progress.configure(value=0)
+        self.status_var.set("")
+        if not items:
+            self.log("Служебных файлов не найдено.")
+            messagebox.showinfo("Чисто", "Служебных файлов в библиотеке нет.")
+            return
+
+        # Группируем по виду, а не показываем список из тысячи путей: важно
+        # понять, что именно уедет, а не прочитать каждый путь.
+        groups: dict[str, int] = {}
+        size = 0
+        for path in items:
+            key = ("«._…» (macOS)" if path.name.startswith(library.APPLEDOUBLE_PREFIX)
+                   else path.name)
+            groups[key] = groups.get(key, 0) + 1
+            try:
+                size += path.stat().st_size
+            except OSError:
+                pass
+        lines = [f"  {name} — {count}" for name, count in
+                 sorted(groups.items(), key=lambda kv: -kv[1])]
+        self.log(f"Служебных файлов найдено: {len(items)} ({size / 1048576:.1f} МБ)")
+
+        if not messagebox.askyesno("Убрать служебные файлы", (
+                f"Найдено файлов: {len(items)} ({size / 1048576:.1f} МБ)\n\n"
+                + "\n".join(lines[:8])
+                + ("\n  …" if len(lines) > 8 else "")
+                + "\n\nЭто кэши превью и настройки папок: содержимого в них нет,\n"
+                  "системы создают их заново сами.\n\n"
+                  "Уйдут в Корзину, а на сетевом томе — сразу и безвозвратно:\n"
+                  "Корзины у него нет, Finder там удаляет так же.\n"
+                  "Папки, которые после этого останутся пустыми, тоже уберутся.\n"
+                  "\nУбрать?")):
+            return
+
+        self.host.set_busy(True)
+        self.status_var.set("Удаление…")
+
+        def progress(i, total, name):
+            self.root.after(0, lambda: self._progress(i, total, name))
+
+        def work():
+            results = library.delete_files(
+                items, stop=self.host.cancel_event.is_set, progress=progress)
+            pruned = library.prune_empty_dirs(
+                [r.path for r in results if r.ok],
+                list(self.settings.movies_roots) + list(self.settings.tv_roots))
+            self.root.after(0, lambda: self._system_junk_done(results, pruned))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _system_junk_done(self, results, pruned):
+        self.host.set_busy(False)
+        self.host.progress.configure(value=0)
+        failed = [r for r in results if not r.ok]
+        trashed = sum(1 for r in results if r.ok and r.trashed)
+        deleted = sum(1 for r in results if r.ok and not r.trashed)
+        for r in failed:
+            self.log(f"✗ {r.path}: {r.error}")
+        for d in pruned:
+            self.log(f"Убрана опустевшая папка: {d}")
+        parts = []
+        if trashed:
+            parts.append(f"в Корзину {trashed}")
+        if deleted:
+            parts.append(f"удалено насовсем {deleted}")
+        if pruned:
+            parts.append(f"пустых папок {len(pruned)}")
+        if failed:
+            parts.append(f"не удалось {len(failed)}")
+        text = "Служебные файлы: " + (", ".join(parts) if parts else "ничего не тронуто")
+        self.status_var.set(text)
+        self.log(text)
 
     # ---------------------------------------------------------------- поиск --
     def find(self):
@@ -844,7 +980,7 @@ class MetaTab:
             self.info.art, kind, season)
         btn.configure(state="normal" if available and ImageTk else "disabled")
         if candidate is None:
-            preview.configure(image="", text="нет")
+            preview.configure(image="", text="нет" if self.info is not None else "—")
             info_label.configure(text="")
             self._images.pop(f"{kind}-{season}", None)
             return
@@ -1058,9 +1194,20 @@ class MetaTab:
             sel = "✓" if (row.what == "junk" and row.selected) else ""
             iid = self.tree.insert(
                 "", "end", tags=(tag,),
-                values=(sel, self._rel(row.src, base), self._rel(row.dst, base),
+                values=(sel, self._rel(row.src, base), self._dst_text(row),
                         row.status + (f" · {row.note}" if row.note else "")))
             self.row_by_iid[iid] = row
+
+    def _dst_text(self, row: library.Row) -> str:
+        """Что показать в «Станет».
+
+        У мусора путь в плане всегда ведёт в Extras — это запасной вариант на
+        случай, если Корзина недоступна. При включённой галке файл поедет всё же
+        в Корзину, и столбец должен говорить именно это.
+        """
+        if row.what == "junk" and row.selected and self.delete_junk.get():
+            return "Корзина"
+        return self._rel(row.dst, self.plan.root.parent)
 
     @staticmethod
     def _rel(path: Path | None, base: Path) -> str:
@@ -1080,6 +1227,7 @@ class MetaTab:
             return
         row.selected = not row.selected
         self.tree.set(iid, "sel", "✓" if row.selected else "")
+        self.tree.set(iid, "next", self._dst_text(row))
 
     def _on_double_click(self, event):
         iid = self.tree.identify_row(event.y)
@@ -1183,13 +1331,15 @@ class MetaTab:
                 if not r.ok:
                     self.root.after(0, lambda r=r: self.log(f"✗ {r.task.dest.name}: {r.error}"))
             art_urls, season_urls = artwork.chosen_urls(tasks)
-            self._write_title_nfo(policy, art_urls, season_urls)
+            # Пишется после картинок: в .nfo идут URL именно тех, что легли на диск.
+            written += self._write_title_nfo(policy, art_urls, season_urls)
         return {"renamed": len(results) - len(failed), "failed": len(failed),
                 "nfo": written, "art": art_done, "art_skipped": art_skipped,
                 "cancelled": stop()}
 
     def _write_nfo(self, policy: str) -> int:
-        """`.nfo` для серий. Для фильма серий нет — вернёт 0."""
+        """`.nfo` серий. Для фильма серий нет — вернёт 0, его файл пишет
+        `_write_title_nfo`, и в общий счётчик они складываются."""
         if self.info.kind != library.TV:
             return 0
         written = 0
@@ -1214,11 +1364,12 @@ class MetaTab:
             written += 1
         return written
 
-    def _write_title_nfo(self, policy: str, art_urls: dict, season_urls: dict) -> None:
+    def _write_title_nfo(self, policy: str, art_urls: dict, season_urls: dict) -> int:
+        """`movie.nfo` или `tvshow.nfo`. → сколько файлов записано (0 или 1)."""
         name = "movie.nfo" if self.info.kind == library.MOVIE else "tvshow.nfo"
         path = self.plan.root / name
         if path.exists() and policy == metaconf.POLICY_MISSING:
-            return
+            return 0
         preserve = nfo.read_watch_state(path)
         if self.info.kind == library.MOVIE:
             text = nfo.make_movie_nfo(self.info, art=art_urls, preserve=preserve)
@@ -1226,6 +1377,7 @@ class MetaTab:
             text = nfo.make_tvshow_nfo(self.info, art=art_urls, season_art=season_urls,
                                        preserve=preserve)
         nfo.write(path, text)
+        return 1
 
     def _progress(self, i, total, item):
         self.host.progress.configure(maximum=max(total, 1), value=i)
@@ -1248,8 +1400,11 @@ class MetaTab:
         self.log(text)
 
         # Путь в общем поле теперь другой — иначе вкладки «Дорожки» и «EDL»
-        # остались бы со старым именем папки.
+        # остались бы со старым именем папки. Меняем его сами и знаем об этом,
+        # поэтому не даём сработать сбросу тайтла: итог прогона должен остаться
+        # на экране вместе с картинками и таблицей.
         if self.plan is not None and self.plan.root.exists():
+            self._last_path = str(self.plan.root)
             self.host.path_var.set(str(self.plan.root))
             self.host.scan()
 
