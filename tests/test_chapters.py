@@ -32,6 +32,28 @@ def test_points_with_recap():
     assert points == [(0.0, "Recap"), (42.0, "Intro"), (102.0, "Episode"), (3300.0, "Credits")]
 
 
+def test_points_add_stinger_after_hand_set_credits_end():
+    """Сцена после титров получает свою главу — иначе к ней нечем перемотать."""
+    ep = _ep(intro=Segment(0, 102), outro=Segment(3300, 3400), outro_fixed_end=True)
+    points = chapters.build_points(ep, PAD, keep_first_intro=False, outro_to_end=True)
+    assert points == [(0.0, "Intro"), (102.0, "Episode"),
+                      (3300.0, "Credits"), (3400.0, "Stinger")]
+
+
+def test_points_no_stinger_when_credits_run_to_the_end():
+    """Титры до конца файла — делить после них нечего."""
+    points = chapters.build_points(_ep(intro=Segment(0, 102), outro=Segment(3300, 3533)),
+                                   PAD, keep_first_intro=False, outro_to_end=True)
+    assert [name for _, name in points] == ["Intro", "Episode", "Credits"]
+
+
+def test_stinger_name_avoids_skip_keywords():
+    """Название не должно читаться плагинами как заставка, иначе сцену пропустят."""
+    assert "Stinger" in chapters.OUR_NAMES
+    lowered = "Stinger".lower()
+    assert not any(word in lowered for word in ("credits", "outro", "intro", "recap"))
+
+
 def test_points_cold_open_gets_own_chapter():
     """Заставка не с нуля — начало серии тоже должно попасть в разметку."""
     points = chapters.build_points(_ep(intro=Segment(120, 222), outro=Segment(3300, 3533)),

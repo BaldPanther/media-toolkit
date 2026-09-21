@@ -28,7 +28,12 @@ import edl
 # Названия наших глав. По ним же отличаем свою разметку от чужой, поэтому
 # менять их задним числом нельзя: прежде записанные главы станут «чужими».
 # Английские не по случайности — плагины пропуска ищут именно такие слова.
-OUR_NAMES = ("Cold Open", "Recap", "Intro", "Episode", "Credits")
+#
+# «Stinger» — принятое название сцены после титров. Слов «credits», «outro»,
+# «intro» и «recap» в нём нет намеренно: плагины пропуска разбирают главы по
+# названию, и любое из них означало бы «это заставка» — сцену бы пропускало,
+# ради чего её и выделяли отдельной главой.
+OUR_NAMES = ("Cold Open", "Recap", "Intro", "Episode", "Credits", "Stinger")
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -81,6 +86,11 @@ def build_points(ep: "edl.EpisodeEdl", padding: "edl.Padding",
         points.append((body, "Episode"))
     if outro is not None:
         points.append((outro.start, "Credits"))
+        # Титры кончаются раньше файла — дальше идёт сцена, и без своей главы она
+        # осталась бы внутри титров: перемотать к ней было бы нечем, а плеер
+        # пропустил бы её заодно с титрами.
+        if ep.duration and outro.end < ep.duration - edl.END_EPS:
+            points.append((outro.end, "Stinger"))
     if not points:
         return []
 
