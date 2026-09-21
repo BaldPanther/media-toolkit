@@ -1313,9 +1313,30 @@ class MetaTab:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _title_watch_state(self) -> dict:
+        """Отметки просмотра тайтла — до того, как план тронет файлы.
+
+        У фильма они могут лежать только в старом `Фильм (1994).nfo` от
+        tinyMediaManager, а он в этом же прогоне уедет в мусор. Читаем, пока он
+        на месте: всё остальное в .nfo придёт заново из TMDb, а просмотр — нет.
+        """
+        name = "movie.nfo" if self.info.kind == library.MOVIE else "tvshow.nfo"
+        paths = [r.src for r in self.plan.rows
+                 if r.src is not None and r.src.name.lower() == name]
+        if self.info.kind == library.MOVIE:
+            paths += [r.src for r in self.plan.rows
+                      if r.src is not None and r.what == "junk"
+                      and r.src.suffix.lower() == ".nfo"]
+        for path in paths:
+            state = nfo.read_watch_state(path)
+            if state:
+                return state
+        return {}
+
     def _apply_all(self, policy: str, progress) -> dict:
         """Переименование → .nfo → картинки. Выполняется в рабочем потоке."""
         stop = self.host.cancel_event.is_set
+        preserve = self._title_watch_state()
         results = library.apply_plan(self.plan, delete_junk=self.delete_junk.get(),
                                      stop=stop, progress=progress)
         failed = [r for r in results if not r.ok]
@@ -1340,7 +1361,7 @@ class MetaTab:
                     self.root.after(0, lambda r=r: self.log(f"✗ {r.task.dest.name}: {r.error}"))
             art_urls, season_urls = artwork.chosen_urls(tasks)
             # Пишется после картинок: в .nfo идут URL именно тех, что легли на диск.
-            written += self._write_title_nfo(policy, art_urls, season_urls)
+            written += self._write_title_nfo(policy, art_urls, season_urls, preserve)
         return {"renamed": len(results) - len(failed) - len(
                     [r for r in results if r.disposal]),
                 "failed": len(failed),
@@ -1376,13 +1397,13 @@ class MetaTab:
             written += 1
         return written
 
-    def _write_title_nfo(self, policy: str, art_urls: dict, season_urls: dict) -> int:
+    def _write_title_nfo(self, policy: str, art_urls: dict, season_urls: dict,
+                         preserve: dict) -> int:
         """`movie.nfo` или `tvshow.nfo`. → сколько файлов записано (0 или 1)."""
         name = "movie.nfo" if self.info.kind == library.MOVIE else "tvshow.nfo"
         path = self.plan.root / name
         if path.exists() and policy == metaconf.POLICY_MISSING:
             return 0
-        preserve = nfo.read_watch_state(path)
         if self.info.kind == library.MOVIE:
             text = nfo.make_movie_nfo(self.info, art=art_urls, preserve=preserve)
         else:

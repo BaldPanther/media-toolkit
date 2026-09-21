@@ -1011,15 +1011,31 @@ def test_movie_tmm_duplicates_go_to_junk(tmp_path):
     assert dst_of(plan, "poster.jpg").name == "poster.jpg"
 
 
-def test_movie_keeps_its_only_nfo(tmp_path):
-    # Без movie.nfo рядом старый файл — единственный источник отметок просмотра.
+def test_movie_drops_old_nfo_even_without_movie_nfo_yet(tmp_path):
+    # movie.nfo пишется в этом же прогоне, так что ждать второго незачем.
+    # Отметки просмотра из старого файла metaui забирает до применения плана.
     movies = tmp_path / "movies"
     src = _tmm_movie(movies / "Old Name (1994)", with_title_nfo=False)
     plan = library.build_movie_plan(src, movie_info("New Name", 1994), make_settings())
 
     junk = {r.src.name for r in plan.rows if r.what == "junk"}
-    assert "Old Name (1994).nfo" not in junk
-    assert dst_of(plan, "Old Name (1994).nfo").name == "New Name (1994).nfo"
+    assert "Old Name (1994).nfo" in junk
+
+
+def test_orphan_sidecar_is_flagged_not_silently_binned(tmp_path):
+    # .edl и субтитры без своего видео молча увозить в Extras нельзя: пропуск
+    # заставок отвяжется незаметно.
+    src = tmp_path / "tv" / "Show.S01"
+    touch(src / "Show.S01E01.mkv", b"v")
+    touch(src / "Старое имя серии.edl", b"e")
+    touch(src / "RARBG.txt", b"x")
+
+    plan = library.build_tv_plan(src, show_info("Show", 2020, [(1, 1, "Pilot")]),
+                                 make_settings())
+    notes = {r.src.name: r.note for r in plan.rows if r.what == "junk"}
+
+    assert "спутник без своего видео" in notes["Старое имя серии.edl"]
+    assert notes["RARBG.txt"] == ""
 
 
 def test_episode_nfo_and_thumb_are_not_duplicates(tmp_path):
