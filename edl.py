@@ -515,6 +515,71 @@ def _extract_fp(ffmpeg: str, fpcalc: str, path, window: float, from_end: bool,
             pass
 
 
+# --------------------------------------------------------------------------- #
+# Кадры для проверки границ
+# --------------------------------------------------------------------------- #
+#
+# По числу «конец интро: 0:29» не понять, попала граница куда надо: там может
+# идти ещё логотип, а может уже затемнение или сама серия. Показываем границу
+# кадрами — ряд снимков вокруг неё, и всё видно сразу.
+#
+# PNG, а не JPEG: Tk читает PNG сам, и Pillow для этого не нужен. Кадр берётся
+# поиском по входу (-ss перед -i) — ffmpeg прыгает на ближайший опорный кадр и
+# декодирует до нужного, читая доли секунды видео вместо всего файла.
+
+FRAME_WIDTH = 190              # ширина снимка в точках
+FRAME_HEIGHT = 107             # высота: 16:9 от ширины
+FRAME_COUNT = 8                # сколько кадров в полосе
+FRAME_STEP = 2.0               # шаг между ними по умолчанию, секунды
+
+
+def grab_frame(ffmpeg: str, path, at: float, width: int = FRAME_WIDTH,
+               height: int = FRAME_HEIGHT) -> bytes | None:
+    """Кадр в указанной секунде как PNG. None — если вытащить не вышло.
+
+    Кадр вписывается в коробку ровно width×height с чёрными полями: у сериалов
+    бывает и 16:9, и 2.40:1, а полоса не должна прыгать от кадра к кадру.
+    """
+    box = (f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+           f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2")
+    cp = _run([ffmpeg, "-v", "error", "-ss", f"{max(0.0, at):.3f}", "-i", str(path),
+               "-frames:v", "1", "-vf", box, "-c:v", "png", "-f", "image2", "-"])
+    return cp.stdout if cp.returncode == 0 and cp.stdout else None
+
+
+def frame_times(center: float, duration: float | None, count: int = FRAME_COUNT,
+                step: float = FRAME_STEP) -> list[float]:
+    """Моменты для полосы вокруг границы, в пределах файла.
+
+    Окно смещено назад на треть: у границы важнее увидеть, что идёт ПОСЛЕ неё —
+    кончилась ли заставка. Упирается в край файла — сдвигаем окно целиком, а не
+    прижимаем кадры к краю: иначе несколько снимков окажутся одинаковыми.
+    """
+    span = (count - 1) * step
+    start = max(0.0, center - (count // 3) * step)
+    if duration:
+        start = min(start, max(0.0, duration - span - 0.1))
+    return [start + i * step for i in range(count)]
+
+
+def grab_frames(ffmpeg: str, path, times, width: int = FRAME_WIDTH,
+                on_frame=None, stop=None) -> list[bytes | None]:
+    """Кадры в указанные моменты. on_frame(i, png) зовётся по готовности каждого."""
+    out: list[bytes | None] = [None] * len(times)
+
+    def work(i):
+        if stop and stop():
+            return
+        out[i] = grab_frame(ffmpeg, path, times[i], width)
+        if on_frame and not (stop and stop()):
+            on_frame(i, out[i])
+
+    if times:
+        with ThreadPoolExecutor(max_workers=min(8, len(times))) as ex:
+            list(ex.map(work, range(len(times))))
+    return out
+
+
 def _longest_run(mask) -> tuple[int, int]:
     """Самый длинный непрерывный True в булевом массиве → (длина, индекс начала)."""
     import numpy as np

@@ -11,7 +11,9 @@
 """
 from __future__ import annotations
 
+import base64
 import json
+import queue
 import sys
 import threading
 from pathlib import Path
@@ -278,15 +280,16 @@ class App:
             sb.bind("<KeyRelease>", lambda e: self.refresh_edl_preview())
             return sb
 
-        ttk.Label(opt, text="Отступы (сек), + позже / − раньше:").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        spin(2, 1, "интро нач:", "intro_start")
-        spin(2, 3, "интро кон:", "intro_end")
-        spin(3, 1, "титры нач:", "outro_start")
-        self.edl_outro_end_spin = spin(3, 3, "титры кон:", "outro_end")
+        ttk.Label(opt, text="Отступы (сек): + сдвинуть позже, − раньше").grid(
+            row=2, column=0, sticky="w", pady=(6, 0))
+        spin(2, 1, "начало интро:", "intro_start")
+        spin(2, 3, "конец интро:", "intro_end")
+        spin(3, 1, "начало титров:", "outro_start")
+        self.edl_outro_end_spin = spin(3, 3, "конец титров:", "outro_end")
 
         # Обычно после титров ничего нет и пропуск честнее вести до самого конца.
         # Но если там сцена после титров, её бы тоже проглотило — тогда галку
-        # снимают, и конец берётся по найденной границе плюс отступ «титры кон».
+        # снимают, и конец берётся по найденной границе плюс отступ «конец титров».
         self.edl_outro_to_end = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             opt, text="Титры — до конца файла (снимите, если после титров есть сцена)",
@@ -321,9 +324,9 @@ class App:
                   **row_colors(scope_row)["nochange"]).pack(side="left", padx=(10, 0))
 
         ttk.Label(manual, text="Интро:").grid(row=1, column=0, sticky="e")
-        ttk.Label(manual, text="нач").grid(row=1, column=1, sticky="e", padx=(8, 2))
+        ttk.Label(manual, text="начало").grid(row=1, column=1, sticky="e", padx=(8, 2))
         ttk.Entry(manual, textvariable=self.edl_manual["intro_start"], width=8).grid(row=1, column=2)
-        ttk.Label(manual, text="кон").grid(row=1, column=3, sticky="e", padx=(8, 2))
+        ttk.Label(manual, text="конец").grid(row=1, column=3, sticky="e", padx=(8, 2))
         ttk.Entry(manual, textvariable=self.edl_manual["intro_end"], width=8).grid(row=1, column=4)
         ttk.Button(manual, text="Задать", command=self.apply_intro_all).grid(row=1, column=5, padx=(10, 0))
 
@@ -337,7 +340,7 @@ class App:
         ttk.Button(manual, text="Задать", command=self.apply_intro_dur_all).grid(row=2, column=5, padx=(10, 0), pady=(6, 0))
 
         ttk.Label(manual, text="Титры:").grid(row=3, column=0, sticky="e", pady=(6, 0))
-        ttk.Label(manual, text="нач").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Label(manual, text="начало").grid(row=3, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
         ttk.Entry(manual, textvariable=self.edl_manual["outro_start"], width=8).grid(row=3, column=2, pady=(6, 0))
         ttk.Label(manual, text="(до конца файла)").grid(row=3, column=3, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(manual, text="Задать", command=self.apply_outro_all).grid(row=3, column=5, padx=(10, 0), pady=(6, 0))
@@ -1836,6 +1839,197 @@ class App:
             return
         self._edl_edit_dialog(self.edl_row_ep[iid])
 
+    # Границы, которые можно проверить кадром: подпись → (поле диалога, отступ сезона).
+    # У recap отступа нет, поэтому и сдвигать сезон по нему нечем.
+    _EDL_BOUNDS = {
+        "конец интро": ("ie", "intro_end"),
+        "начало интро": ("is", "intro_start"),
+        "начало титров": ("os", "outro_start"),
+        "конец recap": ("rc", None),
+    }
+    _FRAME_COLS = 4
+
+    def _build_frames_block(self, parent, win, e: "edl.EpisodeEdl", varmap):
+        """Полоса кадров вокруг границы — увидеть глазами, куда она попала.
+
+        По числу «конец интро 0:29» не понять, идёт там ещё заставка, затемнение
+        или уже серия. Кадры отвечают сразу, а найденную поправку переносим на
+        весь сезон отступом: детект ошибается у всех серий одинаково, и лечить
+        это по одной серии бессмысленно.
+
+        Полоса строится вокруг ДЕЙСТВУЮЩЕЙ границы (значение серии плюс отступ
+        сезона) — именно её и пропустит Kodi. Поэтому «применить к этой серии»
+        вычитает отступ обратно, а «сдвинуть сезон» правит сам отступ.
+        """
+        box = ttk.LabelFrame(parent, text="Проверка кадром", padding=8)
+        ffmpeg = edl.find_ffmpeg()
+        if not ffmpeg:
+            ttk.Label(box, text="⚠ " + edl.install_hint(["ffmpeg"])).pack(anchor="w")
+            return box
+
+        top = ttk.Frame(box)
+        top.pack(fill="x")
+        ttk.Label(top, text="Граница:").pack(side="left")
+        bound_var = tk.StringVar(value="конец интро")
+        ttk.Combobox(top, state="readonly", width=15, textvariable=bound_var,
+                     values=list(self._EDL_BOUNDS)).pack(side="left", padx=(6, 12))
+        ttk.Label(top, text="шаг:").pack(side="left")
+        step_var = tk.StringVar(value="2")
+        ttk.Combobox(top, state="readonly", width=3, textvariable=step_var,
+                     values=["1", "2", "5", "10"]).pack(side="left", padx=(4, 12))
+        show_btn = ttk.Button(top, text="Показать кадры")
+        show_btn.pack(side="left")
+        status = tk.StringVar(value="")
+        ttk.Label(top, textvariable=status, **row_colors(top)["nochange"]).pack(side="left", padx=10)
+
+        strip = ttk.Frame(box)
+        strip.pack(fill="x", pady=(8, 0))
+        # Пустая картинка нужного размера держит сетку: без неё width/height у Label
+        # считаются в символах, и окно раздувается до тысяч точек.
+        blank = tk.PhotoImage(width=edl.FRAME_WIDTH, height=edl.FRAME_HEIGHT, master=parent)
+        cells, stamps = [], []
+        for i in range(edl.FRAME_COUNT):
+            cell = ttk.Frame(strip)
+            cell.grid(row=i // self._FRAME_COLS, column=i % self._FRAME_COLS, padx=2, pady=2)
+            # tk.Label, а не ttk: только у него есть рамка выделения (highlight*).
+            img = tk.Label(cell, image=blank, borderwidth=0, highlightthickness=2,
+                           highlightbackground=theme.widget_bg(cell), cursor=theme.HAND)
+            img.pack()
+            stamp = ttk.Label(cell, text="—", anchor="center")
+            stamp.pack(fill="x")
+            cells.append(img)
+            stamps.append(stamp)
+
+        pick_var = tk.StringVar(value="Нажмите «Показать кадры».")
+        ttk.Label(box, textvariable=pick_var).pack(anchor="w", pady=(6, 0))
+        act = ttk.Frame(box)
+        act.pack(anchor="w", pady=(4, 0))
+        apply_one = ttk.Button(act, text="Применить к этой серии", state="disabled")
+        apply_one.pack(side="left")
+        apply_all = ttk.Button(act, text="Сдвинуть весь сезон", state="disabled")
+        apply_all.pack(side="left", padx=8)
+
+        accent = theme._rgb_to_hex(theme.accent_rgb(box))
+        plain = theme.widget_bg(strip)
+        # Ссылки на картинки держим сами: Tk их не удерживает, и кадры пропадут.
+        state = {"imgs": [None] * edl.FRAME_COUNT, "times": [], "pick": None,
+                 "center": None, "run": 0, "blank": blank}
+        win.bind("<Destroy>", lambda ev: state.update(run=state["run"] + 1), add="+")
+
+        def pad_of(bound: str) -> float:
+            key = self._EDL_BOUNDS[bound][1]
+            return self._pad_val(key) if key else 0.0
+
+        def current_effective(bound: str):
+            """Действующее значение границы: из поля диалога плюс отступ сезона."""
+            raw = self._parse_time(varmap[self._EDL_BOUNDS[bound][0]].get())
+            return None if raw is None else raw + pad_of(bound)
+
+        def choose(i):
+            if i >= len(state["times"]) or state["imgs"][i] is None:
+                return
+            state["pick"] = state["times"][i]
+            for k, c in enumerate(cells):
+                c.configure(highlightbackground=accent if k == i else plain)
+            delta = state["pick"] - state["center"]
+            pick_var.set(f"Сейчас {self._fmt_time(state['center'])} → выбрано "
+                         f"{self._fmt_time(state['pick'])} (сдвиг {delta:+.0f} с)")
+            apply_one.configure(state="normal")
+            apply_all.configure(
+                state="disabled" if self._EDL_BOUNDS[bound_var.get()][1] is None else "normal")
+
+        for i, c in enumerate(cells):
+            c.bind("<Button-1>", lambda ev, i=i: choose(i))
+
+        def show():
+            bound = bound_var.get()
+            center = current_effective(bound)
+            if center is None:
+                messagebox.showinfo("Нет границы",
+                                    f"У этой серии не задана граница «{bound}» — "
+                                    "показывать нечего вокруг пустого значения.")
+                return
+            state.update(center=center, pick=None, run=state["run"] + 1)
+            run = state["run"]
+            state["times"] = edl.frame_times(center, e.duration, step=float(step_var.get()))
+            for c, s in zip(cells, stamps):
+                c.configure(image=blank, highlightbackground=plain)
+                s.configure(text="…")
+            state["imgs"] = [None] * edl.FRAME_COUNT
+            apply_one.configure(state="disabled")
+            apply_all.configure(state="disabled")
+            pick_var.set(f"Действующая граница: {self._fmt_time(center)}. "
+                         "Кликните кадр, на котором граница должна быть.")
+            status.set(f"читаю кадры 0/{len(state['times'])}…")
+            show_btn.configure(state="disabled")
+
+            # Готовые кадры кладём в очередь, а рисует их главный поток по таймеру:
+            # трогать Tk из рабочего потока нельзя, даже через after.
+            ready_q: "queue.Queue" = queue.Queue()
+
+            def work():
+                edl.grab_frames(ffmpeg, e.path, state["times"],
+                                on_frame=lambda i, png: ready_q.put((i, png)),
+                                stop=lambda: run != state["run"])
+                ready_q.put(None)
+
+            def poll():
+                if run != state["run"] or not win.winfo_exists():
+                    return
+                finished = False
+                while True:
+                    try:
+                        item = ready_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item is None:
+                        finished = True
+                        continue
+                    i, png = item
+                    stamp = self._fmt_time(state["times"][i])
+                    if png:
+                        img = tk.PhotoImage(data=base64.b64encode(png).decode("ascii"), master=win)
+                        state["imgs"][i] = img          # держим ссылку: иначе кадр пропадёт
+                        cells[i].configure(image=img)
+                        stamps[i].configure(text=stamp)
+                    else:
+                        stamps[i].configure(text=f"{stamp} — нет кадра")
+                got = sum(1 for x in state["imgs"] if x is not None)
+                if finished:
+                    status.set("")
+                    show_btn.configure(state="normal")
+                    return
+                status.set(f"читаю кадры {got}/{len(state['times'])}…")
+                win.after(120, poll)
+
+            threading.Thread(target=work, daemon=True).start()
+            poll()
+
+        show_btn.configure(command=show)
+
+        def to_episode():
+            bound = bound_var.get()
+            field = self._EDL_BOUNDS[bound][0]
+            # В поле диалога живёт «сырое» значение, отступ сезона ляжет на него сверху.
+            varmap[field].set(self._fmt_time(state["pick"] - pad_of(bound)))
+            pick_var.set(f"Граница «{bound}» этой серии — {self._fmt_time(state['pick'])}. "
+                         "Не забудьте «Сохранить».")
+
+        def to_season():
+            bound = bound_var.get()
+            key = self._EDL_BOUNDS[bound][1]
+            delta = state["pick"] - state["center"]
+            new = self._pad_val(key) + delta
+            self.edl_pad[key].set(f"{new:.0f}")
+            self.refresh_edl_preview()
+            self.log_line(f"Отступ «{bound}» сдвинут на {delta:+.0f} с (теперь {new:+.0f} с) — "
+                          f"по кадрам серии «{e.path.name}».")
+            pick_var.set(f"Отступ «{bound}» теперь {new:+.0f} с — применён ко всем сериям.")
+
+        apply_one.configure(command=to_episode)
+        apply_all.configure(command=to_season)
+        return box
+
     def _edl_edit_dialog(self, e: "edl.EpisodeEdl"):
         win = tk.Toplevel(self.root)
         win.title(f"Правка: {e.path.name}")
@@ -1879,8 +2073,11 @@ class App:
         ttk.Button(clear_frm, text="recap", width=7,
                    command=lambda: varmap["rc"].set("")).pack(side="left", padx=2)
 
+        self._build_frames_block(frm, win, e, varmap).grid(
+            row=len(rows) + 2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
         btns = ttk.Frame(frm)
-        btns.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        btns.grid(row=len(rows) + 3, column=0, columnspan=2, sticky="e", pady=(10, 0))
 
         def save():
             rc = self._parse_time(varmap["rc"].get())

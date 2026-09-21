@@ -270,3 +270,41 @@ def test_prune_cache_by_age(tmp_path):
     assert edl.prune_cache(tmp_path, ttl_days=90) == 1
     assert fresh.exists() and not stale.exists()
     assert edl.prune_cache(tmp_path / "нет-каталога") == 0
+
+
+# ----------------------------------------- кадры для проверки границ --
+
+def test_frame_times_centred_window():
+    """Окно смещено вперёд: после границы важнее, чем до неё."""
+    t = edl.frame_times(29.0, 3533.0, count=8, step=2.0)
+    assert t == [25.0, 27.0, 29.0, 31.0, 33.0, 35.0, 37.0, 39.0]
+    assert 29.0 in t
+
+
+def test_frame_times_shifts_window_at_edges():
+    """У краёв окно съезжает целиком — иначе кадры дублировались бы."""
+    start = edl.frame_times(0.0, 3533.0, count=8, step=2.0)
+    assert start == [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]
+    assert len(set(start)) == 8
+
+    end = edl.frame_times(3530.0, 3533.0, count=8, step=2.0)
+    assert len(set(end)) == 8
+    assert max(end) < 3533.0
+
+    # Отступ назад — треть кадров, поэтому у короткой полосы он меньше.
+    assert edl.frame_times(29.0, None, count=4, step=2.0) == [27.0, 29.0, 31.0, 33.0]
+
+
+def test_grab_frames_collects_and_reports(monkeypatch):
+    monkeypatch.setattr(edl, "grab_frame", lambda ff, p, at, w: None if at == 27.0 else b"png")
+    seen = []
+    out = edl.grab_frames("ffmpeg", "x.mkv", [25.0, 27.0, 29.0],
+                          on_frame=lambda i, png: seen.append((i, png)))
+    assert out == [b"png", None, b"png"]
+    assert sorted(i for i, _ in seen) == [0, 1, 2]
+
+
+def test_grab_frames_stops_on_request(monkeypatch):
+    monkeypatch.setattr(edl, "grab_frame", lambda *a: b"png")
+    out = edl.grab_frames("ffmpeg", "x.mkv", [1.0, 2.0], stop=lambda: True)
+    assert out == [None, None]
