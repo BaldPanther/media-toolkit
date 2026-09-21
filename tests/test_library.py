@@ -56,15 +56,19 @@ def test_sanitize_name_subtitle_colon_becomes_dash():
         "Mission - Impossible - Fallout"
 
 
-def test_sanitize_name_keeps_tight_colon_as_space():
-    # Без пробела следом двоеточие значит не подзаголовок — дефис там неуместен.
-    assert library.sanitize_name("Re:Zero") == "Re Zero"
-    assert library.sanitize_name("Aliens vs Predator 9:30") == "Aliens vs Predator 9 30"
+def test_sanitize_name_keeps_tight_separator_tight():
+    # Без пробелов разделитель — часть одного выражения, и дефис тоже без них.
+    assert library.sanitize_name("Re:Zero") == "Re-Zero"
+    assert library.sanitize_name("Сеанс в 9:30") == "Сеанс в 9-30"
+    assert library.sanitize_name("Arrival/Departure") == "Arrival-Departure"
+    assert library.sanitize_name("Face/Off") == "Face-Off"
 
 
-def test_sanitize_name_slash_becomes_space():
-    # Слэш стоит между словами пары, дефис с пробелами там выглядел бы чужеродно.
-    assert library.sanitize_name("Arrival/Departure") == "Arrival Departure"
+def test_sanitize_name_separator_spacing_follows_the_title():
+    # Одно правило на оба вида: пробелы вокруг дефиса такие же, как были.
+    assert library.sanitize_name("A: B") == "A - B"
+    assert library.sanitize_name("A :B") == "A - B"
+    assert library.sanitize_name("A:B") == "A-B"
 
 
 def test_sanitize_name_never_leaves_a_dangling_dash():
