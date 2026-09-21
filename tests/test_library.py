@@ -1052,3 +1052,24 @@ def test_episode_nfo_and_thumb_are_not_duplicates(tmp_path):
     assert [r for r in plan.rows if r.what == "junk"] == []
     assert dst_of(plan, ".nfo").name == "Show - S01E01 - Pilot.nfo"
     assert dst_of(plan, "-thumb.jpg").name == "Show - S01E01 - Pilot-thumb.jpg"
+
+
+def test_delete_falls_back_to_rename_when_unlink_is_refused(tmp_path, monkeypatch):
+    # Живой случай на SMB-шаре: .DS_Store, открытый Finder, не удалялся с
+    # «нет такого файла», хотя stat его видел. Переименование проходило.
+    victim = touch(tmp_path / ".DS_Store", b"d")
+    real_unlink = Path.unlink
+    refused = []
+
+    def stubborn(self, *a, **kw):
+        if self.name == ".DS_Store":
+            refused.append(self)
+            raise OSError(2, "No such file or directory")
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", stubborn)
+    library._delete(victim)
+
+    assert refused, "подмена не сработала — тест ничего не проверил"
+    assert not victim.exists()
+    assert list(tmp_path.iterdir()) == []      # временное имя за собой не оставили

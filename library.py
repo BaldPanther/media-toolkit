@@ -870,8 +870,17 @@ def _delete(path: Path) -> None:
     """Удаление без Корзины. Мусором бывает и папка целиком («Sample»)."""
     if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
-    else:
+        return
+    try:
         path.unlink()
+    except OSError:
+        # Файл, открытый другим приложением, SMB-шара удалять отказывается —
+        # причём с «нет такого файла», хотя stat его прекрасно видит. А вот
+        # переименовать даёт. Сверено на живой шаре: `.DS_Store`, который
+        # держал Finder, не удалялся никак, пока его не переименовали.
+        tmp = path.with_name(f"delete-{os.getpid()}-{path.name}")
+        path.rename(tmp)
+        tmp.unlink()
 
 
 # Как именно избавились от мусора — у тома может не быть Корзины.
@@ -986,7 +995,7 @@ def _cleanup_empty_dirs(plan: Plan) -> None:
             if leftovers is None:
                 continue
             for item in leftovers:
-                item.unlink()
+                _delete(item)
             d.rmdir()
         except OSError:
             pass
