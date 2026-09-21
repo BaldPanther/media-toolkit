@@ -580,6 +580,51 @@ def grab_frames(ffmpeg: str, path, times, width: int = FRAME_WIDTH,
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Открыть серию в плеере на нужной секунде
+# --------------------------------------------------------------------------- #
+#
+# Кадры отвечают на вопрос «что там», но иногда хочется просто посмотреть кусок.
+# Плееры, умеющие стартовать с заданной секунды, перечислены по предпочтению.
+#
+# Важный нюанс macOS: у IINA есть iina-cli, но в PATH его обычно нет — symlink
+# ставится вручную через меню «IINA → Install Command Line Tool…». Сам бинарник
+# при этом всегда лежит внутри бандла, поэтому shutil.which его не находит, а
+# запустить можно. Отсюда и поиск по явным путям, а не только по PATH.
+
+_PLAYERS = (
+    ("IINA", ("/Applications/IINA.app/Contents/MacOS/iina-cli",),
+     lambda t: [f"--mpv-start={t:.3f}"]),
+    ("mpv", ("mpv",), lambda t: [f"--start={t:.3f}"]),
+    ("VLC", ("vlc", "/Applications/VLC.app/Contents/MacOS/VLC",
+             r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+             r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe"),
+     lambda t: [f"--start-time={t:.0f}"]),
+)
+
+
+def find_player():
+    """Первый доступный плеер, умеющий стартовать с секунды → (имя, путь, аргументы)."""
+    for name, candidates, args in _PLAYERS:
+        for cand in candidates:
+            path = os.path.abspath(cand) if os.path.isfile(cand) else shutil.which(cand)
+            if path:
+                return name, path, args
+    return None
+
+
+def open_in_player(path, at: float) -> str | None:
+    """Открывает файл на указанной секунде. Возвращает имя плеера или None."""
+    found = find_player()
+    if not found:
+        return None
+    name, exe, args = found
+    subprocess.Popen([exe, *args(max(0.0, at)), str(path)],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=_CREATE_NO_WINDOW)
+    return name
+
+
 def _longest_run(mask) -> tuple[int, int]:
     """Самый длинный непрерывный True в булевом массиве → (длина, индекс начала)."""
     import numpy as np

@@ -308,3 +308,43 @@ def test_grab_frames_stops_on_request(monkeypatch):
     monkeypatch.setattr(edl, "grab_frame", lambda *a: b"png")
     out = edl.grab_frames("ffmpeg", "x.mkv", [1.0, 2.0], stop=lambda: True)
     assert out == [None, None]
+
+
+# ---------------------------------------------- открытие в плеере --
+
+def test_find_player_prefers_bundle_over_path(monkeypatch, tmp_path):
+    """CLI внутри .app бандла в PATH не виден, но запустить его можно."""
+    bundle = tmp_path / "iina-cli"
+    bundle.write_text("")
+    monkeypatch.setattr(edl, "_PLAYERS", (
+        ("IINA", (str(bundle),), lambda t: [f"--mpv-start={t:.3f}"]),
+        ("mpv", ("mpv",), lambda t: [f"--start={t:.3f}"]),
+    ))
+    monkeypatch.setattr(edl.shutil, "which", lambda *_: "/usr/bin/mpv")
+    name, path, args = edl.find_player()
+    assert name == "IINA" and path == str(bundle)
+    assert args(35.0) == ["--mpv-start=35.000"]
+
+
+def test_find_player_falls_back_to_path(monkeypatch):
+    monkeypatch.setattr(edl, "_PLAYERS", (
+        ("IINA", ("/нет/такого/iina-cli",), lambda t: []),
+        ("mpv", ("mpv",), lambda t: [f"--start={t:.3f}"]),
+    ))
+    monkeypatch.setattr(edl.shutil, "which", lambda n: "/usr/bin/mpv" if n == "mpv" else None)
+    assert edl.find_player()[0] == "mpv"
+
+
+def test_open_in_player_without_any(monkeypatch):
+    monkeypatch.setattr(edl, "find_player", lambda: None)
+    assert edl.open_in_player("x.mkv", 10.0) is None
+
+
+def test_open_in_player_builds_command(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(edl, "find_player",
+                        lambda: ("mpv", "/usr/bin/mpv", lambda t: [f"--start={t:.3f}"]))
+    monkeypatch.setattr(edl.subprocess, "Popen",
+                        lambda args, **kw: seen.setdefault("args", args))
+    assert edl.open_in_player("/tmp/Show.mkv", -5.0) == "mpv"
+    assert seen["args"] == ["/usr/bin/mpv", "--start=0.000", "/tmp/Show.mkv"]  # отрицательное → 0

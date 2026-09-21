@@ -1871,8 +1871,9 @@ class App:
         top.pack(fill="x")
         ttk.Label(top, text="Граница:").pack(side="left")
         bound_var = tk.StringVar(value="конец интро")
-        ttk.Combobox(top, state="readonly", width=15, textvariable=bound_var,
-                     values=list(self._EDL_BOUNDS)).pack(side="left", padx=(6, 12))
+        bound_combo = ttk.Combobox(top, state="readonly", width=15, textvariable=bound_var,
+                                   values=list(self._EDL_BOUNDS))
+        bound_combo.pack(side="left", padx=(6, 12))
         ttk.Label(top, text="шаг:").pack(side="left")
         step_var = tk.StringVar(value="2")
         ttk.Combobox(top, state="readonly", width=3, textvariable=step_var,
@@ -1908,6 +1909,10 @@ class App:
         apply_one.pack(side="left")
         apply_all = ttk.Button(act, text="Сдвинуть весь сезон", state="disabled")
         apply_all.pack(side="left", padx=8)
+        player = edl.find_player()
+        open_btn = ttk.Button(act, text=f"Открыть в {player[0]}" if player else "Плеер не найден",
+                              state="normal" if player else "disabled")
+        open_btn.pack(side="left")
 
         accent = theme._rgb_to_hex(theme.accent_rgb(box))
         plain = theme.widget_bg(strip)
@@ -2026,8 +2031,34 @@ class App:
                           f"по кадрам серии «{e.path.name}».")
             pick_var.set(f"Отступ «{bound}» теперь {new:+.0f} с — применён ко всем сериям.")
 
+        def in_player():
+            """Открывает серию на выбранном кадре, а без выбора — на самой границе."""
+            bound = bound_var.get()
+            at = state["pick"] if state["pick"] is not None else current_effective(bound)
+            if at is None:
+                messagebox.showinfo("Нет границы",
+                                    f"У этой серии не задана граница «{bound}» — "
+                                    "открывать не на чем.")
+                return
+            name = edl.open_in_player(e.path, at)
+            if name:
+                pick_var.set(f"Открыто в {name} на {self._fmt_time(at)}.")
+
+        def on_bound_change(_event=None):
+            """Границу сменили — старые кадры к ней не относятся, гасим их."""
+            state.update(pick=None, center=None, times=[])
+            state["imgs"] = [None] * edl.FRAME_COUNT
+            for c, s in zip(cells, stamps):
+                c.configure(image=blank, highlightbackground=plain)
+                s.configure(text="—")
+            apply_one.configure(state="disabled")
+            apply_all.configure(state="disabled")
+            pick_var.set("Нажмите «Показать кадры».")
+
+        bound_combo.bind("<<ComboboxSelected>>", on_bound_change)
         apply_one.configure(command=to_episode)
         apply_all.configure(command=to_season)
+        open_btn.configure(command=in_player)
         return box
 
     def _edl_edit_dialog(self, e: "edl.EpisodeEdl"):
