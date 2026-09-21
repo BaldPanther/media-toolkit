@@ -98,6 +98,8 @@ class App:
         self._build_edl(self.tab_edl)
         self._build_common_bottom()
         self.meta = metaui.MetaTab(self.tab_meta, self)
+        self._load_edl_settings()
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._place_window()
         self._enable_entry_clipboard()
@@ -122,6 +124,10 @@ class App:
         w = min(max(root.winfo_reqwidth(), 1080), sw - 80)
         h = min(max(root.winfo_reqheight(), 760), sh - 120)
         root.geometry(f"{w}x{h}+{(sw - w) // 2}+{max(40, (sh - h) // 3)}")
+
+    def _on_close(self):
+        self._save_edl_settings()
+        self.root.destroy()
 
     def _set_window_icon(self):
         assets = Path(__file__).resolve().parent / "assets"
@@ -261,9 +267,8 @@ class App:
             row=1, column=3, columnspan=3, sticky="w", padx=(8, 0), pady=(6, 0))
 
         # Отступы (padding) поверх автодетекта, на весь сезон. + позже / − раньше.
-        # Конец титров не регулируем — он всегда до конца файла.
         self.edl_pad = {k: tk.StringVar(value="0") for k in
-                        ("intro_start", "intro_end", "outro_start")}
+                        ("intro_start", "intro_end", "outro_start", "outro_end")}
 
         def spin(row, col, label, key):
             ttk.Label(opt, text=label).grid(row=row, column=col, sticky="e", padx=(12, 2), pady=(6, 0))
@@ -271,11 +276,22 @@ class App:
                              textvariable=self.edl_pad[key], command=self.refresh_edl_preview)
             sb.grid(row=row, column=col + 1, sticky="w", pady=(6, 0))
             sb.bind("<KeyRelease>", lambda e: self.refresh_edl_preview())
+            return sb
 
         ttk.Label(opt, text="Отступы (сек), + позже / − раньше:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         spin(2, 1, "интро нач:", "intro_start")
         spin(2, 3, "интро кон:", "intro_end")
         spin(3, 1, "титры нач:", "outro_start")
+        self.edl_outro_end_spin = spin(3, 3, "титры кон:", "outro_end")
+
+        # Обычно после титров ничего нет и пропуск честнее вести до самого конца.
+        # Но если там сцена после титров, её бы тоже проглотило — тогда галку
+        # снимают, и конец берётся по найденной границе плюс отступ «титры кон».
+        self.edl_outro_to_end = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            opt, text="Титры — до конца файла (снимите, если после титров есть сцена)",
+            variable=self.edl_outro_to_end, command=self._on_outro_to_end,
+        ).grid(row=4, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
         # --- Задать вручную (когда детект промахнулся или его нет) ---
         # В некоторых сериалах интро/титры одинаковы по времени во всех сериях, но
@@ -994,8 +1010,41 @@ class App:
     def edl_padding(self) -> edl.Padding:
         return edl.Padding(
             self._pad_val("intro_start"), self._pad_val("intro_end"),
-            self._pad_val("outro_start"), 0.0,   # конец титров не регулируем (до конца файла)
+            self._pad_val("outro_start"), self._pad_val("outro_end"),
         )
+
+    def _on_outro_to_end(self):
+        """Пока титры тянутся до конца файла, отступ их конца ни на что не влияет."""
+        self.edl_outro_end_spin.configure(
+            state="disabled" if self.edl_outro_to_end.get() else "normal")
+        self.refresh_edl_preview()
+
+    # Настройки вкладки EDL переживают перезапуск: отступы и дорожка детекта
+    # подбираются под конкретную медиатеку, набирать их заново каждый раз незачем.
+    # Момент записи — выход из программы и удачная запись .edl.
+    def _save_edl_settings(self):
+        save_app_settings({**load_app_settings(), "edl": {
+            "keep_first": self.edl_keep_first.get(),
+            "outro_to_end": self.edl_outro_to_end.get(),
+            "track": self.edl_track_var.get(),
+            "pad": {k: v.get() for k, v in self.edl_pad.items()},
+        }})
+
+    def _load_edl_settings(self):
+        data = load_app_settings().get("edl")
+        if not isinstance(data, dict):
+            return
+        self.edl_keep_first.set(bool(data.get("keep_first", True)))
+        self.edl_outro_to_end.set(bool(data.get("outro_to_end", True)))
+        track = data.get("track")
+        if isinstance(track, str) and track:
+            # Языка может не оказаться в новой папке — скан вернёт «Оригинал (авто)».
+            self.edl_track_var.set(track)
+            self.edl_track_combo.configure(values=[EDL_TRACK_AUTO, track])
+        for key, value in (data.get("pad") or {}).items():
+            if key in self.edl_pad:
+                self.edl_pad[key].set(str(value))
+        self._on_outro_to_end()
 
     def _rebuild_edl_eps(self):
         """Пересобирает список серий из self.files, сохраняя уже найденные тайминги."""
@@ -1504,6 +1553,7 @@ class App:
         self.edl_tree.delete(*self.edl_tree.get_children())
         self.edl_row_ep = {}
         keep = self.edl_keep_first.get()
+        to_end = self.edl_outro_to_end.get()
         pad = self.edl_padding()
         n_intro = n_outro = 0
         self._edl_have_files = self._edl_have_online = 0
@@ -1514,9 +1564,7 @@ class App:
                   if e.season is not None and e.episode is not None else "—")
             intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
                                           pad.intro_start, pad.intro_end, e.duration)
-            outro_eff = edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
-            if outro_eff and e.duration:          # титры всегда до конца файла
-                outro_eff = edl.Segment(outro_eff.start, e.duration)
+            outro_eff = edl.final_outro(e, pad, to_end)
 
             recap_txt = f"0:00–{self._fmt_time(e.recap.end)}" if e.recap else "—"
 
@@ -1636,10 +1684,11 @@ class App:
                 messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
             return
         keep = self.edl_keep_first.get()
+        to_end = self.edl_outro_to_end.get()
         pad = self.edl_padding()
         to_write = [e for e in self.edl_eps
                     if edl.apply_padding(edl.effective_intro(e, keep), pad.intro_start, pad.intro_end, e.duration)
-                    or edl.apply_padding(e.outro, pad.outro_start, pad.outro_end, e.duration)
+                    or edl.final_outro(e, pad, to_end)
                     or e.recap]
         if not to_write:
             messagebox.showinfo("Нечего записывать",
@@ -1654,11 +1703,12 @@ class App:
 
         written = 0
         for e in self.edl_eps:
-            p = edl.build_and_write(e, pad, keep)
+            p = edl.build_and_write(e, pad, keep, to_end)
             if p:
                 written += 1
                 self.log_line(f"  ✓ {p.name}")
         self.log_line(f"Записано .edl: {written}.")
+        self._save_edl_settings()
         self.refresh_edl_preview()
 
     def delete_edl_files(self):

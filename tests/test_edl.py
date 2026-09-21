@@ -183,6 +183,29 @@ def test_pick_audio_index(langs, prefer, expected):
     assert edl.pick_audio_index(langs, prefer) == expected
 
 
+def test_build_and_write_outro_not_to_end(tmp_path):
+    """Снятая галка «до конца файла» оставляет найденную границу титров."""
+    video = tmp_path / "Show.S01E02.mkv"
+    video.write_text("")
+    ep = EpisodeEdl(video, season=1, episode=2, duration=1400.0,
+                    outro=Segment(1200.0, 1340.0))
+
+    edl.build_and_write(ep, Padding(), keep_first_intro=False, outro_to_end=False)
+    assert "1200.000\t1340.000" in video.with_suffix(".edl").read_text("utf-8")
+
+    # с галкой (по умолчанию) — тянем до длительности, сцена после титров не важна
+    edl.build_and_write(ep, Padding(), keep_first_intro=False)
+    assert "1200.000\t1400.000" in video.with_suffix(".edl").read_text("utf-8")
+
+
+def test_final_outro_applies_outro_end_padding():
+    ep = EpisodeEdl(Path("Show.S01E02.mkv"), duration=1400.0,
+                    outro=Segment(1200.0, 1340.0))
+    seg = edl.final_outro(ep, Padding(outro_start=-5.0, outro_end=10.0), outro_to_end=False)
+    assert (seg.start, seg.end) == (1195.0, 1350.0)
+    assert edl.final_outro(EpisodeEdl(Path("x.mkv")), Padding()) is None
+
+
 # ------------------------------------------- поиск внешних инструментов --
 
 def test_find_tool_falls_back_to_brew_dirs(monkeypatch, tmp_path):

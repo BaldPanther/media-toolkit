@@ -251,15 +251,28 @@ def read_edl(video_path) -> tuple[Segment | None, Segment | None, Segment | None
     return recap, intro, outro
 
 
-def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool) -> Path | None:
+def final_outro(ep: EpisodeEdl, padding: Padding,
+                outro_to_end: bool = True) -> Segment | None:
+    """Титры с учётом отступов и того, тянуть ли их до конца файла.
+
+    Обычно после титров ничего нет, и пропуск честнее вести до самого конца —
+    иначе Kodi отдаст последние секунды чёрного экрана. Но там, где после титров
+    идёт сцена (post-credits), так она бы тоже проглатывалась: для этого
+    outro_to_end=False оставляет найденную границу, к которой применён
+    padding.outro_end.
+    """
+    outro = apply_padding(ep.outro, padding.outro_start, padding.outro_end, ep.duration)
+    if outro is not None and outro_to_end and ep.duration:
+        outro = Segment(outro.start, ep.duration)
+    return outro
+
+
+def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool,
+                    outro_to_end: bool = True) -> Path | None:
     """Применяет padding + фичу первой серии и пишет .edl для одной серии."""
     intro = apply_padding(effective_intro(ep, keep_first_intro),
                           padding.intro_start, padding.intro_end, ep.duration)
-    outro = apply_padding(ep.outro,
-                          padding.outro_start, padding.outro_end, ep.duration)
-    # Титры всегда идут до конца файла — не регулируем, тянем до длительности.
-    if outro is not None and ep.duration:
-        outro = Segment(outro.start, ep.duration)
+    outro = final_outro(ep, padding, outro_to_end)
     return write_edl(ep.path, intro, outro, ep.recap)
 
 
