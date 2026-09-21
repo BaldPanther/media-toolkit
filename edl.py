@@ -592,9 +592,13 @@ def grab_frames(ffmpeg: str, path, times, width: int = FRAME_WIDTH,
 # при этом всегда лежит внутри бандла, поэтому shutil.which его не находит, а
 # запустить можно. Отсюда и поиск по явным путям, а не только по PATH.
 
+# --no-stdin у IINA обязателен. Её справка: «sometimes iina-cli can detect whether
+# stdin has file, but sometimes not». Запущенная из программы, она получает stdin,
+# который не является терминалом, принимает его за поданный поток и пытается играть
+# его вместо файла — наружу это выходит ошибкой «не удаётся открыть файл или поток».
 _PLAYERS = (
     ("IINA", ("/Applications/IINA.app/Contents/MacOS/iina-cli",),
-     lambda t: [f"--mpv-start={t:.3f}"]),
+     lambda t: ["--no-stdin", f"--mpv-start={t:.3f}"]),
     ("mpv", ("mpv",), lambda t: [f"--start={t:.3f}"]),
     ("VLC", ("vlc", "/Applications/VLC.app/Contents/MacOS/VLC",
              r"C:\Program Files\VideoLAN\VLC\vlc.exe",
@@ -620,8 +624,8 @@ def open_in_player(path, at: float) -> str | None:
         return None
     name, exe, args = found
     subprocess.Popen([exe, *args(max(0.0, at)), str(path)],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=_CREATE_NO_WINDOW)
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=_CREATE_NO_WINDOW)
     return name
 
 

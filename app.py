@@ -1945,7 +1945,9 @@ class App:
         act.pack(anchor="w", pady=(4, 0))
         apply_one = ttk.Button(act, text="Применить к этой серии", state="disabled")
         apply_one.pack(side="left")
-        apply_all = ttk.Button(act, text="Сдвинуть весь сезон", state="disabled")
+        # В подписи всегда стоит величина сдвига: без неё непонятно, ставится
+        # ли всем одно время или каждая серия двигается на эту разницу.
+        apply_all = ttk.Button(act, text="Сдвинуть все серии", state="disabled")
         apply_all.pack(side="left", padx=8)
         player = edl.find_player()
         open_btn = ttk.Button(act, text=f"Открыть в {player[0]}" if player else "Плеер не найден",
@@ -1979,6 +1981,7 @@ class App:
                          f"{self._fmt_time(state['pick'])} (сдвиг {delta:+.0f} с)")
             apply_one.configure(state="normal")
             apply_all.configure(
+                text=f"Сдвинуть все серии на {delta:+.0f} с",
                 state="disabled" if self._EDL_BOUNDS[bound_var.get()][1] is None else "normal")
 
         for i, c in enumerate(cells):
@@ -2090,7 +2093,7 @@ class App:
                 c.configure(image=blank, highlightbackground=plain)
                 s.configure(text="—")
             apply_one.configure(state="disabled")
-            apply_all.configure(state="disabled")
+            apply_all.configure(text="Сдвинуть все серии", state="disabled")
             pick_var.set("Нажмите «Показать кадры».")
 
         bound_combo.bind("<<ComboboxSelected>>", on_bound_change)
@@ -2123,11 +2126,38 @@ class App:
             ("Титры начало (до конца файла):", "os", e.outro.start if e.outro else None),
         ]
         varmap = {}
+        # Продолжительность сегмента рядом с полями: начало не всегда нулевое, и
+        # считать «сколько же это выходит» в уме при каждой правке — лишняя работа.
+        lengths = {}
         for i, (lab, key, val) in enumerate(rows, start=1):
             ttk.Label(frm, text=lab).grid(row=i, column=0, sticky="e", pady=2, padx=(0, 6))
             v = tk.StringVar(value=self._fmt_time(val) if val is not None else "")
             varmap[key] = v
             ttk.Entry(frm, textvariable=v, width=12).grid(row=i, column=1, sticky="w", pady=2)
+            if key in ("rc", "ie", "os"):      # строки, на которых сегмент замыкается
+                lengths[key] = tk.StringVar(value="")
+                ttk.Label(frm, textvariable=lengths[key],
+                          **row_colors(frm)["nochange"]).grid(
+                    row=i, column=2, sticky="w", pady=2, padx=(10, 0))
+
+        def show_lengths(*_):
+            """Пересчитывает длительности на каждый ввод в любом из полей."""
+            def put(var, length, note=""):
+                var.set(f"длительность {self._fmt_time(length)} = {length:.0f} сек{note}"
+                        if length is not None and length > 0 else "")
+
+            rc = self._parse_time(varmap["rc"].get())
+            put(lengths["rc"], rc)             # recap идёт от нуля: конец и есть длина
+            start = self._parse_time(varmap["is"].get())
+            end = self._parse_time(varmap["ie"].get())
+            put(lengths["ie"], (end - start) if (start is not None and end is not None) else None)
+            outro = self._parse_time(varmap["os"].get())
+            put(lengths["os"], (e.duration - outro) if (outro is not None and e.duration) else None,
+                " (до конца файла)")
+
+        for var in varmap.values():
+            var.trace_add("write", show_lengths)
+        show_lengths()
 
         # Явное удаление сегмента: обнуляет поля, а save() пустое поле трактует как «нет».
         # Нужно, когда детект нашёл лишнее (напр. титров нет — мультсериал идёт до конца):
