@@ -118,6 +118,7 @@ class EpisodeEdl:
     outro: Segment | None = None
     recap: Segment | None = None      # начальный recap «в предыдущих сериях» (0..X), вручную
     note: str = ""                    # диагностика детекта (для показа в таблице)
+    chapters: int = 0                 # сколько глав уже в файле (из скана, см. core.MkvFile)
 
     audio_langs: list[str] = field(default_factory=list)  # языки аудиодорожек по порядку
 

@@ -35,7 +35,7 @@ _MKV_DIRS = (
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
-def _find_tool(name: str) -> str | None:
+def find_tool(name: str) -> str | None:
     exe = name + ".exe" if os.name == "nt" and not name.lower().endswith(".exe") else name
     found = shutil.which(name) or shutil.which(exe)
     if found:
@@ -49,8 +49,8 @@ def _find_tool(name: str) -> str | None:
 
 def find_tools() -> tuple[str, str]:
     """Возвращает (mkvmerge, mkvpropedit) или бросает FileNotFoundError."""
-    merge = _find_tool("mkvmerge")
-    propedit = _find_tool("mkvpropedit")
+    merge = find_tool("mkvmerge")
+    propedit = find_tool("mkvpropedit")
     missing = [n for n, v in (("mkvmerge", merge), ("mkvpropedit", propedit)) if not v]
     if missing:
         raise FileNotFoundError(
@@ -96,6 +96,7 @@ class MkvFile:
     tracks: list[Track] = field(default_factory=list)
     error: str = ""
     duration: float | None = None   # длительность в секундах (из mkvmerge -J), если известна
+    chapters: int = 0               # сколько глав в файле (оттуда же, бесплатно при скане)
 
     @property
     def audio(self) -> list[Track]:
@@ -181,7 +182,10 @@ def scan_file(mkvmerge: str, path: Path) -> MkvFile:
     cprops = (data.get("container", {}) or {}).get("properties", {}) or {}
     dur_ns = cprops.get("duration")
     duration = dur_ns / 1e9 if isinstance(dur_ns, (int, float)) else None
-    return MkvFile(path, tracks, duration=duration)
+    # Число глав mkvmerge отдаёт тем же вызовом — берём заодно, отдельный запуск
+    # mkvextract нужен только там, где важны их названия (см. chapters.py).
+    chapters = sum((c or {}).get("num_entries", 0) for c in data.get("chapters", []) or [])
+    return MkvFile(path, tracks, duration=duration, chapters=chapters)
 
 
 def list_mkv(folder, recursive: bool) -> list[Path]:

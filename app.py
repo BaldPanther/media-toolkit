@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
+import chapters
 import core
 import edl
 import metaui
@@ -72,6 +73,7 @@ class App:
         self._edl_tools_ok = True
         self._edl_have_files = 0      # серий, рядом с которыми уже лежит .edl
         self._edl_have_online = 0     # серий с загруженными онлайн-таймингами
+        self._edl_have_chapters = 0   # серий, в которых уже есть главы
         # Кнопки вкладок, которые тоже надо гасить на время длинных операций.
         # Вкладка «Медиатека» дописывает сюда свои при построении.
         self.extra_busy_buttons: list = []
@@ -422,6 +424,26 @@ class App:
             ttk.Label(parent, text="⚠ " + edl.install_hint(missing),
                       padding=(10, 0)).pack(fill="x")
 
+        # Главы Matroska из той же разметки: `.edl` понимает только Kodi, а главы —
+        # любой плеер. Пишутся в заголовок mkvpropedit-ом, без перекодирования.
+        ch_f = ttk.LabelFrame(parent, text="Главы Matroska (чтобы разметка работала и в других плеерах)",
+                              padding=8)
+        ch_f.pack(fill="x", padx=10, pady=(4, 0))
+        self.chapters_with_edl = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ch_f, text="писать вместе с .edl",
+                        variable=self.chapters_with_edl).pack(side="left")
+        self.chapters_write_btn = ttk.Button(ch_f, text="Записать главы",
+                                             command=self.write_chapters)
+        self.chapters_write_btn.pack(side="left", padx=(12, 0))
+        self.chapters_clear_btn = ttk.Button(ch_f, text="Убрать главы",
+                                             command=self.clear_chapters)
+        self.chapters_clear_btn.pack(side="left", padx=(8, 0))
+        # mkvpropedit заменяет главы целиком, дописать свои к чужим нельзя. Поэтому
+        # файлы с посторонней разметкой пропускаются, пока это не разрешено явно.
+        self.chapters_force = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ch_f, text="перезаписывать чужие главы (их деление на сцены пропадёт)",
+                        variable=self.chapters_force).pack(side="left", padx=(12, 0))
+
         # Онлайн-тайминги: подтягиваем готовые интро/титры из баз, показываем рядом с
         # локальными (отдельные колонки) и переносим в активные по кнопке — с учётом scope.
         online_f = ttk.LabelFrame(parent, text="Онлайн-тайминги (AniSkip / TheIntroDB)", padding=8)
@@ -438,13 +460,13 @@ class App:
 
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
-        cols = ("file", "se", "recap", "intro", "intro_on", "outro", "outro_on", "edl", "note")
+        cols = ("file", "se", "recap", "intro", "intro_on", "outro", "outro_on", "edl", "ch", "note")
         heads = {"file": "Файл", "se": "S/E", "recap": "Recap",
                  "intro": "Интро (актив.)", "intro_on": "Интро (онлайн)",
                  "outro": "Титры (актив.)", "outro_on": "Титры (онлайн)",
-                 "edl": ".edl", "note": "Заметка"}
+                 "edl": ".edl", "ch": "главы", "note": "Заметка"}
         widths = {"file": 320, "se": 60, "recap": 74, "intro": 120, "intro_on": 120,
-                  "outro": 120, "outro_on": 120, "edl": 44, "note": 130}
+                  "outro": 120, "outro_on": 120, "edl": 44, "ch": 52, "note": 130}
         # Свободную ширину отдаём имени файла и заметке: у остальных колонок
         # содержимое фиксированной длины и растягивать их незачем, а имя серии
         # без этого обрезалось на середине.
@@ -482,6 +504,7 @@ class App:
         "outro_on": lambda e: (e.online_outro is None,
                                e.online_outro.start if e.online_outro else 0.0),
         "edl": lambda e: not edl.has_external_edl(e.path),
+        "ch": lambda e: -e.chapters,
         "note": lambda e: "; ".join(x for x in (e.note, e.online_note) if x).casefold(),
     }
 
@@ -512,7 +535,7 @@ class App:
         Иначе они отвечают модалкой «Сначала просканируйте» — то же самое, но
         лишним кликом позже. Во время работы состоянием кнопок ведает set_busy.
         """
-        if self.busy or not hasattr(self, "edl_detect_btn"):
+        if self.busy or not hasattr(self, "chapters_clear_btn"):
             return
         have = bool(self.edl_eps)
         for btn, ok in ((self.edl_detect_btn, have and self._edl_tools_ok),
@@ -520,7 +543,9 @@ class App:
                         (self.edl_delete_btn, self._edl_have_files > 0),
                         (self.online_load_btn, have),
                         (self.online_take_on_btn, self._edl_have_online > 0),
-                        (self.online_take_loc_btn, have)):
+                        (self.online_take_loc_btn, have),
+                        (self.chapters_write_btn, have),
+                        (self.chapters_clear_btn, self._edl_have_chapters > 0)):
             btn.configure(state="normal" if ok else "disabled")
 
     def _enable_entry_clipboard(self):
@@ -603,6 +628,8 @@ class App:
                   getattr(self, "online_load_btn", None),
                   getattr(self, "online_take_on_btn", None),
                   getattr(self, "online_take_loc_btn", None),
+                  getattr(self, "chapters_write_btn", None),
+                  getattr(self, "chapters_clear_btn", None),
                   *self.extra_busy_buttons):
             if b is not None:
                 b.configure(state=state)
@@ -1114,6 +1141,7 @@ class App:
                 if l and l not in langs:
                     langs.append(l)
             e = edl.EpisodeEdl.from_path(f.path, duration=f.duration, audio_langs=file_langs)
+            e.chapters = f.chapters
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
@@ -1663,10 +1691,11 @@ class App:
         to_end = self.edl_outro_to_end.get()
         pad = self.edl_padding()
         n_intro = n_outro = 0
-        self._edl_have_files = self._edl_have_online = 0
+        self._edl_have_files = self._edl_have_online = self._edl_have_chapters = 0
         for e in self.edl_eps:
             if e.online_intro or e.online_outro or e.online_recap:
                 self._edl_have_online += 1
+            self._edl_have_chapters += bool(e.chapters)
             se = (f"S{e.season:02d}E{e.episode:02d}"
                   if e.season is not None and e.episode is not None else "—")
             intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
@@ -1702,7 +1731,8 @@ class App:
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
                                        values=(e.path.name, se, recap_txt, intro_txt, intro_on_txt,
-                                               outro_txt, outro_on_txt, has, note_txt),
+                                               outro_txt, outro_on_txt, has,
+                                               e.chapters or "—", note_txt),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
             if str(e.path) in selected:
@@ -1836,10 +1866,20 @@ class App:
             messagebox.showinfo("Нечего записывать",
                                 "Нет ни интро, ни титров. Сначала «Определить автоматически» или задайте вручную.")
             return
+        also_chapters = self.chapters_with_edl.get()
+        prepared = self._chapters_plan(scope) if also_chapters else None
+        if also_chapters and prepared is None:
+            return                       # нет MKVToolNix — про это уже сказали
+        extra = ""
+        if prepared:
+            _, plan, skipped = prepared
+            extra = f"\nЗаодно главы в MKV: {len(plan)} файлов."
+            if skipped:
+                extra += f" Пропущено с чужими главами: {len(skipped)}."
         if not messagebox.askyesno(
             "Запись .edl",
             f"Записать {len(to_write)} файлов .edl — по {self._scope_phrase()}?\n"
-            "Существующие .edl будут перезаписаны. Видео не трогается.",
+            "Существующие .edl будут перезаписаны. Видео не трогается." + extra,
         ):
             return
 
@@ -1851,6 +1891,145 @@ class App:
                 self.log_line(f"  ✓ {p.name}")
         self.log_line(f"Записано .edl: {written}.")
         self._save_edl_settings()
+        self.refresh_edl_preview()
+        if prepared and prepared[1]:
+            self._run_chapters(prepared[0], prepared[1])
+
+    # ------------------------------------------------------- главы Matroska --
+    def _chapters_plan(self, scope):
+        """Что и куда писать: (mkvpropedit, план, пропущенные) или None при отказе.
+
+        Пропущенные — файлы с чужими главами: mkvpropedit заменяет набор целиком,
+        и деление фильма на сцены пропало бы безвозвратно. Берём их в работу,
+        только когда это разрешено галкой.
+        """
+        propedit = core.find_tool("mkvpropedit")
+        extract = core.find_tool("mkvextract")
+        if not (propedit and extract):
+            messagebox.showerror(
+                "Нет MKVToolNix",
+                "Для глав нужны mkvpropedit и mkvextract из MKVToolNix.\n"
+                + ("choco install mkvtoolnix" if sys.platform == "win32"
+                   else "brew install mkvtoolnix"))
+            return None
+        keep, to_end, pad = (self.edl_keep_first.get(), self.edl_outro_to_end.get(),
+                             self.edl_padding())
+        force = self.chapters_force.get()
+        plan, skipped = [], []
+        for e in scope:
+            points = chapters.build_points(e, pad, keep, to_end)
+            if not points:
+                continue
+            # Глав нет — проверять нечего; иначе смотрим, наша ли это разметка.
+            state = chapters.state(e.path, extract) if e.chapters else "none"
+            if state == "foreign" and not force:
+                skipped.append(e)
+            else:
+                plan.append((e, points))
+        return propedit, plan, skipped
+
+    def _run_chapters(self, propedit, plan):
+        """Пишет главы в фоне: mkvpropedit лезет в сам файл, а тот бывает на шаре.
+
+        Результаты едут через очередь, а разбирает их главный поток по таймеру:
+        tkinter из рабочего потока трогать нельзя даже через after.
+        """
+        self.set_busy(True)
+        self.progress.configure(value=0, maximum=len(plan))
+        results: "queue.Queue" = queue.Queue()
+        tally = {"ok": 0, "seen": 0}
+
+        def work():
+            for ep, points in plan:
+                if self.cancel_event.is_set():
+                    break
+                results.put((ep, points, chapters.write_chapters(ep.path, points, propedit)))
+            results.put(None)
+
+        def poll():
+            finished = False
+            while True:
+                try:
+                    item = results.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    finished = True
+                    continue
+                ep, points, ok = item
+                tally["seen"] += 1
+                if ok:
+                    ep.chapters = len(points)
+                    tally["ok"] += 1
+                    self.log_line(f"  ✓ {ep.path.name}: глав {len(points)}")
+                else:
+                    self.log_line(f"  ✗ {ep.path.name}: записать не удалось")
+                self.progress.configure(value=tally["seen"])
+            if finished:
+                self.progress.configure(value=0)
+                self.set_busy(False)
+                self.log_line(f"Главы записаны: {tally['ok']}.")
+                self.refresh_edl_preview()
+                return
+            self.root.after(120, poll)
+
+        threading.Thread(target=work, daemon=True).start()
+        poll()
+
+    def write_chapters(self):
+        if self.busy:
+            return
+        scope = self._edl_scope_eps()
+        if scope is None:
+            return
+        prepared = self._chapters_plan(scope)
+        if prepared is None:
+            return
+        propedit, plan, skipped = prepared
+        if not plan:
+            messagebox.showinfo(
+                "Нечего размечать",
+                "Нет ни интро, ни титров, ни recap — главы строить не из чего."
+                if not skipped else
+                f"У всех серий ({len(skipped)}) свои главы, они не тронуты.\n"
+                "Чтобы заменить их, включите «перезаписывать чужие главы».")
+            return
+        tail = (f"\nПропущено с чужими главами: {len(skipped)}." if skipped else "")
+        if not messagebox.askyesno(
+            "Запись глав",
+            f"Записать главы в {len(plan)} файлов — по {self._scope_phrase()}?\n"
+            "Правится только заголовок MKV, видео не перекодируется." + tail,
+        ):
+            return
+        self._run_chapters(propedit, plan)
+
+    def clear_chapters(self):
+        """Убирает ТОЛЬКО свою разметку: чужие главы не наши, чтобы их удалять."""
+        if self.busy:
+            return
+        scope = self._edl_scope_eps()
+        if scope is None:
+            return
+        propedit = core.find_tool("mkvpropedit")
+        extract = core.find_tool("mkvextract")
+        if not (propedit and extract):
+            messagebox.showerror("Нет MKVToolNix", "Нужны mkvpropedit и mkvextract.")
+            return
+        ours = [e for e in scope if e.chapters and chapters.state(e.path, extract) == "ours"]
+        if not ours:
+            messagebox.showinfo("Нет наших глав",
+                                "Среди этих серий нет файлов с нашей разметкой. "
+                                "Чужие главы кнопка не трогает.")
+            return
+        if not messagebox.askyesno("Удаление глав",
+                                   f"Убрать главы из {len(ours)} файлов?"):
+            return
+        gone = 0
+        for e in ours:
+            if chapters.clear_chapters(e.path, propedit):
+                e.chapters = 0
+                gone += 1
+        self.log_line(f"Главы убраны: {gone}.")
         self.refresh_edl_preview()
 
     def delete_edl_files(self):
