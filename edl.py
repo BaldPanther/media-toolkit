@@ -267,17 +267,56 @@ def build_and_write(ep: EpisodeEdl, padding: Padding, keep_first_intro: bool) ->
 # Поиск fpcalc (Chromaprint) — для автодетекта
 # --------------------------------------------------------------------------- #
 
+# Запасные папки на случай, если инструмента нет в PATH. На macOS это основной
+# случай: GUI, запущенный из Dock или Finder, получает от launchd урезанный PATH
+# (/usr/bin:/bin:/usr/sbin:/sbin) — brew-каталогов там нет, и shutil.which не
+# находит fpcalc, даже когда он установлен. На Windows PATH тот же, что в консоли,
+# а fpcalc.exe и так лежит портативным в assets/, так что искать больше негде.
+_TOOL_DIRS = [] if os.name == "nt" else ["/opt/homebrew/bin", "/usr/local/bin"]
+
+
+def _find_tool(name: str) -> str | None:
+    exe = name + ".exe" if os.name == "nt" else name
+    found = shutil.which(name) or shutil.which(exe)
+    if found:
+        return found
+    for d in _TOOL_DIRS:
+        cand = os.path.join(d, exe)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def find_fpcalc() -> str | None:
-    """Ищет fpcalc: сперва портативный в assets/, затем в PATH."""
+    """Ищет fpcalc: сперва портативный в assets/, затем в PATH и папках brew."""
     exe = "fpcalc.exe" if os.name == "nt" else "fpcalc"
     local = _HERE / "assets" / exe
     if local.is_file():
         return str(local)
-    return shutil.which("fpcalc") or shutil.which(exe)
+    return _find_tool("fpcalc")
 
 
 def find_ffmpeg() -> str | None:
-    return shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    return _find_tool("ffmpeg")
+
+
+def missing_tools() -> list[str]:
+    """Каких инструментов автодетекта не хватает: ['fpcalc', 'ffmpeg'] или []."""
+    return [n for n, f in (("fpcalc", find_fpcalc()), ("ffmpeg", find_ffmpeg())) if not f]
+
+
+def install_hint(names) -> str:
+    """Человеческая подсказка «как поставить» для списка из missing_tools()."""
+    if not names:
+        return ""
+    listed = " и ".join(names)
+    if os.name == "nt":
+        if names == ["fpcalc"]:
+            return ("Не найден fpcalc (Chromaprint). Положите fpcalc.exe в assets/ "
+                    "или добавьте Chromaprint в PATH.")
+        return f"Не найдены: {listed}. Установите их и добавьте в PATH."
+    pkgs = " ".join({"fpcalc": "chromaprint", "ffmpeg": "ffmpeg"}[n] for n in names)
+    return f"Не найдены: {listed}. Установите: brew install {pkgs}"
 
 
 # Языки дубляжа, которые пропускаем при авто-выборе «оригинала»: на них поверх

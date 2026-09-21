@@ -181,3 +181,22 @@ def test_read_edl_skips_garbage_lines(tmp_path):
 ])
 def test_pick_audio_index(langs, prefer, expected):
     assert edl.pick_audio_index(langs, prefer) == expected
+
+
+# ------------------------------------------- поиск внешних инструментов --
+
+def test_find_tool_falls_back_to_brew_dirs(monkeypatch, tmp_path):
+    """PATH урезан (запуск из Dock/Finder) — инструмент ищется в папках brew."""
+    fake = tmp_path / "fpcalc"
+    fake.write_text("")
+    monkeypatch.setattr(edl.shutil, "which", lambda *_: None)
+    monkeypatch.setattr(edl, "_TOOL_DIRS", [str(tmp_path)])
+    assert edl._find_tool("fpcalc") == str(fake)
+    assert edl._find_tool("ffmpeg") is None
+
+
+def test_install_hint_lists_only_missing(monkeypatch):
+    monkeypatch.setattr(edl.os, "name", "posix")
+    assert edl.install_hint([]) == ""
+    assert "brew install chromaprint" in edl.install_hint(["fpcalc"])
+    assert "brew install chromaprint ffmpeg" in edl.install_hint(["fpcalc", "ffmpeg"])

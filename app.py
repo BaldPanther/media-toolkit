@@ -339,13 +339,22 @@ class App:
 
         btns = ttk.Frame(parent, padding=(10, 4))
         btns.pack(fill="x")
-        self.edl_detect_btn = ttk.Button(btns, text="Определить автоматически", command=self.detect_edl)
+        # Главное действие вкладки — акцентная, как «Сканировать» и «Применить».
+        self.edl_detect_btn = theme.accent_button(btns, text="Определить автоматически",
+                                                  command=self.detect_edl)
         self.edl_detect_btn.pack(side="left")
         self.edl_write_btn = ttk.Button(btns, text="Записать .edl", command=self.write_edl_files)
         self.edl_write_btn.pack(side="left", padx=8)
         self.edl_delete_btn = ttk.Button(btns, text="Удалить .edl", command=self.delete_edl_files)
         self.edl_delete_btn.pack(side="left")
         ttk.Label(btns, text="  (двойной клик по строке — правка вручную)").pack(side="left", padx=10)
+
+        # Автодетект держится на внешних ffmpeg и fpcalc. Чего-то нет — говорим
+        # об этом сразу, а не ошибкой после нажатия кнопки и долгого скана.
+        missing = edl.missing_tools()
+        if missing:
+            ttk.Label(parent, text="⚠ " + edl.install_hint(missing),
+                      padding=(10, 0)).pack(fill="x")
 
         # Онлайн-тайминги: подтягиваем готовые интро/титры из баз, показываем рядом с
         # локальными (отдельные колонки) и переносим в активные по кнопке — с учётом scope.
@@ -1472,14 +1481,12 @@ class App:
         if not self.edl_eps:
             messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
             return
+        missing = edl.missing_tools()
+        if missing:
+            messagebox.showerror("Нет инструментов для детекта", edl.install_hint(missing))
+            return
         fpcalc = edl.find_fpcalc()
         ffmpeg = edl.find_ffmpeg()
-        if not fpcalc:
-            messagebox.showerror("Нет fpcalc", "Не найден fpcalc (Chromaprint). Ожидается в assets/fpcalc.exe.")
-            return
-        if not ffmpeg:
-            messagebox.showerror("Нет ffmpeg", "Не найден ffmpeg в PATH.")
-            return
 
         # Свежий прогон — свежие заметки: detect_season дописывает через «; »,
         # без сброса текст копился бы между запусками.
