@@ -303,7 +303,8 @@ class App:
         manual.pack(fill="x", padx=10, pady=(0, 4))
         self.edl_manual = {k: tk.StringVar(value="")
                            for k in ("intro_start", "intro_end", "intro_dur",
-                                     "outro_start", "outro_last", "recap_end")}
+                                     "outro_start", "outro_last", "outro_from_start",
+                                     "recap_end")}
         self.edl_scope = tk.StringVar(value="all")
 
         scope_row = ttk.Frame(manual)
@@ -349,17 +350,29 @@ class App:
             row=4, column=3, columnspan=2, sticky="w", pady=(6, 0))
         ttk.Button(manual, text="Задать", command=self.apply_outro_last_all).grid(row=4, column=5, padx=(10, 0), pady=(6, 0))
 
-        ttk.Label(manual, text="Recap:").grid(row=5, column=0, sticky="e", pady=(6, 0))
-        ttk.Label(manual, text="до").grid(row=5, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
-        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=5, column=2, pady=(6, 0))
-        ttk.Label(manual, text="(с начала файла)").grid(row=5, column=3, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Button(manual, text="Задать", command=self.apply_recap_all).grid(row=5, column=5, padx=(10, 0), pady=(6, 0))
+        # В плеере видно, КОГДА титры начались, а поле выше просит их ПРОДОЛЖИТЕЛЬНОСТЬ.
+        # Вычитать одно время из другого в уме — лишний повод ошибиться, считаем сами.
+        ttk.Label(manual, text="…знаете только начало —").grid(row=5, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["outro_from_start"], width=8).grid(row=5, column=2, pady=(6, 0))
+        self.edl_outro_calc = tk.StringVar(
+            value="время начала титров (MM:SS) — посчитаем продолжительность по выделенной серии")
+        ttk.Label(manual, textvariable=self.edl_outro_calc,
+                  **row_colors(manual)["nochange"]).grid(
+            row=5, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Посчитать", command=self.calc_outro_last).grid(
+            row=5, column=5, padx=(10, 0), pady=(6, 0))
+
+        ttk.Label(manual, text="Recap:").grid(row=6, column=0, sticky="e", pady=(6, 0))
+        ttk.Label(manual, text="до").grid(row=6, column=1, sticky="e", padx=(8, 2), pady=(6, 0))
+        ttk.Entry(manual, textvariable=self.edl_manual["recap_end"], width=8).grid(row=6, column=2, pady=(6, 0))
+        ttk.Label(manual, text="(с начала файла)").grid(row=6, column=3, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Button(manual, text="Задать", command=self.apply_recap_all).grid(row=6, column=5, padx=(10, 0), pady=(6, 0))
 
         # Прицельное удаление по сегменту (уважает scope): напр. снять только титры
         # у выделенного последнего сезона, где их нет, сохранив интро.
-        ttk.Label(manual, text="Убрать:").grid(row=6, column=0, sticky="e", pady=(8, 0))
+        ttk.Label(manual, text="Убрать:").grid(row=7, column=0, sticky="e", pady=(8, 0))
         clr = ttk.Frame(manual)
-        clr.grid(row=6, column=1, columnspan=5, sticky="w", pady=(8, 0))
+        clr.grid(row=7, column=1, columnspan=5, sticky="w", pady=(8, 0))
         ttk.Button(clr, text="интро", command=lambda: self.clear_segment_scope("intro")).pack(side="left", padx=(0, 4))
         ttk.Button(clr, text="титры", command=lambda: self.clear_segment_scope("outro")).pack(side="left", padx=4)
         ttk.Button(clr, text="recap", command=lambda: self.clear_segment_scope("recap")).pack(side="left", padx=4)
@@ -1229,6 +1242,47 @@ class App:
             ep.recap = edl.Segment(0.0, x)
         self.refresh_edl_preview()
         self.log_line(f"Recap задан {self._scope_word(len(eps))}: 0:00–{self._fmt_time(x)}.")
+
+    def _calc_reference_ep(self):
+        """Серия, по которой считаем: выделенная, иначе первая с известной длительностью."""
+        if not self.edl_eps:
+            messagebox.showinfo("Нет данных", "Сначала просканируйте папку.")
+            return None
+        sel = [self.edl_row_ep[i] for i in self.edl_tree.selection() if i in self.edl_row_ep]
+        for ep in (sel or self.edl_eps):
+            if ep.duration:
+                return ep
+        messagebox.showinfo("Нет длительности",
+                            "У этих серий неизвестна длительность — считать не от чего.")
+        return None
+
+    def calc_outro_last(self):
+        """Продолжительность титров = длительность серии − время их начала.
+
+        Начало у каждой серии своё, а продолжительность обычно общая — её и просит
+        поле «последние N сек». Смотреть начало в плеере по каждой серии незачем:
+        достаточно одной, разницу посчитаем сами.
+        """
+        start = self._parse_time(self.edl_manual["outro_from_start"].get())
+        if start is None or start < 0:
+            messagebox.showinfo("Титры", "Укажите, на какой минуте пошли титры — "
+                                         "MM:SS или секунды (например 56:10).")
+            return
+        ref = self._calc_reference_ep()
+        if ref is None:
+            return
+        if start >= ref.duration:
+            messagebox.showinfo(
+                "Титры", f"Титры не могут начинаться позже конца серии: у "
+                         f"«{ref.path.name}» длительность {self._fmt_time(ref.duration)}.")
+            return
+        length = ref.duration - start
+        self.edl_manual["outro_last"].set(f"{length:.0f}")
+        self.edl_outro_calc.set(f"{self._fmt_time(ref.duration)} − {self._fmt_time(start)} = "
+                                f"{self._fmt_time(length)} → {length:.0f} сек")
+        self.log_line(f"Продолжительность титров по «{ref.path.name}»: "
+                      f"{self._fmt_time(ref.duration)} − {self._fmt_time(start)} = "
+                      f"{length:.0f} сек. Подставлено в «последние» — нажмите «Задать».")
 
     def clear_segment_scope(self, kind: str):
         """Убирает один сегмент (intro/outro/recap) у серий по scope."""
