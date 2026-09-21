@@ -30,6 +30,8 @@ from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme де
 NOTOUCH = "— не трогать —"
 SUBOFF = "— выключить субтитры —"
 EDL_TRACK_AUTO = "Оригинал (авто)"
+# Как называть kind из edl.detect_season в строке прогресса.
+EDL_KIND_RU = {"intro": "интро", "outro": "титры"}
 
 # Локальные настройки приложения (последний путь и т.п.) — в пользовательском
 # каталоге настроек; см. paths.py.
@@ -62,6 +64,12 @@ class App:
         self.cancel_event = threading.Event()
         self.edl_eps: list[edl.EpisodeEdl] = []
         self.edl_row_ep: dict[str, edl.EpisodeEdl] = {}
+        self.edl_sort: tuple[str | None, bool] = (None, False)  # колонка, обратный ли порядок
+        # Что сейчас есть у серий — этим гасятся кнопки вкладки; считается при
+        # перерисовке таблицы, чтобы не ходить на диск на каждый клик.
+        self._edl_tools_ok = True
+        self._edl_have_files = 0      # серий, рядом с которыми уже лежит .edl
+        self._edl_have_online = 0     # серий с загруженными онлайн-таймингами
         # Кнопки вкладок, которые тоже надо гасить на время длинных операций.
         # Вкладка «Медиатека» дописывает сюда свои при построении.
         self.extra_busy_buttons: list = []
@@ -352,6 +360,7 @@ class App:
         # Автодетект держится на внешних ffmpeg и fpcalc. Чего-то нет — говорим
         # об этом сразу, а не ошибкой после нажатия кнопки и долгого скана.
         missing = edl.missing_tools()
+        self._edl_tools_ok = not missing
         if missing:
             ttk.Label(parent, text="⚠ " + edl.install_hint(missing),
                       padding=(10, 0)).pack(fill="x")
@@ -377,12 +386,17 @@ class App:
                  "intro": "Интро (актив.)", "intro_on": "Интро (онлайн)",
                  "outro": "Титры (актив.)", "outro_on": "Титры (онлайн)",
                  "edl": ".edl", "note": "Заметка"}
-        widths = {"file": 200, "se": 52, "recap": 74, "intro": 120, "intro_on": 120,
+        widths = {"file": 320, "se": 60, "recap": 74, "intro": 120, "intro_on": 120,
                   "outro": 120, "outro_on": 120, "edl": 44, "note": 130}
+        # Свободную ширину отдаём имени файла и заметке: у остальных колонок
+        # содержимое фиксированной длины и растягивать их незачем, а имя серии
+        # без этого обрезалось на середине.
+        stretchy = {"file", "note"}
+        self._edl_heads = heads
         self.edl_tree = ttk.Treeview(f, columns=cols, show="headings", selectmode="extended")
         for c in cols:
-            self.edl_tree.heading(c, text=heads[c])
-            self.edl_tree.column(c, width=widths[c], anchor="w")
+            self.edl_tree.heading(c, text=heads[c], command=lambda c=c: self._edl_sort_by(c))
+            self.edl_tree.column(c, width=widths[c], anchor="w", stretch=c in stretchy)
         vsb = ttk.Scrollbar(f, orient="vertical", command=self.edl_tree.yview)
         self.edl_tree.configure(yscrollcommand=vsb.set)
         self.edl_tree.pack(side="left", fill="both", expand=True)
@@ -395,6 +409,62 @@ class App:
 
         self.edl_status = tk.StringVar(value="Просканируйте папку, затем «Определить автоматически».")
         ttk.Label(parent, textvariable=self.edl_status, padding=(10, 4)).pack(fill="x")
+        self._sync_edl_buttons()
+
+    # Ключи сортировки таблицы EDL — по одному на колонку. Сортируем сам список
+    # серий, а не строки дерева: порядок тогда переживает перерисовку таблицы,
+    # которая идёт после каждой правки.
+    _EDL_SORT_KEYS = {
+        "file": lambda e: e.path.name.casefold(),
+        "se": lambda e: (e.season is None, e.season or 0, e.episode or 0),
+        "recap": lambda e: (e.recap is None, e.recap.end if e.recap else 0.0),
+        "intro": lambda e: (e.intro is None, e.intro.start if e.intro else 0.0),
+        "intro_on": lambda e: (e.online_intro is None,
+                               e.online_intro.start if e.online_intro else 0.0),
+        "outro": lambda e: (e.outro is None, e.outro.start if e.outro else 0.0),
+        "outro_on": lambda e: (e.online_outro is None,
+                               e.online_outro.start if e.online_outro else 0.0),
+        "edl": lambda e: not edl.has_external_edl(e.path),
+        "note": lambda e: "; ".join(x for x in (e.note, e.online_note) if x).casefold(),
+    }
+
+    def _edl_sort_by(self, col: str):
+        """Клик по заголовку: сортировка по колонке, повторный клик — наоборот.
+
+        Пустые значения при прямом порядке уходят вниз, при обратном поднимаются
+        наверх — так серии без найденного интро собираются в кучу одним кликом.
+        """
+        key = self._EDL_SORT_KEYS.get(col)
+        if key is None or not self.edl_eps:
+            return
+        prev_col, prev_rev = self.edl_sort
+        self.edl_sort = (col, not prev_rev if col == prev_col else False)
+        self.edl_eps.sort(key=key, reverse=self.edl_sort[1])
+        self.refresh_edl_preview()
+
+    def _mark_edl_sort(self):
+        """Стрелка в заголовке: какая колонка сортирует и в какую сторону."""
+        col, reverse = self.edl_sort
+        for c, text in self._edl_heads.items():
+            mark = (" ▼" if reverse else " ▲") if c == col else ""
+            self.edl_tree.heading(c, text=text + mark)
+
+    def _sync_edl_buttons(self):
+        """Гасит кнопки вкладки EDL, когда работать нечем.
+
+        Иначе они отвечают модалкой «Сначала просканируйте» — то же самое, но
+        лишним кликом позже. Во время работы состоянием кнопок ведает set_busy.
+        """
+        if self.busy or not hasattr(self, "edl_detect_btn"):
+            return
+        have = bool(self.edl_eps)
+        for btn, ok in ((self.edl_detect_btn, have and self._edl_tools_ok),
+                        (self.edl_write_btn, have),
+                        (self.edl_delete_btn, self._edl_have_files > 0),
+                        (self.online_load_btn, have),
+                        (self.online_take_on_btn, self._edl_have_online > 0),
+                        (self.online_take_loc_btn, have)):
+            btn.configure(state="normal" if ok else "disabled")
 
     def _enable_entry_clipboard(self):
         """Ctrl+C/V/X/A в полях ввода + меню по правой кнопке мыши.
@@ -479,6 +549,9 @@ class App:
                   *self.extra_busy_buttons):
             if b is not None:
                 b.configure(state=state)
+        # Работа кончилась — часть кнопок EDL всё равно гасится: включать
+        # «Удалить .edl», когда удалять нечего, незачем.
+        self._sync_edl_buttons()
 
     def audio_choice(self):
         i = self.audio_combo.current()
@@ -955,6 +1028,8 @@ class App:
                     e.note = "из .edl"
             eps.append(e)
         self.edl_eps = eps
+        # Список пересобран в порядке скана — прежняя сортировка к нему не относится.
+        self.edl_sort = (None, False)
 
         # Обновляем список языков для выбора дорожки детекта.
         if hasattr(self, "edl_track_combo"):
@@ -1431,7 +1506,10 @@ class App:
         keep = self.edl_keep_first.get()
         pad = self.edl_padding()
         n_intro = n_outro = 0
+        self._edl_have_files = self._edl_have_online = 0
         for e in self.edl_eps:
+            if e.online_intro or e.online_outro or e.online_recap:
+                self._edl_have_online += 1
             se = (f"S{e.season:02d}E{e.episode:02d}"
                   if e.season is not None and e.episode is not None else "—")
             intro_eff = edl.apply_padding(edl.effective_intro(e, keep),
@@ -1465,6 +1543,7 @@ class App:
             note_txt = "; ".join(x for x in (e.note, e.online_note) if x)
 
             has = "есть" if edl.has_external_edl(e.path) else ""
+            self._edl_have_files += bool(has)
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
                                        values=(e.path.name, se, recap_txt, intro_txt, intro_on_txt,
@@ -1474,6 +1553,8 @@ class App:
         self.edl_status.set(
             f"Серий: {len(self.edl_eps)}. К пропуску интро: {n_intro}, титры: {n_outro}."
         )
+        self._mark_edl_sort()
+        self._sync_edl_buttons()
 
     def detect_edl(self):
         if self.busy:
@@ -1500,7 +1581,8 @@ class App:
 
         self.set_busy(True)
         self._edl_prog = 0
-        self.progress.configure(value=0, maximum=total * 2)  # intro + outro
+        self._edl_prog_total = total * 2                     # intro + outro
+        self.progress.configure(value=0, maximum=self._edl_prog_total)
         self.log_line(f"АВТОДЕТЕКТ: {total} серий, сезонов {len(seasons)}, дорожка: {self.edl_track_var.get()}…")
 
         def progress(kind, i, n, path):
@@ -1524,7 +1606,8 @@ class App:
     def _edl_detect_progress(self, kind, path):
         self._edl_prog += 1
         self.progress.configure(value=self._edl_prog)
-        self.edl_status.set(f"Детект [{kind}] {self._edl_prog}: {Path(path).name}")
+        self.edl_status.set(f"Детект [{EDL_KIND_RU.get(kind, kind)}] "
+                            f"{self._edl_prog}/{self._edl_prog_total}: {Path(path).name}")
 
     def _edl_detect_error(self, ex):
         self.set_busy(False)
