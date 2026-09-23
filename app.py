@@ -2047,13 +2047,22 @@ class App:
         """Пишет .edl по scope и, если просили, запускает запись глав."""
         if also_chapters and prepared is None:
             prepared = self._chapters_plan(scope)
-        written = 0
+        written = failed = 0
         for e in scope:
-            p = edl.build_and_write(e, pad, keep, to_end)
+            # Шара могла отвалиться — тогда пишем, что вышло, а не падаем на
+            # первом файле с остальными незаписанными.
+            try:
+                p = edl.build_and_write(e, pad, keep, to_end)
+            except OSError as ex:
+                failed += 1
+                self.log_line(f"  ✗ {edl.edl_path(e.path).name}: {ex.strerror or ex}")
+                continue
             if p:
                 written += 1
                 self.log_line(f"  ✓ {p.name}")
-        self.log_line(f"Записано .edl: {written}.")
+        self.log_line(f"Записано .edl: {written}."
+                      + (f" Не записано: {failed} — проверьте доступ к папке и "
+                         "запишите ещё раз." if failed else ""))
         self._save_edl_settings()
         self.refresh_edl_preview()
         if prepared and prepared[1]:
@@ -2066,19 +2075,22 @@ class App:
         читает его ради статистики. Поэтому прогресс идёт долями внутри файла, а
         после каждого файла он пересканируется — длительность и хвост в таблице
         сразу новые. Отмена оставляет текущий файл как был и .edl не пишет.
+        Оборвалась сеть — ждём её и начинаем текущую серию заново.
         """
         self.set_busy(True, f"Обрезка хвоста 1/{len(eps)}")
         self.progress.configure(value=0, maximum=len(eps) * 100)
         results: "queue.Queue" = queue.Queue()
         tally = {"ok": 0, "failed": 0}
-        started = time.monotonic()
+        # Время без сети в оценку «осталось» не входит: иначе после получаса
+        # ожидания она бы раздулась до конца пачки.
+        clock = {"started": time.monotonic(), "offline_since": None}
 
         def show(n, frac):
             """Подпись у полосы: какая серия, какой этап, сколько осталось."""
             done = (n + frac) / len(eps)
             stage = "перепаковка" if frac < trim.REMUX_SHARE else "проверка"
             text = f"Обрезка хвоста {n + 1}/{len(eps)} · {stage} · {frac * 100:.0f}%"
-            elapsed = time.monotonic() - started
+            elapsed = time.monotonic() - clock["started"]
             # Первые секунды оценка скачет — показываем её, когда есть на что опереться.
             if done > 0.02 and elapsed > 20:
                 left = elapsed * (1 - done) / done
@@ -2091,9 +2103,11 @@ class App:
                 if self.cancel_event.is_set():
                     break
                 results.put(("start", n, ep))
-                res = trim.trim_file(ep.path, tools,
-                                     progress=lambda frac, n=n: results.put(("progress", n, frac)),
-                                     cancel=self.cancel_event.is_set)
+                res = trim.trim_file_retrying(
+                    ep.path, tools,
+                    progress=lambda frac, n=n: results.put(("progress", n, frac)),
+                    cancel=self.cancel_event.is_set,
+                    waiting=lambda on, n=n, ep=ep: results.put(("offline" if on else "online", n, ep)))
                 fresh = core.scan_file(tools.mkvmerge, ep.path) if res.ok and not res.skipped else None
                 results.put(("done", n, ep, res, fresh))
             results.put(None)
@@ -2116,6 +2130,23 @@ class App:
                     show(n, 0.0)
                 elif kind == "progress":
                     show(n, item[2])
+                elif kind == "offline":
+                    ep = item[2]
+                    clock["offline_since"] = time.monotonic()
+                    self.edl_status.set(f"Нет доступа к {ep.path.parent} — жду сеть")
+                    self.progress_text.set(f"Обрезка хвоста {n + 1}/{len(eps)} · "
+                                           "нет доступа к файлу — жду сеть")
+                    self.log_line(f"  ⚠ {ep.path.name}: файл пропал — похоже, отвалилась "
+                                  "сеть. Оригинал цел; жду связь и начну серию заново. "
+                                  "Не ждать — «Отмена».")
+                elif kind == "online":
+                    ep = item[2]
+                    if clock["offline_since"] is not None:
+                        clock["started"] += time.monotonic() - clock["offline_since"]
+                        clock["offline_since"] = None
+                    self.edl_status.set(f"Обрезка хвоста {n + 1}/{len(eps)}: {ep.path.name}")
+                    self.log_line(f"  … {ep.path.name}: связь вернулась, обрезаю заново")
+                    show(n, 0.0)
                 else:
                     _, _, ep, res, fresh = item
                     if res.ok and not res.skipped:
@@ -2124,9 +2155,9 @@ class App:
                         self.log_line(f"  ✓ {ep.path.name}: {res.message}, "
                                       f"{self._fmt_time(res.old_duration)} → "
                                       f"{self._fmt_time(res.new_duration)}")
-                    elif res.ok:
+                    elif res.ok or res.cancelled:
                         self.log_line(f"  — {ep.path.name}: {res.message}")
-                    elif not res.cancelled:
+                    else:
                         tally["failed"] += 1
                         self.log_line(f"  ✗ {ep.path.name}: {res.message} — оригинал не тронут")
                     show(n, 1.0)

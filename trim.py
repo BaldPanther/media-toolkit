@@ -20,6 +20,10 @@ seek»), бросает точный переход и играет прямо �
 DefaultDuration; он же пересчитывает статистику дорожек — ffmpeg оставляет
 старую. Затем новый файл сверяется с оригиналом, и только после этого занимает
 его место. Не сошлось — оригинал не тронут, временный файл удалён.
+
+Файлы обычно лежат на сетевой шаре. Оборвалась сеть посреди серии — оригинал
+тоже цел, а серия начинается заново, когда файл снова станет доступен
+(trim_file_retrying).
 """
 from __future__ import annotations
 
@@ -30,6 +34,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +52,12 @@ TAIL_MIN_S = 2.0
 # в пределах одного диска. Расширение не видео, чтобы медиатека не подхватила
 # недописанный файл.
 TMP_SUFFIX = ".trim-tmp"
+
+# Обрыв сети посреди серии: сколько раз начинать её заново, когда файл снова
+# откроется, и как часто это проверять. Повторов больше — значит, сеть мигает,
+# и толку не будет.
+NET_RETRIES = 3
+NET_POLL_S = 5.0
 
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -580,3 +591,59 @@ def trim_file(path, tools: Tools, progress=None, cancel=None) -> TrimResult:
         progress(1.0)
     return TrimResult(True, f"хвост {audio_end - cut:.0f} с отрезан", cut=cut,
                       old_duration=old, new_duration=new_dur)
+
+
+# --------------------------------------------------------------------------- #
+# Обрыв сети
+# --------------------------------------------------------------------------- #
+
+def reachable(path) -> bool:
+    """Файл на месте и открывается на чтение.
+
+    Для файла на сетевой шаре это проверка связи: при обрыве macOS отмонтирует
+    том, и путь просто исчезает; если том ещё висит, не откроется файл.
+    """
+    try:
+        with open(path, "rb") as f:
+            f.read(1)
+        return True
+    except OSError:
+        return False
+
+
+def _pause(seconds: float, cancel) -> bool:
+    """Пауза, которую прерывает отмена. True — отменили."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if cancel and cancel():
+            return True
+        time.sleep(min(0.2, max(0.0, end - time.monotonic())))
+    return bool(cancel and cancel())
+
+
+def trim_file_retrying(path, tools: Tools, progress=None, cancel=None,
+                       waiting=None) -> TrimResult:
+    """trim_file, который переживает обрыв сети.
+
+    Упала обрезка, а файл больше не открывается — дело не в файле: пропала шара,
+    и ffmpeg не смог писать. Тогда ждём, пока файл снова откроется, убираем
+    недописанный временный (при обрыве удалить его не вышло) и режем серию
+    заново. waiting(True) — начали ждать, waiting(False) — связь вернулась.
+    Если сеть мигает и повторы кончились, возвращается последняя неудача.
+    """
+    for attempt in range(NET_RETRIES + 1):
+        res = trim_file(path, tools, progress, cancel)
+        if res.ok or res.cancelled or attempt == NET_RETRIES or reachable(path):
+            return res
+        if waiting:
+            waiting(True)
+        while not reachable(path):
+            if _pause(NET_POLL_S, cancel):
+                # Недописанный временный мог остаться — без сети его не удалить.
+                return TrimResult(False, f"отменено без сети — если рядом остался "
+                                         f"{tmp_path(path).name}, его можно удалить",
+                                  cancelled=True, cut=res.cut, old_duration=res.old_duration)
+        _remove(tmp_path(path))
+        if waiting:
+            waiting(False)
+    return res

@@ -340,3 +340,93 @@ def test_trim_mismatch_leaves_original(tmp_path, monkeypatch):
     assert not result.ok and "вложения не совпали" in result.message
     assert path.read_bytes() == data
     assert not trim.tmp_path(path).exists()
+
+
+# ------------------------------------------------------------ обрыв сети --
+
+def test_reachable(tmp_path):
+    f = tmp_path / "Show - S01E09.mkv"
+    assert not trim.reachable(f)
+    f.write_bytes(b"x")
+    assert trim.reachable(f)
+    assert not trim.reachable(tmp_path)              # папка — не файл
+
+
+class _Share:
+    """Серия на шаре, которая пропадает посреди обрезки.
+
+    Первые drops попыток обрываются вместе с сетью и оставляют недописанный
+    временный файл — без сети trim_file удалить его не смог. Сеть возвращается
+    на каждой третьей проверке.
+    """
+    def __init__(self, tmp_path, drops):
+        self.path = tmp_path / "Show - S01E09.mkv"
+        self.path.write_bytes(b"original")
+        self.drops, self.calls, self.polls, self.online = drops, 0, 0, True
+        self.tmp_before = []                         # был ли временный к началу попытки
+
+    def trim_file(self, path, tools, progress=None, cancel=None):
+        self.calls += 1
+        self.tmp_before.append(trim.tmp_path(path).exists())
+        if self.calls <= self.drops:
+            trim.tmp_path(path).write_bytes(b"half")
+            self.online = False
+            return trim.TrimResult(False, "ffmpeg: Input/output error")
+        return trim.TrimResult(True, "хвост 90 с отрезан")
+
+    def reachable(self, path):
+        if not self.online:
+            self.polls += 1
+            self.online = self.polls % 3 == 0
+        return self.online
+
+
+def _share(monkeypatch, tmp_path, drops):
+    share = _Share(tmp_path, drops)
+    monkeypatch.setattr(trim, "trim_file", share.trim_file)
+    monkeypatch.setattr(trim, "reachable", share.reachable)
+    monkeypatch.setattr(trim, "NET_POLL_S", 0)
+    return share
+
+
+def test_retry_after_network_comes_back(monkeypatch, tmp_path):
+    """Altered Carbon S01E09: шара отвалилась на середине перепаковки."""
+    share = _share(monkeypatch, tmp_path, drops=1)
+    events = []
+    result = trim.trim_file_retrying(share.path, None, waiting=events.append)
+    assert result.ok, result.message
+    assert share.calls == 2 and events == [True, False]
+    assert share.tmp_before == [False, False]        # недописанный убран до повтора
+
+
+def test_failure_with_reachable_file_is_final(monkeypatch, tmp_path):
+    """Файл на месте, а обрезка не вышла — дело в файле, повтор не поможет."""
+    share = _share(monkeypatch, tmp_path, drops=0)
+    calls = []
+
+    def broken(path, tools, progress=None, cancel=None):
+        calls.append(path)
+        return trim.TrimResult(False, "не сошлось с оригиналом: вложения не совпали")
+    monkeypatch.setattr(trim, "trim_file", broken)
+    events = []
+    result = trim.trim_file_retrying(share.path, None, waiting=events.append)
+    assert not result.ok and "не сошлось" in result.message
+    assert len(calls) == 1 and events == []
+
+
+def test_flapping_network_gives_up(monkeypatch, tmp_path):
+    share = _share(monkeypatch, tmp_path, drops=100)
+    result = trim.trim_file_retrying(share.path, None)
+    assert not result.ok and not result.cancelled
+    assert share.calls == trim.NET_RETRIES + 1
+
+
+def test_cancel_while_waiting_for_network(monkeypatch, tmp_path):
+    share = _share(monkeypatch, tmp_path, drops=1)
+    monkeypatch.setattr(trim, "reachable", lambda path: False)   # сеть так и не вернулась
+    events = []
+    result = trim.trim_file_retrying(share.path, None, cancel=lambda: bool(events),
+                                     waiting=events.append)
+    assert result.cancelled and not result.ok
+    assert trim.tmp_path(share.path).name in result.message
+    assert share.calls == 1 and events == [True]
