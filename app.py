@@ -28,6 +28,7 @@ import core
 import edl
 import metaui
 import paths
+import pipeline
 import theme
 import trim
 from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme держим в API модуля
@@ -2003,8 +2004,8 @@ class App:
         prepared = self._chapters_plan(scope) if also_chapters else None
         if also_chapters and prepared is None:
             return                       # нет MKVToolNix — про это уже сказали
-        # Хвост режется до записи: конец титров в .edl и главах должен лечь на
-        # новый конец файла, а не на старый, за концом видео.
+        # Хвост режется до записи .edl этой серии: конец титров в .edl и главах
+        # должен лечь на новый конец файла, а не на старый, за концом видео.
         to_trim = [e for e in scope if trim.needs_trim(e.tail)] if self.edl_trim_tail.get() else []
         tools = None
         if to_trim:
@@ -2025,10 +2026,10 @@ class App:
                 extra += f" Пропущено с чужими главами: {len(skipped)}."
         if to_trim:
             longest = max(e.tail for e in to_trim)
-            extra += (f"\n\nСначала обрезать хвост у {len(to_trim)} файлов: звук идёт дальше "
-                      f"картинки (до {longest:.0f} с). Без перекодирования, но каждый файл "
-                      "переписывается целиком — несколько минут на серию. Оригинал заменяется "
-                      "только после сверки с ним.")
+            extra += (f"\n\nУ {len(to_trim)} файлов звук идёт дальше картинки (до "
+                      f"{longest:.0f} с) — перед записью их .edl хвост обрезается. Без "
+                      "перекодирования, но каждый файл переписывается целиком — несколько "
+                      "минут на серию. Оригинал заменяется только после сверки с ним.")
         if not messagebox.askyesno(
             "Запись .edl",
             f"Записать {len(to_write)} файлов .edl — по {self._scope_phrase()}?\n"
@@ -2036,81 +2037,116 @@ class App:
             + ("" if to_trim else " Видео не трогается.") + extra,
         ):
             return
-        if to_trim:
-            # Главы тогда планируются после обрезки: у файлов будет другая длительность.
-            self._run_trim(tools, to_trim,
-                           then=lambda: self._write_edl_now(scope, pad, keep, to_end, also_chapters))
-        else:
-            self._write_edl_now(scope, pad, keep, to_end, also_chapters, prepared)
+        self._run_edl(scope, pad, keep, to_end, tools, to_trim, prepared)
 
-    def _write_edl_now(self, scope, pad, keep, to_end, also_chapters, prepared=None):
-        """Пишет .edl по scope и, если просили, запускает запись глав."""
-        if also_chapters and prepared is None:
-            prepared = self._chapters_plan(scope)
-        written = failed = 0
-        for e in scope:
-            # Шара могла отвалиться — тогда пишем, что вышло, а не падаем на
-            # первом файле с остальными незаписанными.
-            try:
-                p = edl.build_and_write(e, pad, keep, to_end)
-            except OSError as ex:
-                failed += 1
-                self.log_line(f"  ✗ {edl.edl_path(e.path).name}: {ex.strerror or ex}")
-                continue
-            if p:
-                written += 1
-                self.log_line(f"  ✓ {p.name}")
-        self.log_line(f"Записано .edl: {written}."
-                      + (f" Не записано: {failed} — проверьте доступ к папке и "
-                         "запишите ещё раз." if failed else ""))
-        self._save_edl_settings()
-        self.refresh_edl_preview()
-        if prepared and prepared[1]:
-            self._run_chapters(prepared[0], prepared[1])
+    # Шаг серии, на котором пропала сеть: (что делали, что добавить в лог).
+    _NET_STEPS = {"trim": ("обрезка хвоста", "Оригинал цел. "),
+                  "edl": ("запись .edl", ""), "chapters": ("запись глав", "")}
 
-    def _run_trim(self, tools, eps, then):
-        """Обрезает хвосты в фоне, затем зовёт then() — запись .edl и глав.
+    def _run_edl(self, scope, pad, keep, to_end, tools, to_trim, prepared):
+        """Пишет .edl по scope в фоне — серия за серией (pipeline.run_episode).
 
-        Серия занимает минуты: ffmpeg переписывает весь файл, mkvpropedit ещё раз
-        читает его ради статистики. Поэтому прогресс идёт долями внутри файла, а
-        после каждого файла он пересканируется — длительность и хвост в таблице
-        сразу новые. Отмена оставляет текущий файл как был и .edl не пишет.
-        Оборвалась сеть — ждём её и начинаем текущую серию заново.
+        Серия с хвостом сначала обрезается, и сразу за этим пишутся её .edl и
+        главы; только потом берёмся за следующую. Обрезка занимает минуты:
+        ffmpeg переписывает весь файл, mkvpropedit ещё раз читает его ради
+        статистики. Поэтому прогресс идёт долями внутри файла, а обрезанная серия
+        пересканируется — длительность и хвост в таблице сразу новые.
+        Оборвалась сеть — ждём её и повторяем шаг. Отмена не начинает следующую
+        серию, а обрезку посреди серии бросает, оставляя файл как был.
         """
-        self.set_busy(True, f"Обрезка хвоста 1/{len(eps)}")
-        self.progress.configure(value=0, maximum=len(eps) * 100)
+        to_trim = {str(e.path) for e in to_trim}
+        propedit, planned = (prepared[0], {str(e.path) for e, _ in prepared[1]}) \
+            if prepared else (None, set())
+        # Обрезка — минуты, .edl и главы — секунды: вес в полосе прогресса по этому.
+        weights = [100 if str(e.path) in to_trim else 1 for e in scope]
+        total = sum(weights)
+        self.set_busy(True, "Запись .edl")
+        self.progress.configure(value=0, maximum=total)
         results: "queue.Queue" = queue.Queue()
-        tally = {"ok": 0, "failed": 0}
+        tally = {"edl": 0, "edl_failed": 0, "trimmed": 0, "trim_failed": 0,
+                 "chapters": 0, "chapters_failed": 0, "seen": 0}
         # Время без сети в оценку «осталось» не входит: иначе после получаса
         # ожидания она бы раздулась до конца пачки.
         clock = {"started": time.monotonic(), "offline_since": None}
 
         def show(n, frac):
-            """Подпись у полосы: какая серия, какой этап, сколько осталось."""
-            done = (n + frac) / len(eps)
-            stage = "перепаковка" if frac < trim.REMUX_SHARE else "проверка"
-            text = f"Обрезка хвоста {n + 1}/{len(eps)} · {stage} · {frac * 100:.0f}%"
+            """Подпись у полосы: какая серия, какой шаг, сколько осталось."""
+            done = (sum(weights[:n]) + frac * weights[n]) / total
+            text = f"Серия {n + 1}/{len(scope)}"
+            if str(scope[n].path) in to_trim and frac < 1:
+                stage = "перепаковка" if frac < trim.REMUX_SHARE else "проверка"
+                text += f" · обрезка хвоста · {stage} · {frac * 100:.0f}%"
+            else:
+                text += " · запись .edl" + (" и глав" if str(scope[n].path) in planned else "")
             elapsed = time.monotonic() - clock["started"]
             # Первые секунды оценка скачет — показываем её, когда есть на что опереться.
             if done > 0.02 and elapsed > 20:
                 left = elapsed * (1 - done) / done
                 text += " · осталось " + (f"~{math.ceil(left / 60)} мин" if left >= 60 else "<1 мин")
             self.progress_text.set(text)
-            self.progress.configure(value=done * len(eps) * 100)
+            self.progress.configure(value=done * total)
 
         def work():
-            for n, ep in enumerate(eps):
+            for n, ep in enumerate(scope):
                 if self.cancel_event.is_set():
                     break
                 results.put(("start", n, ep))
-                res = trim.trim_file_retrying(
-                    ep.path, tools,
+                run = pipeline.run_episode(
+                    ep, pad, keep, to_end,
+                    tools=tools if str(ep.path) in to_trim else None,
+                    propedit=propedit if str(ep.path) in planned else None,
                     progress=lambda frac, n=n: results.put(("progress", n, frac)),
                     cancel=self.cancel_event.is_set,
-                    waiting=lambda on, n=n, ep=ep: results.put(("offline" if on else "online", n, ep)))
-                fresh = core.scan_file(tools.mkvmerge, ep.path) if res.ok and not res.skipped else None
-                results.put(("done", n, ep, res, fresh))
+                    waiting=lambda on, step, n=n, ep=ep: results.put(
+                        ("offline" if on else "online", n, ep, step)),
+                    trimmed=lambda run, n=n, ep=ep: results.put(("trimmed", n, ep, run)))
+                results.put(("done", n, ep, run))
             results.put(None)
+
+        def take_trim(ep, run):
+            """Обрезка серии кончилась — в лог и в таблицу, не дожидаясь .edl."""
+            name, res = ep.path.name, run.trim
+            if res.ok and not res.skipped:
+                tally["trimmed"] += 1
+                self._take_rescan(ep, run.fresh)
+                self.log_line(f"  ✓ {name}: {res.message}, {self._fmt_time(res.old_duration)} → "
+                              f"{self._fmt_time(res.new_duration)}")
+            elif res.ok or res.cancelled:
+                self.log_line(f"  — {name}: {res.message}")
+            else:
+                tally["trim_failed"] += 1
+                self.log_line(f"  ✗ {name}: {res.message} — оригинал не тронут")
+
+        def take(ep, run):
+            """Итог .edl и глав серии — в лог и в счётчики."""
+            name = ep.path.name
+            if run.edl:
+                tally["edl"] += 1
+                self.log_line(f"  ✓ {run.edl.name}")
+            elif run.edl_error:
+                tally["edl_failed"] += 1
+                self.log_line(f"  ✗ {edl.edl_path(ep.path).name}: {run.edl_error}")
+            if run.chapters is not None:
+                tally["chapters"] += 1
+                ep.chapters = run.chapters
+                self.log_line(f"  ✓ {name}: глав {run.chapters}")
+            elif run.chapters_failed:
+                tally["chapters_failed"] += 1
+                self.log_line(f"  ✗ {name}: главы записать не удалось")
+
+        def summary(cancelled):
+            parts = [f".edl записано {tally['edl']}"]
+            if to_trim:
+                parts.append(f"хвост обрезан у {tally['trimmed']} из {len(to_trim)}")
+            if planned:
+                parts.append(f"главы у {tally['chapters']}")
+            failed = [f"{what} {tally[key]}" for key, what in
+                      (("edl_failed", ".edl"), ("trim_failed", "обрезка"),
+                       ("chapters_failed", "главы")) if tally[key]]
+            text = ", ".join(parts) + (f"; не вышло: {', '.join(failed)}" if failed else "")
+            if cancelled and tally["seen"] < len(scope):
+                text += f"; не начаты: {len(scope) - tally['seen']}"
+            return ("Отменено: " if cancelled else "Готово: ") + text
 
         def poll():
             finished = False
@@ -2125,41 +2161,36 @@ class App:
                 kind, n = item[0], item[1]
                 if kind == "start":
                     ep = item[2]
-                    self.edl_status.set(f"Обрезка хвоста {n + 1}/{len(eps)}: {ep.path.name}")
-                    self.log_line(f"  … {ep.path.name}: хвост {ep.tail:.0f} с, обрезаю")
+                    self.edl_status.set(f"Серия {n + 1}/{len(scope)}: {ep.path.name}")
+                    if str(ep.path) in to_trim:
+                        self.log_line(f"  … {ep.path.name}: хвост {ep.tail:.0f} с, обрезаю")
                     show(n, 0.0)
                 elif kind == "progress":
                     show(n, item[2])
+                elif kind == "trimmed":
+                    take_trim(item[2], item[3])
+                    show(n, 1.0)
+                    self.refresh_edl_preview()
                 elif kind == "offline":
-                    ep = item[2]
+                    ep, (what, note) = item[2], self._NET_STEPS[item[3]]
                     clock["offline_since"] = time.monotonic()
                     self.edl_status.set(f"Нет доступа к {ep.path.parent} — жду сеть")
-                    self.progress_text.set(f"Обрезка хвоста {n + 1}/{len(eps)} · "
+                    self.progress_text.set(f"Серия {n + 1}/{len(scope)} · {what} · "
                                            "нет доступа к файлу — жду сеть")
-                    self.log_line(f"  ⚠ {ep.path.name}: файл пропал — похоже, отвалилась "
-                                  "сеть. Оригинал цел; жду связь и начну серию заново. "
+                    self.log_line(f"  ⚠ {ep.path.name}: пропал доступ к файлу ({what}) — "
+                                  f"похоже, отвалилась сеть. {note}Жду связь и повторю. "
                                   "Не ждать — «Отмена».")
                 elif kind == "online":
-                    ep = item[2]
+                    ep, (what, _) = item[2], self._NET_STEPS[item[3]]
                     if clock["offline_since"] is not None:
                         clock["started"] += time.monotonic() - clock["offline_since"]
                         clock["offline_since"] = None
-                    self.edl_status.set(f"Обрезка хвоста {n + 1}/{len(eps)}: {ep.path.name}")
-                    self.log_line(f"  … {ep.path.name}: связь вернулась, обрезаю заново")
+                    self.edl_status.set(f"Серия {n + 1}/{len(scope)}: {ep.path.name}")
+                    self.log_line(f"  … {ep.path.name}: связь вернулась, {what} заново")
                     show(n, 0.0)
                 else:
-                    _, _, ep, res, fresh = item
-                    if res.ok and not res.skipped:
-                        tally["ok"] += 1
-                        self._take_rescan(ep, fresh)
-                        self.log_line(f"  ✓ {ep.path.name}: {res.message}, "
-                                      f"{self._fmt_time(res.old_duration)} → "
-                                      f"{self._fmt_time(res.new_duration)}")
-                    elif res.ok or res.cancelled:
-                        self.log_line(f"  — {ep.path.name}: {res.message}")
-                    else:
-                        tally["failed"] += 1
-                        self.log_line(f"  ✗ {ep.path.name}: {res.message} — оригинал не тронут")
+                    tally["seen"] += 1
+                    take(item[2], item[3])
                     show(n, 1.0)
                     self.refresh_edl_preview()
             if not finished:
@@ -2168,15 +2199,13 @@ class App:
             cancelled = self.cancel_event.is_set()
             self.progress.configure(value=0)
             self.set_busy(False)
-            self.progress_text.set("Отменено" if cancelled else
-                                   f"Готово: хвост обрезан у {tally['ok']} из {len(eps)}")
-            self.log_line(f"Хвост обрезан: {tally['ok']}"
-                          + (f", не вышло: {tally['failed']}" if tally["failed"] else "") + ".")
-            if cancelled:
-                self.log_line("Отменено — .edl не записаны.")
-                self.refresh_edl_preview()
-                return
-            then()
+            text = summary(cancelled)
+            self.progress_text.set(text)
+            self.log_line(text + ".")
+            if tally["edl_failed"]:
+                self.log_line("Не записанные .edl — проверьте доступ к папке и запишите ещё раз.")
+            self._save_edl_settings()
+            self.refresh_edl_preview()
 
         threading.Thread(target=work, daemon=True).start()
         poll()
@@ -2263,6 +2292,7 @@ class App:
             if finished:
                 self.progress.configure(value=0)
                 self.set_busy(False)
+                self.progress_text.set(f"Готово: главы записаны у {tally['ok']} из {len(plan)}")
                 self.log_line(f"Главы записаны: {tally['ok']}.")
                 self.refresh_edl_preview()
                 return
@@ -2342,6 +2372,7 @@ class App:
                                    f"Удалить {len(existing)} файлов .edl — по {self._scope_phrase()}?"):
             return
         n = sum(1 for e in existing if edl.delete_edl(e.path))
+        self.progress_text.set(f"Готово: удалено .edl {n}")
         self.log_line(f"Удалено .edl: {n}.")
         self.refresh_edl_preview()
 

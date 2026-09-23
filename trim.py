@@ -621,29 +621,48 @@ def _pause(seconds: float, cancel) -> bool:
     return bool(cancel and cancel())
 
 
-def trim_file_retrying(path, tools: Tools, progress=None, cancel=None,
-                       waiting=None) -> TrimResult:
-    """trim_file, который переживает обрыв сети.
+def retry_on_drop(path, attempt, cancel=None, waiting=None, cleanup=None):
+    """Повторяет шаг над файлом, если тот упал из-за пропавшей шары.
 
-    Упала обрезка, а файл больше не открывается — дело не в файле: пропала шара,
-    и ffmpeg не смог писать. Тогда ждём, пока файл снова откроется, убираем
-    недописанный временный (при обрыве удалить его не вышло) и режем серию
-    заново. waiting(True) — начали ждать, waiting(False) — связь вернулась.
-    Если сеть мигает и повторы кончились, возвращается последняя неудача.
+    attempt() -> (удалось ли, результат). Не удалось, а файл больше не
+    открывается — дело не в файле: ждём, пока он снова откроется, зовём
+    cleanup() и пробуем ещё раз. waiting(True) — начали ждать, waiting(False) —
+    связь вернулась. Возвращает (результат последней попытки, отменено ли
+    ожидание); если сеть мигает и повторы кончились — последнюю неудачу.
     """
-    for attempt in range(NET_RETRIES + 1):
-        res = trim_file(path, tools, progress, cancel)
-        if res.ok or res.cancelled or attempt == NET_RETRIES or reachable(path):
-            return res
+    for n in range(NET_RETRIES + 1):
+        ok, value = attempt()
+        if ok or n == NET_RETRIES or reachable(path):
+            return value, False
         if waiting:
             waiting(True)
         while not reachable(path):
             if _pause(NET_POLL_S, cancel):
-                # Недописанный временный мог остаться — без сети его не удалить.
-                return TrimResult(False, f"отменено без сети — если рядом остался "
-                                         f"{tmp_path(path).name}, его можно удалить",
-                                  cancelled=True, cut=res.cut, old_duration=res.old_duration)
-        _remove(tmp_path(path))
+                return value, True
+        if cleanup:
+            cleanup()
         if waiting:
             waiting(False)
+    return value, False
+
+
+def trim_file_retrying(path, tools: Tools, progress=None, cancel=None,
+                       waiting=None) -> TrimResult:
+    """trim_file, который переживает обрыв сети.
+
+    Упала обрезка, а файл больше не открывается — пропала шара, и ffmpeg не
+    смог писать. Тогда ждём, пока файл снова откроется, убираем недописанный
+    временный (при обрыве удалить его не вышло) и режем серию заново.
+    """
+    def attempt():
+        res = trim_file(path, tools, progress, cancel)
+        return res.ok or res.cancelled, res
+
+    res, cancelled = retry_on_drop(path, attempt, cancel, waiting,
+                                   cleanup=lambda: _remove(tmp_path(path)))
+    if cancelled:
+        # Недописанный временный мог остаться — без сети его не удалить.
+        return TrimResult(False, f"отменено без сети — если рядом остался "
+                                 f"{tmp_path(path).name}, его можно удалить",
+                          cancelled=True, cut=res.cut, old_duration=res.old_duration)
     return res
