@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 
 import tkinter as tk
@@ -235,22 +237,38 @@ class App:
 
     def _build_common_bottom(self):
         f = ttk.Frame(self.root, padding=(10, 6))
-        f.pack(fill="x")
         ttk.Label(f, text="Прогресс:").pack(side="left")
         self.progress = ttk.Progressbar(f, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=10)
+        # Что именно сейчас идёт. Ширина постоянная, иначе полоса прыгала бы
+        # на каждом обновлении текста.
+        self.progress_text = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self.progress_text, width=58).pack(side="left", padx=(0, 10))
         # Рабочие потоки проверяют cancel_event между файлами и мягко прерываются.
         self.cancel_btn = ttk.Button(f, text="Отмена", state="disabled",
                                      command=self.cancel_event.set)
         self.cancel_btn.pack(side="left")
 
         self.log = ScrolledText(self.root, height=7, state="disabled", wrap="word")
-        self.log.pack(fill="x", padx=10, pady=(0, 10))
+        # Прижаты к низу и упакованы раньше вкладок. Когда окну не хватает
+        # высоты, pack урезает упакованное последним — раньше это были прогресс,
+        # «Отмена» и лог, и на экране ноутбука они не показывались вовсе.
+        self.log.pack(side="bottom", fill="x", padx=10, pady=(0, 10), before=self.nb)
+        f.pack(side="bottom", fill="x", before=self.nb)
 
     # -------------------------------------------------------- вкладка EDL --
     def _build_edl(self, parent):
-        opt = ttk.LabelFrame(parent, text="Настройки пропуска", padding=10)
-        opt.pack(fill="x", padx=10, pady=(8, 4))
+        # Настройки, ручной ввод, главы с онлайном — под-вкладками. Стопкой они
+        # были выше экрана ноутбука, и таблица с прогрессом и логом уезжали за
+        # нижний край. Таблица и кнопки остаются видны при любой из них.
+        self.edl_sub = ttk.Notebook(parent)
+        self.edl_sub.pack(fill="x", padx=10, pady=(8, 4))
+        opt = ttk.Frame(self.edl_sub, padding=10)
+        manual = ttk.Frame(self.edl_sub, padding=10)
+        more = ttk.Frame(self.edl_sub, padding=(10, 6))
+        self.edl_sub.add(opt, text="Настройки пропуска")
+        self.edl_sub.add(manual, text="Задать вручную")
+        self.edl_sub.add(more, text="Главы и онлайн")
 
         self.edl_keep_first = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -339,26 +357,15 @@ class App:
         # Переключатель scope позволяет применить не ко всем, а к выделенным строкам
         # (Shift/Ctrl в таблице) — напр. когда один сезон-папка склеен из двух cours
         # с разными таймингами.
-        manual = ttk.LabelFrame(parent, text="Задать вручную (время: MM:SS или секунды)", padding=10)
-        manual.pack(fill="x", padx=10, pady=(0, 4))
         self.edl_manual = {k: tk.StringVar(value="")
                            for k in ("intro_start", "intro_end", "intro_dur",
                                      "outro_start", "outro_end", "outro_last",
                                      "outro_from_start", "recap_end")}
         self.edl_scope = tk.StringVar(value="all")
-
-        scope_row = ttk.Frame(manual)
-        scope_row.grid(row=0, column=0, columnspan=7, sticky="w", pady=(0, 4))
-        ttk.Label(scope_row, text="Применять к:").pack(side="left")
-        ttk.Radiobutton(scope_row, text="ко всем сериям", value="all",
-                        variable=self.edl_scope).pack(side="left", padx=(6, 0))
-        self.edl_scope_sel_rb = ttk.Radiobutton(scope_row, text="к выделенным (0)", value="sel",
-                                                 variable=self.edl_scope)
-        self.edl_scope_sel_rb.pack(side="left", padx=(6, 0))
-        # Переключатель живёт в блоке ручного ввода, но правит и детект, и запись —
-        # иначе об этом никак не догадаться.
-        ttk.Label(scope_row, text="— действует и на детект, и на запись/удаление .edl",
-                  **row_colors(scope_row)["nochange"]).pack(side="left", padx=(10, 0))
+        ttk.Label(manual, text="Время: MM:SS, H:MM:SS или секунды. Применяется по переключателю "
+                               "«Применять к» у кнопок ниже.",
+                  **row_colors(manual)["nochange"]).grid(
+            row=0, column=0, columnspan=7, sticky="w", pady=(0, 4))
 
         ttk.Label(manual, text="Интро:").grid(row=1, column=0, sticky="e")
         ttk.Label(manual, text="начало").grid(row=1, column=1, sticky="e", padx=(8, 2))
@@ -435,6 +442,14 @@ class App:
         self.edl_write_btn.pack(side="left", padx=8)
         self.edl_delete_btn = ttk.Button(btns, text="Удалить .edl", command=self.delete_edl_files)
         self.edl_delete_btn.pack(side="left")
+        # Переключатель правит всю вкладку — детект, запись, ручной ввод, — поэтому
+        # стоит у главных кнопок, а не внутри одной из под-вкладок.
+        ttk.Label(btns, text="Применять к:").pack(side="left", padx=(20, 0))
+        ttk.Radiobutton(btns, text="ко всем сериям", value="all",
+                        variable=self.edl_scope).pack(side="left", padx=(6, 0))
+        self.edl_scope_sel_rb = ttk.Radiobutton(btns, text="к выделенным (0)", value="sel",
+                                                 variable=self.edl_scope)
+        self.edl_scope_sel_rb.pack(side="left", padx=(6, 0))
         ttk.Label(btns, text="  (двойной клик по строке — правка вручную)").pack(side="left", padx=10)
 
         # Автодетект держится на внешних ffmpeg и fpcalc. Чего-то нет — говорим
@@ -447,9 +462,9 @@ class App:
 
         # Главы Matroska из той же разметки: `.edl` понимает только Kodi, а главы —
         # любой плеер. Пишутся в заголовок mkvpropedit-ом, без перекодирования.
-        ch_f = ttk.LabelFrame(parent, text="Главы Matroska (чтобы разметка работала и в других плеерах)",
+        ch_f = ttk.LabelFrame(more, text="Главы Matroska (чтобы разметка работала и в других плеерах)",
                               padding=8)
-        ch_f.pack(fill="x", padx=10, pady=(4, 0))
+        ch_f.pack(fill="x")
         self.chapters_with_edl = tk.BooleanVar(value=False)
         ttk.Checkbutton(ch_f, text="писать вместе с .edl",
                         variable=self.chapters_with_edl).pack(side="left")
@@ -467,8 +482,8 @@ class App:
 
         # Онлайн-тайминги: подтягиваем готовые интро/титры из баз, показываем рядом с
         # локальными (отдельные колонки) и переносим в активные по кнопке — с учётом scope.
-        online_f = ttk.LabelFrame(parent, text="Онлайн-тайминги (AniSkip / TheIntroDB)", padding=8)
-        online_f.pack(fill="x", padx=10, pady=(4, 0))
+        online_f = ttk.LabelFrame(more, text="Онлайн-тайминги (AniSkip / TheIntroDB)", padding=8)
+        online_f.pack(fill="x", pady=(8, 0))
         self.online_load_btn = ttk.Button(online_f, text="Загрузить онлайн…", command=self.online_dialog)
         self.online_load_btn.pack(side="left")
         self.online_take_on_btn = ttk.Button(online_f, text="Взять онлайн (по scope)", command=self.take_online)
@@ -509,7 +524,9 @@ class App:
         self.edl_tree.bind("<<TreeviewSelect>>", self._update_scope_count)
 
         self.edl_status = tk.StringVar(value="Просканируйте папку, затем «Определить автоматически».")
-        ttk.Label(parent, textvariable=self.edl_status, padding=(10, 4)).pack(fill="x")
+        # Упакована раньше таблицы: при нехватке высоты ужимается таблица, а не статус.
+        ttk.Label(parent, textvariable=self.edl_status, padding=(10, 4)).pack(
+            side="bottom", fill="x", before=f)
         self._sync_edl_buttons()
 
     # Ключи сортировки таблицы EDL — по одному на колонку. Сортируем сам список
@@ -638,10 +655,14 @@ class App:
         self.log.see("end")
         self.log.configure(state="disabled")
 
-    def set_busy(self, busy: bool):
+    def set_busy(self, busy: bool, what: str = ""):
+        """Работа пошла или кончилась. what — что делается, для подписи у полосы."""
         self.busy = busy
         if busy:
             self.cancel_event.clear()
+        else:
+            self._lock_tabs(False)
+        self.progress_text.set(f"{what or 'Идёт работа'}…" if busy else "")
         self.cancel_btn.configure(state="normal" if busy else "disabled")
         state = "disabled" if busy else "normal"
         for b in (self.scan_btn, self.apply_btn, self.subs_btn,
@@ -656,9 +677,45 @@ class App:
                   *self.extra_busy_buttons):
             if b is not None:
                 b.configure(state=state)
+        if busy:
+            self._lock_tabs(True)
         # Работа кончилась — часть кнопок EDL всё равно гасится: включать
         # «Удалить .edl», когда удалять нечего, незачем.
         self._sync_edl_buttons()
+        if not busy and hasattr(self, "edl_outro_end_spin"):
+            self._sync_outro_end_spin()
+
+    # Что гасить на время работы. Во ttk Spinbox и Combobox — те же Entry.
+    _LOCKABLE = (ttk.Button, ttk.Checkbutton, ttk.Radiobutton, ttk.Entry)
+
+    def _lock_tabs(self, locked: bool):
+        """Гасит на время работы всё, что можно нажать или вписать на вкладках
+        «Дорожки» и «EDL», и возвращает как было. Главные кнопки гасит сам
+        set_busy; здесь — остальное: «Задать», галки, поля, отступы. Правка
+        таймингов посреди записи легла бы в .edl вперемешку со старыми.
+
+        Состояние меняется флагом ttk, а не опцией state: так у Combobox
+        сохраняется его «только выбор из списка». Гасится только то, что было
+        доступно, и возвращается только оно.
+        """
+        if not locked:
+            for w in getattr(self, "_locked_widgets", []):
+                try:
+                    w.state(["!disabled"])
+                except tk.TclError:
+                    pass                          # виджет успели уничтожить
+            self._locked_widgets = []
+            return
+        found, stack = [], [self.tab_tracks, self.tab_edl]
+        while stack:
+            w = stack.pop()
+            stack.extend(w.winfo_children())
+            if isinstance(w, self._LOCKABLE) and not w.instate(["disabled"]):
+                w.state(["disabled"])
+                found.append(w)
+        # Дописываем, а не заменяем: если работа начата поверх работы, первый
+        # список иначе потерялся бы, и его виджеты остались бы погашенными.
+        self._locked_widgets = getattr(self, "_locked_widgets", []) + found
 
     def audio_choice(self):
         i = self.audio_combo.current()
@@ -711,7 +768,7 @@ class App:
             messagebox.showerror("MKVToolNix не найден", str(e))
             return
 
-        self.set_busy(True)
+        self.set_busy(True, "Сканирование")
         self.summary_var.set("Сканирование…")
         self.log_line(f"Сканирование: {folder} (рекурсивно: {self.recursive_var.get()})")
         recursive = self.recursive_var.get()
@@ -870,7 +927,7 @@ class App:
         if not messagebox.askyesno("Подтверждение", text):
             return
 
-        self.set_busy(True)
+        self.set_busy(True, "Применение дорожек")
         self.progress.configure(value=0, maximum=len(todo))
         self.log_line(f"ПРИМЕНЕНИЕ: {len(todo)} файл(ов)")
 
@@ -975,7 +1032,7 @@ class App:
         ):
             return
 
-        self.set_busy(True)
+        self.set_busy(True, "Скачивание субтитров")
         self.subs_status.set("")
         self.progress.configure(value=0, maximum=len(targets))
         self.log_line(f"СУБТИТРЫ: ищу русские для {len(targets)} серий…")
@@ -1125,6 +1182,8 @@ class App:
         Состояние виджета и перерисовка таблицы разведены намеренно: перерисовка
         сама вызывает этот метод, и объединение их замкнуло бы рекурсию.
         """
+        if self.busy:
+            return            # на время работы поле погашено; set_busy вернёт сам
         fixed = any(ep.outro_fixed_end for ep in getattr(self, "edl_eps", []))
         active = not self.edl_outro_to_end.get() or fixed
         self.edl_outro_end_spin.configure(state="normal" if active else "disabled")
@@ -1682,7 +1741,7 @@ class App:
                                 "Ни одна серия не попала под правила (проверьте диапазоны E).")
             return
 
-        self.set_busy(True)
+        self.set_busy(True, "Загрузка онлайн-таймингов")
         self.online_status.set("")
         self.progress.configure(value=0, maximum=len(targets))
         self.log_line(f"ОНЛАЙН: запрашиваю тайминги для {len(targets)} серий…")
@@ -1848,7 +1907,7 @@ class App:
         total = len(scope)
         prefer = None if self.edl_track_var.get() == EDL_TRACK_AUTO else self.edl_track_var.get()
 
-        self.set_busy(True)
+        self.set_busy(True, "Определение заставок")
         self._edl_prog = 0
         self._edl_prog_total = total * 2                     # intro + outro
         self.progress.configure(value=0, maximum=self._edl_prog_total)
@@ -2002,10 +2061,24 @@ class App:
         после каждого файла он пересканируется — длительность и хвост в таблице
         сразу новые. Отмена оставляет текущий файл как был и .edl не пишет.
         """
-        self.set_busy(True)
+        self.set_busy(True, f"Обрезка хвоста 1/{len(eps)}")
         self.progress.configure(value=0, maximum=len(eps) * 100)
         results: "queue.Queue" = queue.Queue()
         tally = {"ok": 0, "failed": 0}
+        started = time.monotonic()
+
+        def show(n, frac):
+            """Подпись у полосы: какая серия, какой этап, сколько осталось."""
+            done = (n + frac) / len(eps)
+            stage = "перепаковка" if frac < trim.REMUX_SHARE else "проверка"
+            text = f"Обрезка хвоста {n + 1}/{len(eps)} · {stage} · {frac * 100:.0f}%"
+            elapsed = time.monotonic() - started
+            # Первые секунды оценка скачет — показываем её, когда есть на что опереться.
+            if done > 0.02 and elapsed > 20:
+                left = elapsed * (1 - done) / done
+                text += " · осталось " + (f"~{math.ceil(left / 60)} мин" if left >= 60 else "<1 мин")
+            self.progress_text.set(text)
+            self.progress.configure(value=done * len(eps) * 100)
 
         def work():
             for n, ep in enumerate(eps):
@@ -2034,8 +2107,9 @@ class App:
                     ep = item[2]
                     self.edl_status.set(f"Обрезка хвоста {n + 1}/{len(eps)}: {ep.path.name}")
                     self.log_line(f"  … {ep.path.name}: хвост {ep.tail:.0f} с, обрезаю")
+                    show(n, 0.0)
                 elif kind == "progress":
-                    self.progress.configure(value=n * 100 + item[2] * 100)
+                    show(n, item[2])
                 else:
                     _, _, ep, res, fresh = item
                     if res.ok and not res.skipped:
@@ -2049,7 +2123,7 @@ class App:
                     elif not res.cancelled:
                         tally["failed"] += 1
                         self.log_line(f"  ✗ {ep.path.name}: {res.message} — оригинал не тронут")
-                    self.progress.configure(value=(n + 1) * 100)
+                    show(n, 1.0)
                     self.refresh_edl_preview()
             if not finished:
                 self.root.after(150, poll)
@@ -2057,6 +2131,8 @@ class App:
             cancelled = self.cancel_event.is_set()
             self.progress.configure(value=0)
             self.set_busy(False)
+            self.progress_text.set("Отменено" if cancelled else
+                                   f"Готово: хвост обрезан у {tally['ok']} из {len(eps)}")
             self.log_line(f"Хвост обрезан: {tally['ok']}"
                           + (f", не вышло: {tally['failed']}" if tally["failed"] else "") + ".")
             if cancelled:
@@ -2116,7 +2192,7 @@ class App:
         Результаты едут через очередь, а разбирает их главный поток по таймеру:
         tkinter из рабочего потока трогать нельзя даже через after.
         """
-        self.set_busy(True)
+        self.set_busy(True, "Запись глав")
         self.progress.configure(value=0, maximum=len(plan))
         results: "queue.Queue" = queue.Queue()
         tally = {"ok": 0, "seen": 0}
@@ -2233,6 +2309,8 @@ class App:
         self.refresh_edl_preview()
 
     def _edl_edit_row(self, event):
+        if self.busy:
+            return            # правка посреди записи легла бы в .edl вперемешку
         iid = self.edl_tree.identify_row(event.y)
         if not iid or iid not in self.edl_row_ep:
             return

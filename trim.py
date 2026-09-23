@@ -52,7 +52,7 @@ _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # Доля прогресса на перепаковку; остальное — пересчёт статистики (он тоже читает
 # файл целиком, но только читает).
-_FFMPEG_SHARE = 0.7
+REMUX_SHARE = 0.7
 
 
 # --------------------------------------------------------------------------- #
@@ -418,7 +418,7 @@ def _progress_ffmpeg(proc, cut: float, progress, cancel) -> bool:
                 done = int(line.split("=", 1)[1]) / 1e6
             except ValueError:
                 continue
-            progress(_FFMPEG_SHARE * min(1.0, max(0.0, done / cut)))
+            progress(REMUX_SHARE * min(1.0, max(0.0, done / cut)))
     proc.wait()
     return True
 
@@ -448,7 +448,7 @@ def _run_stats(mkvpropedit: str, path: Path, progress, cancel) -> tuple[bool, st
             line = raw.decode("utf-8", "replace")
             m = _MKV_PROGRESS.search(line)
             if m and progress:
-                progress(_FFMPEG_SHARE + (1 - _FFMPEG_SHARE) * int(m.group(1)) / 100)
+                progress(REMUX_SHARE + (1 - REMUX_SHARE) * int(m.group(1)) / 100)
             elif line.strip():
                 out.append(line)
     proc.wait()
