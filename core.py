@@ -85,6 +85,9 @@ class Track:
     name: str               # track_name, "" если нет
     default: bool
     forced: bool
+    # Длительность из статистики дорожки (тег DURATION от mkvmerge/ffmpeg), если
+    # она есть. По ней видно, что звук длиннее видео — см. trim.py.
+    duration: float | None = None
 
     def label(self) -> str:
         return self.name.strip() if self.name.strip() else f"[{self.language or 'und'}]"
@@ -154,6 +157,17 @@ def audio_signature(f: MkvFile) -> tuple:
 # Сканирование
 # --------------------------------------------------------------------------- #
 
+def tag_seconds(value) -> float | None:
+    """Тег DURATION ('00:49:38.768000000') → секунды. Нет тега или мусор → None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        h, m, s = value.strip().replace(",", ".").split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+    except ValueError:
+        return None
+
+
 def scan_file(mkvmerge: str, path: Path) -> MkvFile:
     cp = _run([mkvmerge, "-J", str(path)])
     if cp.returncode not in (0, 1):  # 1 = предупреждения, тоже валидный JSON
@@ -176,6 +190,7 @@ def scan_file(mkvmerge: str, path: Path) -> MkvFile:
             name=props.get("track_name", "") or "",
             default=bool(props.get("default_track", False)),
             forced=bool(props.get("forced_track", False)),
+            duration=tag_seconds(props.get("tag_duration")),
         ))
 
     # Длительность контейнера (mkvmerge отдаёт наносекунды) — нужна для конца титров.

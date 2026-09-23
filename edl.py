@@ -128,6 +128,7 @@ class EpisodeEdl:
     recap: Segment | None = None      # начальный recap «в предыдущих сериях» (0..X), вручную
     note: str = ""                    # диагностика детекта (для показа в таблице)
     chapters: int = 0                 # сколько глав уже в файле (из скана, см. core.MkvFile)
+    tail: float | None = None         # на сколько файл длиннее своего видео (см. trim.py)
 
     audio_langs: list[str] = field(default_factory=list)  # языки аудиодорожек по порядку
 
@@ -329,6 +330,10 @@ def find_fpcalc() -> str | None:
 
 def find_ffmpeg() -> str | None:
     return _find_tool("ffmpeg")
+
+
+def find_ffprobe() -> str | None:
+    return _find_tool("ffprobe")
 
 
 def missing_tools() -> list[str]:

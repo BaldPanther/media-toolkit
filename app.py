@@ -28,6 +28,7 @@ import edl
 import metaui
 import paths
 import theme
+import trim
 from theme import is_dark_theme, row_colors  # noqa: F401 — is_dark_theme держим в API модуля
 
 NOTOUCH = "— не трогать —"
@@ -322,6 +323,16 @@ class App:
             variable=self.edl_outro_to_end, command=self._on_outro_to_end,
         ).grid(row=5, column=0, columnspan=6, sticky="w", pady=(6, 0))
 
+        # Звук длиннее картинки — Kodi на пропуске титров встаёт на полпути и
+        # показывает чёрный экран, пока звук не кончится (почему — в trim.py).
+        # Чинится только файл, поэтому по умолчанию хвост режется перед записью.
+        self.edl_trim_tail = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            opt, text=f"Обрезать хвост после конца видео (звук дольше картинки больше "
+                      f"{trim.TAIL_MIN_S:.0f} с) — без перекодирования, при записи .edl",
+            variable=self.edl_trim_tail,
+        ).grid(row=6, column=0, columnspan=6, sticky="w", pady=(6, 0))
+
         # --- Задать вручную (когда детект промахнулся или его нет) ---
         # В некоторых сериалах интро/титры одинаковы по времени во всех сериях, но
         # детект их не берёт (нет чёткой музыкальной темы) — задаём одним значением.
@@ -470,13 +481,14 @@ class App:
 
         f = ttk.Frame(parent, padding=(10, 0))
         f.pack(fill="both", expand=True)
-        cols = ("file", "se", "recap", "intro", "intro_on", "outro", "outro_on", "edl", "ch", "note")
+        cols = ("file", "se", "recap", "intro", "intro_on", "outro", "outro_on", "edl", "ch",
+                "tail", "note")
         heads = {"file": "Файл", "se": "S/E", "recap": "Recap",
                  "intro": "Интро (актив.)", "intro_on": "Интро (онлайн)",
                  "outro": "Титры (актив.)", "outro_on": "Титры (онлайн)",
-                 "edl": ".edl", "ch": "главы", "note": "Заметка"}
+                 "edl": ".edl", "ch": "главы", "tail": "хвост", "note": "Заметка"}
         widths = {"file": 320, "se": 60, "recap": 74, "intro": 120, "intro_on": 120,
-                  "outro": 120, "outro_on": 120, "edl": 44, "ch": 52, "note": 130}
+                  "outro": 120, "outro_on": 120, "edl": 44, "ch": 52, "tail": 56, "note": 130}
         # Свободную ширину отдаём имени файла и заметке: у остальных колонок
         # содержимое фиксированной длины и растягивать их незачем, а имя серии
         # без этого обрезалось на середине.
@@ -515,6 +527,7 @@ class App:
                                e.online_outro.start if e.online_outro else 0.0),
         "edl": lambda e: not edl.has_external_edl(e.path),
         "ch": lambda e: -e.chapters,
+        "tail": lambda e: -(e.tail or 0.0) if trim.needs_trim(e.tail) else 0.0,
         "note": lambda e: "; ".join(x for x in (e.note, e.online_note) if x).casefold(),
     }
 
@@ -1127,6 +1140,7 @@ class App:
         save_app_settings({**load_app_settings(), "edl": {
             "keep_first": self.edl_keep_first.get(),
             "outro_to_end": self.edl_outro_to_end.get(),
+            "trim_tail": self.edl_trim_tail.get(),
             "track": self.edl_track_var.get(),
             "pad": {k: v.get() for k, v in self.edl_pad.items()},
             "window": {k: v.get() for k, v in self.edl_window.items()},
@@ -1138,6 +1152,7 @@ class App:
             return
         self.edl_keep_first.set(bool(data.get("keep_first", True)))
         self.edl_outro_to_end.set(bool(data.get("outro_to_end", True)))
+        self.edl_trim_tail.set(bool(data.get("trim_tail", True)))
         track = data.get("track")
         if isinstance(track, str) and track:
             # Языка может не оказаться в новой папке — скан вернёт «Оригинал (авто)».
@@ -1165,6 +1180,7 @@ class App:
                     langs.append(l)
             e = edl.EpisodeEdl.from_path(f.path, duration=f.duration, audio_langs=file_langs)
             e.chapters = f.chapters
+            e.tail = trim.tail_seconds(f.tracks)
             old = prev.get(str(f.path))
             if old:
                 e.intro, e.outro, e.recap, e.note = old.intro, old.outro, old.recap, old.note
@@ -1738,7 +1754,7 @@ class App:
         keep = self.edl_keep_first.get()
         to_end = self.edl_outro_to_end.get()
         pad = self.edl_padding()
-        n_intro = n_outro = 0
+        n_intro = n_outro = n_tail = 0
         self._edl_have_files = self._edl_have_online = self._edl_have_chapters = 0
         for e in self.edl_eps:
             if e.online_intro or e.online_outro or e.online_recap:
@@ -1776,11 +1792,14 @@ class App:
 
             has = "есть" if edl.has_external_edl(e.path) else ""
             self._edl_have_files += bool(has)
+            # Пусто — хвоста нет или его не видно (у файла нет статистики дорожек).
+            tail_txt = f"{e.tail:.0f} с" if trim.needs_trim(e.tail) else ""
+            n_tail += bool(tail_txt)
             row_tags = tuple(tags) + (("has",) if has else ())
             iid = self.edl_tree.insert("", "end",
                                        values=(e.path.name, se, recap_txt, intro_txt, intro_on_txt,
                                                outro_txt, outro_on_txt, has,
-                                               e.chapters or "—", note_txt),
+                                               e.chapters or "—", tail_txt, note_txt),
                                        tags=row_tags)
             self.edl_row_ep[iid] = e
             if str(e.path) in selected:
@@ -1790,6 +1809,7 @@ class App:
         self._update_scope_count()
         self.edl_status.set(
             f"Серий: {len(self.edl_eps)}. К пропуску интро: {n_intro}, титры: {n_outro}."
+            + (f" Звук дольше видео: {n_tail}." if n_tail else "")
         )
         self._mark_edl_sort()
         self._sync_edl_buttons()
@@ -1918,19 +1938,50 @@ class App:
         prepared = self._chapters_plan(scope) if also_chapters else None
         if also_chapters and prepared is None:
             return                       # нет MKVToolNix — про это уже сказали
+        # Хвост режется до записи: конец титров в .edl и главах должен лечь на
+        # новый конец файла, а не на старый, за концом видео.
+        to_trim = [e for e in scope if trim.needs_trim(e.tail)] if self.edl_trim_tail.get() else []
+        tools = None
+        if to_trim:
+            tools, missing = trim.find_tools()
+            if tools is None:
+                messagebox.showerror(
+                    "Нечем обрезать хвост",
+                    f"Не найдены: {', '.join(missing)}.\n"
+                    + ("Установите ffmpeg и MKVToolNix и добавьте их в PATH."
+                       if sys.platform == "win32" else "brew install ffmpeg mkvtoolnix")
+                    + "\n\nИли снимите галку «Обрезать хвост после конца видео».")
+                return
         extra = ""
         if prepared:
             _, plan, skipped = prepared
             extra = f"\nЗаодно главы в MKV: {len(plan)} файлов."
             if skipped:
                 extra += f" Пропущено с чужими главами: {len(skipped)}."
+        if to_trim:
+            longest = max(e.tail for e in to_trim)
+            extra += (f"\n\nСначала обрезать хвост у {len(to_trim)} файлов: звук идёт дальше "
+                      f"картинки (до {longest:.0f} с). Без перекодирования, но каждый файл "
+                      "переписывается целиком — несколько минут на серию. Оригинал заменяется "
+                      "только после сверки с ним.")
         if not messagebox.askyesno(
             "Запись .edl",
             f"Записать {len(to_write)} файлов .edl — по {self._scope_phrase()}?\n"
-            "Существующие .edl будут перезаписаны. Видео не трогается." + extra,
+            "Существующие .edl будут перезаписаны."
+            + ("" if to_trim else " Видео не трогается.") + extra,
         ):
             return
+        if to_trim:
+            # Главы тогда планируются после обрезки: у файлов будет другая длительность.
+            self._run_trim(tools, to_trim,
+                           then=lambda: self._write_edl_now(scope, pad, keep, to_end, also_chapters))
+        else:
+            self._write_edl_now(scope, pad, keep, to_end, also_chapters, prepared)
 
+    def _write_edl_now(self, scope, pad, keep, to_end, also_chapters, prepared=None):
+        """Пишет .edl по scope и, если просили, запускает запись глав."""
+        if also_chapters and prepared is None:
+            prepared = self._chapters_plan(scope)
         written = 0
         for e in scope:
             p = edl.build_and_write(e, pad, keep, to_end)
@@ -1942,6 +1993,89 @@ class App:
         self.refresh_edl_preview()
         if prepared and prepared[1]:
             self._run_chapters(prepared[0], prepared[1])
+
+    def _run_trim(self, tools, eps, then):
+        """Обрезает хвосты в фоне, затем зовёт then() — запись .edl и глав.
+
+        Серия занимает минуты: ffmpeg переписывает весь файл, mkvpropedit ещё раз
+        читает его ради статистики. Поэтому прогресс идёт долями внутри файла, а
+        после каждого файла он пересканируется — длительность и хвост в таблице
+        сразу новые. Отмена оставляет текущий файл как был и .edl не пишет.
+        """
+        self.set_busy(True)
+        self.progress.configure(value=0, maximum=len(eps) * 100)
+        results: "queue.Queue" = queue.Queue()
+        tally = {"ok": 0, "failed": 0}
+
+        def work():
+            for n, ep in enumerate(eps):
+                if self.cancel_event.is_set():
+                    break
+                results.put(("start", n, ep))
+                res = trim.trim_file(ep.path, tools,
+                                     progress=lambda frac, n=n: results.put(("progress", n, frac)),
+                                     cancel=self.cancel_event.is_set)
+                fresh = core.scan_file(tools.mkvmerge, ep.path) if res.ok and not res.skipped else None
+                results.put(("done", n, ep, res, fresh))
+            results.put(None)
+
+        def poll():
+            finished = False
+            while True:
+                try:
+                    item = results.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    finished = True
+                    continue
+                kind, n = item[0], item[1]
+                if kind == "start":
+                    ep = item[2]
+                    self.edl_status.set(f"Обрезка хвоста {n + 1}/{len(eps)}: {ep.path.name}")
+                    self.log_line(f"  … {ep.path.name}: хвост {ep.tail:.0f} с, обрезаю")
+                elif kind == "progress":
+                    self.progress.configure(value=n * 100 + item[2] * 100)
+                else:
+                    _, _, ep, res, fresh = item
+                    if res.ok and not res.skipped:
+                        tally["ok"] += 1
+                        self._take_rescan(ep, fresh)
+                        self.log_line(f"  ✓ {ep.path.name}: {res.message}, "
+                                      f"{self._fmt_time(res.old_duration)} → "
+                                      f"{self._fmt_time(res.new_duration)}")
+                    elif res.ok:
+                        self.log_line(f"  — {ep.path.name}: {res.message}")
+                    elif not res.cancelled:
+                        tally["failed"] += 1
+                        self.log_line(f"  ✗ {ep.path.name}: {res.message} — оригинал не тронут")
+                    self.progress.configure(value=(n + 1) * 100)
+                    self.refresh_edl_preview()
+            if not finished:
+                self.root.after(150, poll)
+                return
+            cancelled = self.cancel_event.is_set()
+            self.progress.configure(value=0)
+            self.set_busy(False)
+            self.log_line(f"Хвост обрезан: {tally['ok']}"
+                          + (f", не вышло: {tally['failed']}" if tally["failed"] else "") + ".")
+            if cancelled:
+                self.log_line("Отменено — .edl не записаны.")
+                self.refresh_edl_preview()
+                return
+            then()
+
+        threading.Thread(target=work, daemon=True).start()
+        poll()
+
+    def _take_rescan(self, ep, fresh):
+        """Обрезанный файл пересканирован: подменяет его в списке и в серии."""
+        if fresh is None or fresh.error:
+            return
+        self.files = [fresh if str(f.path) == str(fresh.path) else f for f in self.files]
+        ep.duration = fresh.duration
+        ep.chapters = fresh.chapters
+        ep.tail = trim.tail_seconds(fresh.tracks)
 
     # ------------------------------------------------------- главы Matroska --
     def _chapters_plan(self, scope):
