@@ -22,7 +22,6 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from tkinter.scrolledtext import ScrolledText
 
 import chapters
 import core
@@ -249,11 +248,18 @@ class App:
                                      command=self.cancel_event.set)
         self.cancel_btn.pack(side="left")
 
-        self.log = ScrolledText(self.root, height=7, state="disabled", wrap="word")
+        # Полоса прокрутки — ttk, как у таблиц. ScrolledText ставит классическую
+        # tk.Scrollbar, а та в тёмной теме macOS рисуется белым столбом.
+        log_f = ttk.Frame(self.root)
+        self.log = tk.Text(log_f, height=7, state="disabled", wrap="word")
+        log_sb = ttk.Scrollbar(log_f, orient="vertical", command=self.log.yview)
+        self.log.configure(yscrollcommand=log_sb.set)
+        self.log.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="left", fill="y")
         # Прижаты к низу и упакованы раньше вкладок. Когда окну не хватает
         # высоты, pack урезает упакованное последним — раньше это были прогресс,
         # «Отмена» и лог, и на экране ноутбука они не показывались вовсе.
-        self.log.pack(side="bottom", fill="x", padx=10, pady=(0, 10), before=self.nb)
+        log_f.pack(side="bottom", fill="x", padx=10, pady=(0, 10), before=self.nb)
         f.pack(side="bottom", fill="x", before=self.nb)
 
     # -------------------------------------------------------- вкладка EDL --
