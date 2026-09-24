@@ -1,0 +1,78 @@
+# CLAUDE.md — media-toolkit
+
+GUI подготовки медиатеки Kodi: метаданные и картинки с TMDb/Fanart.tv, раскладка папок и
+имён файлов, аудио/субтитры по умолчанию в MKV (`mkvpropedit`), русские субтитры
+(subliminal/OpenSubtitles), `.edl` для пропуска заставок. Python + Tkinter.
+Подробное описание — [README.md](README.md). Раньше жил в приватном репо `toolbox`
+(ещё раньше — `mkv-default-tracks`); история перенесена.
+
+**Репозиторий публичный** (лицензия MIT) — всё, что коммитится, видят все.
+
+## Личные заметки — `notes/`, не в этот репозиторий
+
+`notes/` — отдельный **приватный** репозиторий `BaldPanther/media-toolkit-notes`,
+склонированный внутрь этой папки и исключённый `.gitignore`. Там TODO, планы,
+EDL-заметки, разборы конкретных сериалов — всё личное и рабочее.
+
+- В публичный репозиторий — только то, что нужно пользователю или разработчику:
+  README, инструкции, код, тесты, этот файл.
+- Заметки коммитятся в `notes/` отдельно (`git -C notes commit …`, `git -C notes push`).
+- Нет `notes/` (свежий клон) — `git clone https://github.com/BaldPanther/media-toolkit-notes.git notes`.
+
+## Где запускается
+
+Одна кодовая база — три способа запуска, логика и интерфейс общие:
+
+- **Windows / macOS из исходников** — `python app.py`; ярлыки `make_shortcut.ps1` / `make_app.sh`.
+- **Docker** (план) — тот же Tkinter-интерфейс в браузере через noVNC, для ZimaOS и любого
+  сервера: обработка идёт рядом с медиатекой, без копирования по Wi-Fi. Один образ, два
+  compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
+  `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
+  `/DATA/AppData/…`, `/media`).
+- **Сборки** (план) — GitHub Actions по тегу: Windows и macOS через PyInstaller,
+  Docker-образ в GHCR (`ghcr.io/baldpanther/media-toolkit`, amd64 + arm64).
+
+Код держать кроссплатформенным: Windows-специфику закрывать `os.name == "nt"` /
+`sys.platform == "win32"`, внешние бинарники искать через `shutil.which` (+ запасные
+папки brew — см. `edl._TOOL_DIRS`), а не по зашитым путям. Linux (Docker) идёт по
+тем же веткам, что и macOS.
+
+## Настройки пользователя
+
+Лежат не в папке программы, а в каталоге ОС — см. `paths.py`
+(`~/Library/Application Support/media-toolkit/`, `%APPDATA%\media-toolkit\`,
+`$XDG_CONFIG_HOME/media-toolkit/`). Обновление программы их не трогает; в Docker
+этот каталог выносится в volume `/config`.
+
+- Каждое поле читается отдельно с дефолтом (`d.get(key, default)`) — новые поля
+  добавлять так же, тогда старые файлы настроек читаются новой версией.
+- **Поля не переименовывать** без переноса старого значения — иначе при обновлении
+  оно молча потеряется (там ключи API и пароль OpenSubtitles).
+
+## Стек
+
+**Python 3 + обычный Tkinter/ttk**, стандартная светлая тема, **системный шрифт**
+(не переопределять), без bold (заголовки секций — `ttk.LabelFrame`), списки/таблицы —
+`ttk.Treeview`. Внешние CLI (ffmpeg, mkvpropedit, fpcalc) — через `subprocess`.
+
+⚠ **Tkinter на macOS:** системный Python 3.9 идёт с Tcl/Tk **8.5** — ttk в нём выглядит
+плохо. Нужен Python с Tk 8.6+ (`brew install python-tk@3.14`).
+
+Иконки: `assets/app-icon.png` (для `Tk.iconphoto`), `assets/app-icon.ico` (Windows,
+кадры 16–256), крупный исходник `assets/app-icon-source.png` (из него `make_app.sh`
+собирает `.icns`). Для главного окна — `root.iconbitmap(str(ico_path))`, **не**
+`iconbitmap(default=…)`; ссылку на `PhotoImage` хранить всё время жизни окна.
+
+## Тесты
+
+```bash
+python -m pytest tests/ -q
+```
+Не трогают реальные MKV и не ходят в сеть (кроме `test_trim.py`, который сам собирает
+маленький MKV, если есть ffmpeg и mkvmerge).
+
+## Git
+- Commit format: `<type>: <description>` (`fix`/`add`/`update`/`refactor`/`docs`).
+- **Коммитить по ходу работы**, не копить: закончил осмысленный кусок — закоммитил.
+  Дерево после каждого коммита рабочее, тесты зелёные.
+- Работаем прямо в `main`.
