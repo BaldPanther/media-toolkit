@@ -65,7 +65,7 @@ jobs:
           Compress-Archive -Path "dist/Media Toolkit" -DestinationPath "MediaToolkit-windows-x64.zip"
       - uses: actions/upload-artifact@v7
         with:
-          name: windows
+          name: build-windows
           path: MediaToolkit-windows-x64.zip
 
   macos:
@@ -95,7 +95,7 @@ jobs:
           ditto -c -k --sequesterRsrc pack MediaToolkit-macos-arm64.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: macos
+          name: build-macos
           path: MediaToolkit-macos-arm64.zip
 
   docker:
@@ -105,6 +105,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: false  # отчёт сборки не нужен в артефактах прогона
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -160,8 +162,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Только архивы сборок: build-push-action кладёт в прогон ещё и свой отчёт .dockerbuild.
       - uses: actions/download-artifact@v8
         with:
+          pattern: build-*
           path: dist
           merge-multiple: true
       - name: Релиз
