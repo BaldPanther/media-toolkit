@@ -2726,6 +2726,10 @@ class App:
 
 
 def main():
+    # `--selfcheck <отчёт>`: проверить зависимости без окна (нужно сборкам) — selfcheck.py.
+    if len(sys.argv) > 2 and sys.argv[1] == "--selfcheck":
+        import selfcheck
+        sys.exit(selfcheck.run(sys.argv[2]))
     # Приоритет: последний путь (если он есть и папка доступна) → аргумент запуска
     # (ярлык подставляет дефолтный путь) → пусто.
     last = load_app_settings().get("last_path", "")
