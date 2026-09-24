@@ -465,6 +465,16 @@ python app.py "Y:\Сериал\Season 01"    # подставить папку (
 > а не `run.bat`. Пересоздать ярлыки: `powershell -File make_shortcut.ps1`.
 > Скрипт берёт иконку из `assets\app-icon.ico`; она же используется в окне приложения.
 
+На macOS ярлык-приложение собирает `make_app.sh`: кладёт «Media Toolkit.app» в
+`~/Applications` (Spotlight, Launchpad и Dock его видят), внутри — тонкая обёртка вокруг
+`python app.py`. Нужен Python с Tk 8.6+ (`brew install python-tk@3.14`) — у системного
+питона Tk 8.5, и ttk в нём выглядит плохо.
+
+```bash
+bash make_app.sh      # путь к проекту зашивается при сборке: перенёс папку — пересобери
+```
+Если приложение не открылось, причина — в `~/Library/Logs/Media Toolkit.log`.
+
 ### Порядок работы в окне
 
 1. Указать папку → **Сканировать**.
@@ -799,8 +809,9 @@ ffmpeg вынужден прочитать весь нужный кусок **в
 ### Требования для автодетекта
 
 - **ffmpeg** — `brew install ffmpeg` / в `PATH` на Windows (декодирование аудио).
-- **fpcalc** (Chromaprint) — `brew install chromaprint`; на Windows портативный
-  `fpcalc.exe` уже лежит в `assets/`, как вариант `choco install chromaprint`.
+- **fpcalc** (Chromaprint) — `brew install chromaprint`; на Windows скачать портативный
+  `fpcalc.exe` с [acoustid.org/chromaprint](https://acoustid.org/chromaprint) и положить
+  в `assets/` (в репозиторий он не входит), как вариант `choco install chromaprint`.
 - **numpy** (`pip install numpy`) — сравнение отпечатков.
 
 Оба бинарника ищутся сперва в `PATH`, затем в папках Homebrew (`/opt/homebrew/bin`,
@@ -873,8 +884,21 @@ ffmpeg-ом и mkvmerge-ом во временной папке; без этих
 
 - `paths.py` — где лежат файлы настроек (каталог ОС + перенос старых файлов).
 - `tests/` — юнит-тесты чистой логики (`python -m pytest tests/ -q`).
-- `assets/fpcalc.exe` — портативный Chromaprint для автодетекта.
+- `assets/fpcalc.exe` — портативный Chromaprint для автодетекта на Windows; в репозиторий не входит, кладётся вручную.
 - `requirements.txt` — необязательные зависимости (`subliminal`, `numpy`, `pillow`, `send2trash`).
 - `assets/app-icon.png`, `assets/app-icon.ico` — иконка окна и Windows-ярлыка.
 - `make_shortcut.ps1` — создаёт ярлыки «Media Toolkit» (стол + папка проекта) на `pythonw.exe`.
+- `make_app.sh` — собирает «Media Toolkit.app» в `~/Applications` на macOS.
 - `run.bat` — запуск GUI из `cmd` (двойной клик может блокироваться, см. «Запуск»).
+
+## Лицензия и источники данных
+
+Код распространяется под лицензией [MIT](LICENSE).
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+Метаданные и картинки — [The Movie Database (TMDB)](https://www.themoviedb.org/),
+дополнительный арт — [Fanart.tv](https://fanart.tv/), рейтинги — [OMDb](https://www.omdbapi.com/),
+тайминги заставок — [AniSkip](https://aniskip.com/) и [TheIntroDB](https://theintrodb.org/),
+вспомогательные данные о сериях — [TVmaze](https://www.tvmaze.com/) (CC BY-SA) и
+[Jikan](https://jikan.moe/) (MyAnimeList).
+Ключи API у каждого пользователя свои (см. «Ключи API»).
