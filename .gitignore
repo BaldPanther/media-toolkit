@@ -18,6 +18,7 @@ notes/
 # Портативный Chromaprint для Windows: чужой бинарник, в репозиторий не кладём.
 # Кто запускает из исходников — скачивает сам (см. README, «Требования для автодетекта»).
 assets/fpcalc.exe
+assets/fpcalc
 
 .pytest_cache/
 
@@ -25,3 +26,7 @@ assets/fpcalc.exe
 config/
 media/
 .env
+
+# Сборки PyInstaller
+build/
+dist/

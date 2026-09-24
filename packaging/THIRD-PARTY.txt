@@ -1,0 +1,22 @@
+Media Toolkit — MIT License, https://github.com/BaldPanther/media-toolkit
+
+This build bundles third-party components under their own licenses.
+Source code of each is available at the linked project pages.
+
+Python ............ PSF-2.0          https://www.python.org/
+Tcl/Tk ............ Tcl/Tk License   https://www.tcl.tk/
+numpy ............. BSD-3-Clause     https://numpy.org/
+Pillow ............ MIT-CMU          https://python-pillow.org/
+Send2Trash ........ BSD-3-Clause     https://github.com/arsenetar/send2trash
+subliminal ........ MIT              https://github.com/Diaoul/subliminal
+guessit ........... LGPL-3.0+        https://github.com/guessit-io/guessit
+rebulk, knowit, trakit, enzyme, pymediainfo, dogpile.cache, srt, pysubs2,
+charset-normalizer, urllib3, platformdirs, PyYAML ...... MIT
+babelfish, click, idna ................................. BSD
+requests, stevedore .................................... Apache-2.0
+certifi ................................................ MPL-2.0
+PyInstaller bootloader ... GPL-2.0 with bootloader exception
+
+Windows build only:
+fpcalc (Chromaprint) ... LGPL-2.1 (MIT code + parts of FFmpeg, LGPL-2.1)
+                         https://acoustid.org/chromaprint
