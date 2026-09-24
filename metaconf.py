@@ -7,7 +7,6 @@
 """
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass, field
 
 import paths
@@ -121,10 +120,9 @@ def name_language_for(settings, kind: str, tmdb_id) -> str:
 
 
 def load_settings() -> Settings:
-    path = paths.settings_path(_SETTINGS_NAME)
-    if path.is_file():
+    d = paths.read_json(paths.settings_path(_SETTINGS_NAME))
+    if isinstance(d, dict):
         try:
-            d = json.loads(path.read_text("utf-8"))
             base = Settings()
             return Settings(
                 tmdb_key=str(d.get("tmdb_key", "")),
@@ -143,11 +141,10 @@ def load_settings() -> Settings:
                 junk_action=str(d.get("junk_action", base.junk_action)),
                 extras_folder=str(d.get("extras_folder", base.extras_folder)),
             )
-        except Exception:  # noqa: BLE001 — нет файла/битый JSON: значения по умолчанию
+        except Exception:  # noqa: BLE001 — поле неожиданного типа: значения по умолчанию
             pass
     return Settings()
 
 
 def save_settings(s: Settings) -> None:
-    path = paths.settings_path(_SETTINGS_NAME)
-    path.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")
+    paths.write_json(paths.settings_path(_SETTINGS_NAME), asdict(s))

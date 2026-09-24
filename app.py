@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import math
 import queue
 import sys
@@ -45,16 +44,13 @@ _SETTINGS_NAME = "settings.json"
 
 
 def load_app_settings() -> dict:
-    try:
-        return json.loads(paths.settings_path(_SETTINGS_NAME).read_text("utf-8"))
-    except Exception:  # noqa: BLE001 — нет файла/битый JSON: просто пустые настройки
-        return {}
+    d = paths.read_json(paths.settings_path(_SETTINGS_NAME))
+    return d if isinstance(d, dict) else {}  # нет файла/битый JSON: просто пустые настройки
 
 
 def save_app_settings(data: dict) -> None:
     try:
-        path = paths.settings_path(_SETTINGS_NAME)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        paths.write_json(paths.settings_path(_SETTINGS_NAME), data)
     except Exception:  # noqa: BLE001 — не критично, просто не сохранили
         pass
 

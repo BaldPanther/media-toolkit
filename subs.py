@@ -15,7 +15,6 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -56,10 +55,9 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    path = paths.settings_path(_SETTINGS_NAME)
-    if path.is_file():
+    d = paths.read_json(paths.settings_path(_SETTINGS_NAME))
+    if isinstance(d, dict):
         try:
-            d = json.loads(path.read_text("utf-8"))
             return Settings(
                 username=d.get("username", ""),
                 password=d.get("password", ""),
@@ -72,8 +70,7 @@ def load_settings() -> Settings:
 
 
 def save_settings(s: Settings) -> None:
-    path = paths.settings_path(_SETTINGS_NAME)
-    path.write_text(json.dumps(asdict(s), ensure_ascii=False, indent=2), "utf-8")
+    paths.write_json(paths.settings_path(_SETTINGS_NAME), asdict(s))
 
 
 def providers_for(s: Settings) -> list[str]:
