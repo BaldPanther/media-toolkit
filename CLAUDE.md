@@ -29,8 +29,8 @@ EDL-заметки, разборы конкретных сериалов — в�
   compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
   `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
   `/DATA/AppData/…`, `/media`).
-- **Сборки** (план) — GitHub Actions по тегу: Windows и macOS через PyInstaller,
-  Docker-образ в GHCR (`ghcr.io/baldpanther/media-toolkit`, amd64 + arm64).
+- **Сборки** — GitHub Actions по тегу: Windows и macOS через PyInstaller,
+  Docker-образ в GHCR (`ghcr.io/baldpanther/media-toolkit`, amd64 + arm64). См. «Релиз».
 
 Код держать кроссплатформенным: Windows-специфику закрывать `os.name == "nt"` /
 `sys.platform == "win32"`, внешние бинарники искать через `shutil.which` (+ запасные
@@ -58,6 +58,26 @@ EDL-заметки, разборы конкретных сериалов — в�
   ```
 - Скриншот экрана контейнера (проверить UI без браузера):
   `docker exec -u 1000 <имя> /opt/venv/bin/python -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay=':0').save('/tmp/s.png')"`.
+
+## Релиз
+
+```bash
+git tag v1.2.0 && git push origin v1.2.0
+```
+`.github/workflows/release.yml`: тесты → сборки Windows (zip), macOS arm64 (zip с .app),
+Docker (теги `1.2.0`, `1.2`, `latest`) → GitHub Release с файлами. Ручной запуск
+(`gh workflow run release`) — те же сборки без релиза, образ с тегом `dev`.
+
+- Сборка — `packaging/media-toolkit.spec` (одна на обе ОС). Локально на маке:
+  `pip install pyinstaller -r requirements.txt && pyinstaller --noconfirm packaging/media-toolkit.spec`.
+- Каждая сборка проверяется `--selfcheck` (`selfcheck.py`): зависимости дёргаются
+  по-настоящему, отчёт в файл. **Новая зависимость → добавить её проверку в
+  `selfcheck.default_checks()`**, а модули, которые она грузит по имени, — в
+  `hiddenimports`/`collect_all` спеки. Иначе сборка «зелёная», а кнопка падает.
+- `fpcalc.exe` в Windows-сборку скачивается из релизов Chromaprint (`FPCALC_VERSION`
+  в workflow); на macOS — из brew, как ffmpeg и MKVToolNix.
+- К архивам прикладываются `LICENSE` и `packaging/THIRD-PARTY.txt` — при новой
+  зависимости дописать её лицензию туда.
 
 ## Настройки пользователя
 
