@@ -1,0 +1,173 @@
+# Сборки по тегу vX.Y.Z: Windows (zip), macOS (zip с .app), Docker-образ в GHCR
+# (amd64 + arm64) — и релиз на GitHub со всеми файлами.
+#
+# Ручной запуск (Actions → release → Run workflow) — те же сборки и проверки без
+# релиза; Docker-образ уходит с тегом `dev`. Так проверяют, что всё собирается.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/baldpanther/media-toolkit
+  FPCALC_VERSION: "1.6.1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      # test_trim собирает настоящий маленький MKV — нужны ffmpeg и mkvmerge.
+      - run: sudo apt-get update -q && sudo apt-get install -y -q mkvtoolnix ffmpeg
+      - run: pip install pytest -r requirements.txt
+      - run: python -m pytest tests -q
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Версия из тега
+        shell: bash
+        run: echo "MT_VERSION=$( [ "$GITHUB_REF_TYPE" = tag ] && echo "${GITHUB_REF_NAME#v}" || echo 0.0.0 )" >> "$GITHUB_ENV"
+      - name: fpcalc (Chromaprint) — в сборку
+        shell: pwsh
+        run: |
+          $v = $env:FPCALC_VERSION
+          Invoke-WebRequest "https://github.com/acoustid/chromaprint/releases/download/v$v/chromaprint-fpcalc-$v-windows-x86_64.zip" -OutFile fpcalc.zip
+          Expand-Archive fpcalc.zip -DestinationPath fpcalc
+          Copy-Item (Get-ChildItem fpcalc -Recurse -Filter fpcalc.exe | Select-Object -First 1).FullName assets/fpcalc.exe
+      - run: pip install pyinstaller -r requirements.txt
+      - run: pyinstaller --noconfirm packaging/media-toolkit.spec
+      - name: Самопроверка сборки
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/Media Toolkit/Media Toolkit.exe" -ArgumentList "--selfcheck", "$PWD/selfcheck.txt" -Wait -PassThru
+          Get-Content selfcheck.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Архив
+        shell: pwsh
+        run: |
+          Copy-Item LICENSE, packaging/THIRD-PARTY.txt "dist/Media Toolkit/"
+          Compress-Archive -Path "dist/Media Toolkit" -DestinationPath "MediaToolkit-windows-x64.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: MediaToolkit-windows-x64.zip
+
+  macos:
+    needs: test
+    runs-on: macos-latest  # Apple Silicon
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Версия из тега
+        run: echo "MT_VERSION=$( [ "$GITHUB_REF_TYPE" = tag ] && echo "${GITHUB_REF_NAME#v}" || echo 0.0.0 )" >> "$GITHUB_ENV"
+      - run: pip install pyinstaller -r requirements.txt
+      - run: pyinstaller --noconfirm packaging/media-toolkit.spec
+      - name: Самопроверка сборки
+        run: |
+          code=0
+          "dist/Media Toolkit.app/Contents/MacOS/Media Toolkit" --selfcheck "$PWD/selfcheck.txt" || code=$?
+          cat selfcheck.txt
+          exit $code
+      - name: Архив
+        run: |
+          mkdir pack
+          ditto "dist/Media Toolkit.app" "pack/Media Toolkit.app"
+          cp LICENSE packaging/THIRD-PARTY.txt pack/
+          ditto -c -k --sequesterRsrc pack MediaToolkit-macos-arm64.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: MediaToolkit-macos-arm64.zip
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      # Сначала amd64 локально — и проверка внутри живого контейнера (с X-сервером,
+      # иначе tkinter не поднять), потом мультиарх-сборка из того же кэша.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: media-toolkit:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Самопроверка в контейнере
+        run: |
+          docker run -d --name mt media-toolkit:ci
+          for _ in $(seq 1 30); do docker exec mt test -S /tmp/.X11-unix/X0 && break; sleep 2; done
+          code=0
+          docker exec -u 1000:1000 -e DISPLAY=:0 mt /opt/venv/bin/python /app/app.py --selfcheck /tmp/selfcheck.txt || code=$?
+          docker exec mt cat /tmp/selfcheck.txt
+          docker rm -f mt
+          exit $code
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [windows, macos, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "Media Toolkit $GITHUB_REF_NAME" --generate-notes
