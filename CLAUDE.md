@@ -24,7 +24,7 @@ EDL-заметки, разборы конкретных сериалов — в�
 Одна кодовая база — три способа запуска, логика и интерфейс общие:
 
 - **Windows / macOS из исходников** — `python app.py`; ярлыки `make_shortcut.ps1` / `make_app.sh`.
-- **Docker** (план) — тот же Tkinter-интерфейс в браузере через noVNC, для ZimaOS и любого
+- **Docker** — тот же Tkinter-интерфейс в браузере через noVNC, для ZimaOS и любого
   сервера: обработка идёт рядом с медиатекой, без копирования по Wi-Fi. Один образ, два
   compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
   `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
@@ -36,6 +36,28 @@ EDL-заметки, разборы конкретных сериалов — в�
 `sys.platform == "win32"`, внешние бинарники искать через `shutil.which` (+ запасные
 папки brew — см. `edl._TOOL_DIRS`), а не по зашитым путям. Linux (Docker) идёт по
 тем же веткам, что и macOS.
+
+## Docker-образ
+
+База — `jlesage/baseimage-gui` (Debian 13, Python 3.13, Tk 8.6): X-сервер, openbox, noVNC
+на порту 5800. Приложение запускает `docker/startapp.sh` от пользователя `USER_ID:GROUP_ID`
+(по умолчанию 1000). `HOME=/config`, `XDG_*` указывают внутрь `/config` — поэтому
+`paths.py` сам кладёт настройки в volume, код под Docker не менялся.
+
+- Версию базы пинить точно (`debian-13-v4.14.0`), обновлять осознанно.
+- `docker/main-window-selection.xml` — на весь экран разворачивается только главное окно
+  (`Class=Tk`); без него openbox растягивает и все `Toplevel` (настройки, сетка постеров).
+- Локали `en_US`/`ru_RU` генерируются в образе: база объявляет `LANG=en_US.UTF-8`, но
+  локаль не ставит, и **mkvmerge падает на старте** (`_S_create_c_locale name not valid`).
+- `webbrowser.open` в контейнере ничего не откроет — браузера там нет.
+- Тесты внутри образа (там другие версии ffmpeg/MKVToolNix, чем на маке):
+  ```bash
+  docker build -t media-toolkit:dev .
+  docker run --rm --entrypoint sh -v "$PWD/tests:/app/tests:ro" media-toolkit:dev -c \
+    '/opt/venv/bin/pip install -q pytest && cd /app && /opt/venv/bin/python -m pytest tests -q'
+  ```
+- Скриншот экрана контейнера (проверить UI без браузера):
+  `docker exec -u 1000 <имя> /opt/venv/bin/python -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay=':0').save('/tmp/s.png')"`.
 
 ## Настройки пользователя
 
