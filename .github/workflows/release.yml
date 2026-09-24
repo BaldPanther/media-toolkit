@@ -22,15 +22,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Тот же Debian, что в Docker-образе: test_trim собирает настоящий маленький MKV,
+    # а MKVToolNix из Ubuntu 24.04 (v82) слишком стар — не отдаёт статистику дорожек.
+    container: debian:trixie
     steps:
+      - run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates python3 python3-venv mkvtoolnix ffmpeg
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-      # test_trim собирает настоящий маленький MKV — нужны ffmpeg и mkvmerge.
-      - run: sudo apt-get update -q && sudo apt-get install -y -q mkvtoolnix ffmpeg
-      - run: pip install pytest -r requirements.txt
-      - run: python -m pytest tests -q
+      - run: python3 -m venv /tmp/venv && /tmp/venv/bin/pip install pytest -r requirements.txt
+      - run: /tmp/venv/bin/python -m pytest tests -q
 
   windows:
     needs: test

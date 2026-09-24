@@ -277,6 +277,11 @@ def _make_mkv(tmp: Path, audio_len: float) -> Path:
 def test_trim_real_file(tmp_path):
     path = _make_mkv(tmp_path, audio_len=8)
     before = trim.identify(TOOLS.mkvmerge, path)
+    if not any(t["properties"].get("tag_duration") for t in before["tracks"]):
+        # Статистику дорожек mkvmerge пишет всегда, но старый не отдаёт её в -J —
+        # сверять концы дорожек после обрезки не по чему.
+        pytest.skip("mkvmerge не отдаёт tag_duration в -J — старый MKVToolNix "
+                    "(так у v82 из Ubuntu 24.04; v92 из Debian 13 отдаёт)")
     assert before["container"]["properties"]["duration"] / 1e9 > 7.9
 
     seen = []
