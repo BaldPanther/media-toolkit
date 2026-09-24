@@ -67,6 +67,8 @@ git tag v1.2.0 && git push origin v1.2.0
 `.github/workflows/release.yml`: тесты → сборки Windows (zip), macOS arm64 (zip с .app),
 Docker (теги `1.2.0`, `1.2`, `latest`) → GitHub Release с файлами. Ручной запуск
 (`gh workflow run release`) — те же сборки без релиза, образ с тегом `dev`.
+Тег с дефисом (`v1.2.0-rc.1`) — пробная версия: pre-release, образ без `latest`.
+Compose-файлы тянут `:latest` — пока нет ни одного настоящего релиза, ставить не из чего.
 
 - Сборка — `packaging/media-toolkit.spec` (одна на обе ОС). Локально на маке:
   `pip install pyinstaller -r requirements.txt && pyinstaller --noconfirm packaging/media-toolkit.spec`.
