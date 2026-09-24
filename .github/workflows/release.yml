@@ -142,7 +142,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' }}
       - uses: docker/build-push-action@v7
         with:
@@ -171,6 +171,8 @@ jobs:
       - name: Релиз
         env:
           GH_TOKEN: ${{ github.token }}
+        # Тег с дефисом (v1.2.0-rc.1) — пробная версия: pre-release и без `latest` у образа.
         run: |
+          pre=(); [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "Media Toolkit $GITHUB_REF_NAME" --generate-notes
+            --title "Media Toolkit $GITHUB_REF_NAME" --generate-notes "${pre[@]}"
