@@ -1,0 +1,38 @@
+# Media Toolkit в Docker — на любом сервере с Docker.
+# Интерфейс открывается в браузере: http://<адрес-сервера>:5800
+#
+# Запуск (путь к медиатеке — свой):
+#   MEDIA_DIR=/srv/media docker compose up -d
+# или впишите значения в файл .env рядом с этим:
+#   MEDIA_DIR=/srv/media
+#   USER_ID=1000
+#   GROUP_ID=1000
+# Обновление до свежей версии:
+#   docker compose pull && docker compose up -d
+#
+# Для ZimaOS — docker-compose.zimaos.yaml (тот же образ, пути ZimaOS и иконка в App Store).
+
+name: media-toolkit
+
+services:
+  media-toolkit:
+    image: ghcr.io/baldpanther/media-toolkit:latest
+    container_name: media-toolkit
+    restart: unless-stopped
+    ports:
+      - "5800:5800"
+    volumes:
+      # Настройки, ключи API и кэш — переживают обновление образа.
+      - ./config:/config:rw
+      # Медиатека. Внутри контейнера она видна как /media.
+      - ${MEDIA_DIR:-./media}:/media:rw
+    environment:
+      # Владелец файлов медиатеки на сервере (команда `id <пользователь>`):
+      # от его имени программа переименовывает файлы и пишет .nfo, .edl, картинки.
+      - USER_ID=${USER_ID:-1000}
+      - GROUP_ID=${GROUP_ID:-1000}
+      - TZ=${TZ:-Etc/UTC}
+      # Если окно программы закрыли — открыть заново.
+      - KEEP_APP_RUNNING=1
+      # Пароль на вход в интерфейс. Без него программу откроет любой в вашей сети.
+      # - VNC_PASSWORD=придумайте-пароль

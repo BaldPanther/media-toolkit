@@ -20,3 +20,8 @@ notes/
 assets/fpcalc.exe
 
 .pytest_cache/
+
+# Данные локального запуска docker compose (настройки контейнера, тестовая медиатека).
+config/
+media/
+.env

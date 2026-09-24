@@ -1,0 +1,54 @@
+# Media Toolkit для ZimaOS / CasaOS: App Store → Custom Install → Import,
+# вставить этот файл целиком. Тот же образ, что в docker-compose.yaml; отличаются
+# только пути ZimaOS и метаданные x-casaos (название, иконка, порт).
+# Интерфейс — с иконки на рабочем столе ZimaOS или http://<адрес-NAS>:5800
+
+name: media-toolkit
+
+services:
+  media-toolkit:
+    image: ghcr.io/baldpanther/media-toolkit:latest
+    container_name: media-toolkit
+    restart: unless-stopped
+    ports:
+      - "5800:5800"
+    volumes:
+      # Настройки, ключи API и кэш — переживают обновление и переустановку.
+      - /DATA/AppData/media-toolkit:/config:rw
+      # Все накопители ZimaOS (каждая папка /media/<диск> — отдельный диск).
+      - /media:/media:rw
+    environment:
+      # Владелец файлов медиатеки (по SSH: ls -ln /media/<диск>): от его имени
+      # программа переименовывает файлы и пишет .nfo, .edl, картинки.
+      - USER_ID=1000
+      - GROUP_ID=1000
+      - KEEP_APP_RUNNING=1
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: media-toolkit
+  author: BaldPanther
+  category: Media
+  description:
+    en_us: Prepare a Kodi media library right on the NAS, next to the files - no copying over Wi-Fi. Metadata and artwork from TMDb and Fanart.tv, Kodi-style folder and file naming, default audio and subtitle tracks in MKV, Russian subtitles, and .edl files to skip intros and credits. Desktop app shown in the browser.
+    ru_ru: Подготовка медиатеки Kodi прямо на NAS, рядом с файлами — без копирования по Wi-Fi. Метаданные и картинки с TMDb и Fanart.tv, раскладка папок и имён под Kodi, дорожки по умолчанию в MKV, русские субтитры и .edl для пропуска заставок и титров. Интерфейс открывается в браузере.
+  developer: BaldPanther
+  icon: https://raw.githubusercontent.com/BaldPanther/media-toolkit/main/assets/app-icon-256.png
+  tagline:
+    en_us: Kodi media library toolkit on your NAS
+    ru_ru: Подготовка медиатеки Kodi на NAS
+  thumbnail: ""
+  title:
+    en_us: Media Toolkit
+    ru_ru: Media Toolkit
+  tips:
+    before_install:
+      en_us: |
+        The app runs as user 1000:1000. If your media files belong to another user, change USER_ID and GROUP_ID (check with `ls -ln /media/<disk>` over SSH). Settings and API keys are stored in /DATA/AppData/media-toolkit.
+      ru_ru: |
+        Программа работает от пользователя 1000:1000. Если файлы медиатеки принадлежат другому пользователю, поменяйте USER_ID и GROUP_ID (проверить по SSH: `ls -ln /media/<диск>`). Настройки и ключи API хранятся в /DATA/AppData/media-toolkit.
+  index: /
+  port_map: "5800"
+  scheme: http
