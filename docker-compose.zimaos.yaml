@@ -1,6 +1,7 @@
 # Media Toolkit для ZimaOS / CasaOS: App Store → Custom Install → Import,
 # вставить этот файл целиком. Тот же образ, что в docker-compose.yaml; отличаются
-# только пути ZimaOS и метаданные x-casaos (название, иконка, порт).
+# пути ZimaOS, метаданные x-casaos (название, иконка, порт) и автообновление
+# (сервис updater: ZimaOS сама приложения из Custom Install не обновляет).
 # Интерфейс — с иконки на рабочем столе ZimaOS или http://<адрес-NAS>:5800
 
 name: media-toolkit
@@ -24,6 +25,35 @@ services:
       - GROUP_ID=1000
       # Пароль на вход в интерфейс. Без него программу откроет любой в вашей сети.
       # - WEB_PASSWORD=придумайте-пароль
+    labels:
+      # За этим контейнером следит updater (ниже).
+      com.centurylinklabs.watchtower.scope: media-toolkit
+      # Перед обновлением: идёт операция (сканирование, обрезка…) — отложить до
+      # следующей проверки (код 75). Любой другой ответ или ошибка — обновлять.
+      com.centurylinklabs.watchtower.lifecycle.pre-update: >-
+        python -c "import json, urllib.request as r;
+        print(json.load(r.urlopen('http://127.0.0.1:5800/api/info', timeout=5)).get('busy'))"
+        2>/dev/null | grep -qx True && exit 75 || exit 0
+
+  # Автообновление (Watchtower): раз в сутки, в 4:00 UTC, проверяет, не вышла ли новая
+  # версия (образ :latest), и пересоздаёт media-toolkit с теми же настройками, старый
+  # образ удаляет. Трогает только контейнеры с меткой scope: media-toolkit — другие
+  # приложения не трогает. Для этого ему нужен доступ к Docker (docker.sock).
+  # Обновлять вручную — удалите этот сервис целиком.
+  updater:
+    image: ghcr.io/nicholas-fedor/watchtower:1
+    container_name: media-toolkit-updater
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_SCOPE=media-toolkit
+      - WATCHTOWER_SCHEDULE=0 0 4 * * *
+      - WATCHTOWER_LIFECYCLE_HOOKS=true
+      - WATCHTOWER_CLEANUP=true
+    labels:
+      # Та же метка — updater обновляет и сам себя.
+      com.centurylinklabs.watchtower.scope: media-toolkit
 
 x-casaos:
   architectures:
@@ -47,9 +77,9 @@ x-casaos:
   tips:
     before_install:
       en_us: |
-        The app runs as user 1000:1000. If your media files belong to another user, change USER_ID and GROUP_ID (check with `ls -ln /media/<disk>` over SSH). Settings and API keys are stored in /DATA/AppData/media-toolkit.
+        The app runs as user 1000:1000. If your media files belong to another user, change USER_ID and GROUP_ID (check with `ls -ln /media/<disk>` over SSH). Settings and API keys are stored in /DATA/AppData/media-toolkit. Updates install themselves: the updater service checks for a new version daily at 4:00 UTC (postponed while an operation is running).
       ru_ru: |
-        Программа работает от пользователя 1000:1000. Если файлы медиатеки принадлежат другому пользователю, поменяйте USER_ID и GROUP_ID (проверить по SSH: `ls -ln /media/<диск>`). Настройки и ключи API хранятся в /DATA/AppData/media-toolkit.
+        Программа работает от пользователя 1000:1000. Если файлы медиатеки принадлежат другому пользователю, поменяйте USER_ID и GROUP_ID (проверить по SSH: `ls -ln /media/<диск>`). Настройки и ключи API хранятся в /DATA/AppData/media-toolkit. Обновления ставятся сами: сервис updater раз в сутки, в 4:00 UTC, проверяет новую версию (во время операции — откладывает).
   index: /
   port_map: "5800"
   scheme: http

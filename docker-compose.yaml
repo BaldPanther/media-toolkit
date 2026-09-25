@@ -10,7 +10,8 @@
 # Обновление до свежей версии:
 #   docker compose pull && docker compose up -d
 #
-# Для ZimaOS — docker-compose.zimaos.yaml (тот же образ, пути ZimaOS и иконка в App Store).
+# Для ZimaOS — docker-compose.zimaos.yaml (тот же образ, пути ZimaOS, иконка в App Store
+# и автообновление).
 
 name: media-toolkit
 
