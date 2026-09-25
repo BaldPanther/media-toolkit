@@ -17,6 +17,7 @@ import hmac
 import json
 import os
 import secrets
+import signal
 import socket
 import sys
 import threading
@@ -245,6 +246,10 @@ def main(argv=None) -> int:
     start = last if last and Path(last).exists() else args.folder
 
     state = AppState(mode, start)
+    if server_mode:
+        # В Docker программа — процесс 1: без своего обработчика SIGTERM ядро его
+        # игнорирует, и docker stop (и автообновление) ждёт таймаута, а потом убивает.
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     serve(state, host, port, password,
           open_browser=not server_mode and not args.no_browser,
           idle_exit=0 if server_mode else IDLE_EXIT_S)
