@@ -93,10 +93,16 @@ def test_fs_lists_dirs_and_videos(client, tmp_path):
 
 def test_fs_roots_in_container_are_only_media(client, tmp_path, monkeypatch):
     media = tmp_path / "media"
-    media.mkdir()
+    (media / "tv").mkdir(parents=True)
     monkeypatch.setenv("MEDIA_ROOT", str(media))
     roots = client.get("/api/fs").get_json()["roots"]
     assert [r["path"] for r in roots] == [str(media)]
+    # Выше медиатеки не подняться: у неё самой нет «родителя», соседи недоступны.
+    assert client.get(f"/api/fs?path={media}").get_json()["parent"] == ""
+    assert client.get(f"/api/fs?path={media / 'tv'}").get_json()["parent"] == str(media)
+    outside = client.get(f"/api/fs?path={tmp_path}")
+    assert outside.status_code == 400
+    assert outside.get_json()["error"]["title"] == "Вне медиатеки"
 
 
 def test_path_change_and_busy_refusal(client, state, tmp_path):

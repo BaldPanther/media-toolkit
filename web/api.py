@@ -276,6 +276,11 @@ def browse():
         path = path.parent
     if not path.is_dir():
         raise UserError("Нет такой папки", str(path))
+    # В контейнере за пределами медиатеки смотреть нечего: там системные папки.
+    media = os.environ.get("MEDIA_ROOT", "").strip()
+    fence = Path(media).resolve() if media else None
+    if fence is not None and not path.resolve().is_relative_to(fence):
+        raise UserError("Вне медиатеки", f"Выбирать можно только внутри {fence}.")
     entries = []
     try:
         for child in path.iterdir():
@@ -294,7 +299,8 @@ def browse():
     except OSError as e:
         raise UserError("Папка недоступна", f"{path}: {e}")
     entries.sort(key=lambda e: (not e["dir"], e["name"].casefold()))
-    return jsonify({"path": str(path), "parent": _parent(path), "entries": entries,
+    parent = "" if fence is not None and path.resolve() == fence else _parent(path)
+    return jsonify({"path": str(path), "parent": parent, "entries": entries,
                     "roots": roots})
 
 

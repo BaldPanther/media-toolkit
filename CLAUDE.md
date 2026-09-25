@@ -1,8 +1,9 @@
 # CLAUDE.md — media-toolkit
 
-GUI подготовки медиатеки Kodi: метаданные и картинки с TMDb/Fanart.tv, раскладка папок и
+Подготовка медиатеки Kodi: метаданные и картинки с TMDb/Fanart.tv, раскладка папок и
 имён файлов, аудио/субтитры по умолчанию в MKV (`mkvpropedit`), русские субтитры
-(subliminal/OpenSubtitles), `.edl` для пропуска заставок. Python + Tkinter.
+(subliminal/OpenSubtitles), `.edl` для пропуска заставок. Python, интерфейс —
+веб-страница (Flask + HTML/CSS + Alpine.js, без сборки).
 Для пользователя — [README.md](README.md), подробности по вкладкам и устройству —
 [docs/](docs/). Раньше жил в приватном репо `toolbox` (ещё раньше — `mkv-default-tracks`);
 история перенесена.
@@ -34,8 +35,9 @@ EDL-заметки, разборы конкретных сериалов — в�
 
 Одна кодовая база — три способа запуска, логика и интерфейс общие:
 
-- **Windows / macOS из исходников** — `python app.py`; ярлыки `make_shortcut.ps1` / `make_app.sh`.
-- **Docker** — веб-интерфейс (`web/`, `python webapp.py --server`), для ZimaOS и любого
+- **Windows / macOS из исходников** — `python app.py`: сервер на `127.0.0.1:5800` и
+  страница в браузере по умолчанию; ярлыки `make_shortcut.ps1` / `make_app.sh`.
+- **Docker** — `python app.py --server` (слушает сеть), для ZimaOS и любого
   сервера: обработка идёт рядом с медиатекой, без копирования по Wi-Fi. Один образ, два
   compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
   `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
@@ -51,7 +53,7 @@ EDL-заметки, разборы конкретных сериалов — в�
 ## Docker-образ
 
 База — `python:3.13-slim-trixie` (Debian 13) + `mkvtoolnix`, `ffmpeg`, `libchromaprint-tools`
-из apt (`--no-install-recommends`). Запуск — `python /app/webapp.py --server` (веб-интерфейс,
+из apt (`--no-install-recommends`). Запуск — `python /app/app.py --server` (веб-интерфейс,
 порт 5800). `docker/entrypoint.sh` отдаёт `/config` пользователю `USER_ID:GROUP_ID` (по
 умолчанию 1000) и через `setpriv` запускает программу от него; `USER_ID=0` — от root.
 
@@ -108,17 +110,31 @@ Compose-файлы тянут `:latest` — пока нет ни одного н
 
 ## Стек
 
-**Python 3 + обычный Tkinter/ttk**, стандартная светлая тема, **системный шрифт**
-(не переопределять), без bold (заголовки секций — `ttk.LabelFrame`), списки/таблицы —
-`ttk.Treeview`. Внешние CLI (ffmpeg, mkvpropedit, fpcalc) — через `subprocess`.
+**Сервер** — Flask под `waitress` (`web/`), JSON API `/api/…`. Состояние (рабочая папка,
+скан, тайтл, тайминги) хранит сервер, страница его только показывает. Длинные операции —
+`web/jobs.py`: одна за раз, в потоке, с прогрессом и отменой; страница опрашивает
+`/api/status` раз в секунду. Вопросы «Продолжить?» — ответом `{"ask": …}` и повтором
+запроса с `answers` (`web/replies.py`). Внешние CLI (ffmpeg, mkvpropedit, fpcalc) — через
+`subprocess`.
 
-⚠ **Tkinter на macOS:** системный Python 3.9 идёт с Tcl/Tk **8.5** — ttk в нём выглядит
-плохо. Нужен Python с Tk 8.6+ (`brew install python-tk@3.14`).
+**Страница** — Jinja-шаблоны (`web/templates/`, по файлу на вкладку), свой CSS
+(`web/static/css/app.css`), Alpine.js одним файлом в `web/static/vendor/` — **без сборки и
+без Node.js**. Тёмная тема в духе ZimaOS, системный шрифт.
 
-Иконки: `assets/app-icon.png` (для `Tk.iconphoto`), `assets/app-icon.ico` (Windows,
-кадры 16–256), крупный исходник `assets/app-icon-source.png` (из него `make_app.sh`
-собирает `.icns`). Для главного окна — `root.iconbitmap(str(ico_path))`, **не**
-`iconbitmap(default=…)`; ссылку на `PhotoImage` хранить всё время жизни окна.
+- **Единый набор компонентов:** цвета, размеры и отступы — только из CSS-переменных в
+  начале `app.css`. У кнопок, полей и выпадающих списков одна высота (`--h`); кнопки
+  отличаются только цветом (`btn-primary` / обычная / `btn-danger` / `btn-ghost`).
+- Подписи кнопок и вкладок — по-русски; при правке менять и в `docs/` (дословно).
+- ⚠ Alpine снимает атрибут у `:disabled` только при `false`/`null`/`undefined`: число `0`
+  кнопку **выключает**. В `:disabled` — только булевы выражения (`… .length > 0`).
+- ⚠ Шаблоны Flask кэширует: после правки `web/templates/` сервер разработки перезапускать
+  (стили и скрипты подхватываются и так).
+- Проверка вида — Playwright с установленным браузером (только для разработки, в
+  `requirements.txt` не входит): `chromium.launch(executable_path=…)`.
+
+Иконки: `assets/app-icon-256.png` → `web/static/icons/icon-64.png` и `icon-192.png`
+(значок вкладки), `assets/app-icon.ico` (Windows, кадры 16–256), крупный исходник
+`assets/app-icon-source.png` (из него `make_app.sh` собирает `.icns`).
 
 ## Тесты
 
@@ -126,7 +142,9 @@ Compose-файлы тянут `:latest` — пока нет ни одного н
 python -m pytest tests/ -q
 ```
 Не трогают реальные MKV и не ходят в сеть (кроме `test_trim.py`, который сам собирает
-маленький MKV, если есть ffmpeg и mkvmerge).
+маленький MKV, если есть ffmpeg и mkvmerge). API веб-интерфейса — `tests/test_web_*.py`
+через тестовый клиент Flask; настройки в них подменяются на временную папку
+(`paths.config_dir`), настоящие не трогаются.
 
 ## Git
 - Commit format: `<type>: <description>` (`fix`/`add`/`update`/`refactor`/`docs`).
