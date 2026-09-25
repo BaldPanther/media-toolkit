@@ -28,8 +28,25 @@ def _tk():
 
 def _modules():
     import artwork, chapters, core, edl, fanart, library, metaconf, metadata  # noqa: F401, E401
-    import metaui, net, nfo, omdb, online, paths, pipeline, subs, theme, tmdb, trim  # noqa: F401, E401
+    import net, nfo, omdb, online, paths, pipeline, subs, tmdb, trim  # noqa: F401, E401
     return "ok"
+
+
+def _web():
+    """Сервер и страница: Flask поднимается, главная страница и API отвечают."""
+    import flask
+    import waitress  # noqa: F401 — им сервер слушает порт
+    from web import server
+    from web.state import AppState
+
+    app = server.create_app(AppState())
+    client = app.test_client()
+    for url in ("/", "/api/info", "/api/state", "/static/vendor/alpine.min.js",
+                "/static/js/core.js", "/static/css/app.css"):
+        code = client.get(url).status_code
+        if code != 200:
+            raise RuntimeError(f"{url} → {code}")
+    return f"Flask {flask.__version__}"
 
 
 def _numpy():
@@ -39,7 +56,7 @@ def _numpy():
 
 def _pillow():
     import PIL
-    from PIL import Image, ImageTk  # noqa: F401 — ImageTk: миниатюры в сетке постеров
+    from PIL import Image  # noqa: F401 — миниатюры в сетке постеров прежнего окна на Tk
     return PIL.__version__
 
 
@@ -100,10 +117,11 @@ def default_checks() -> list[tuple[str, object, bool]]:
     их ставит пользователь, поэтому они только в отчёте. fpcalc на Windows
     кладётся в сборку, на macOS — из brew, как ffmpeg и MKVToolNix."""
     return [
-        ("tkinter", _tk, True),
         ("модули программы", _modules, True),
+        ("веб-интерфейс", _web, True),
+        ("tkinter", _tk, False),
         ("numpy", _numpy, True),
-        ("Pillow", _pillow, True),
+        ("Pillow", _pillow, False),
         ("send2trash", _send2trash, True),
         ("subliminal", _subliminal, True),
         ("иконки", _assets, True),

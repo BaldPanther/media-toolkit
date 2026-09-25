@@ -35,7 +35,7 @@ EDL-заметки, разборы конкретных сериалов — в�
 Одна кодовая база — три способа запуска, логика и интерфейс общие:
 
 - **Windows / macOS из исходников** — `python app.py`; ярлыки `make_shortcut.ps1` / `make_app.sh`.
-- **Docker** — тот же Tkinter-интерфейс в браузере через noVNC, для ZimaOS и любого
+- **Docker** — веб-интерфейс (`web/`, `python webapp.py --server`), для ZimaOS и любого
   сервера: обработка идёт рядом с медиатекой, без копирования по Wi-Fi. Один образ, два
   compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
   `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
@@ -50,25 +50,24 @@ EDL-заметки, разборы конкретных сериалов — в�
 
 ## Docker-образ
 
-База — `jlesage/baseimage-gui` (Debian 13, Python 3.13, Tk 8.6): X-сервер, openbox, noVNC
-на порту 5800. Приложение запускает `docker/startapp.sh` от пользователя `USER_ID:GROUP_ID`
-(по умолчанию 1000). `HOME=/config`, `XDG_*` указывают внутрь `/config` — поэтому
-`paths.py` сам кладёт настройки в volume, код под Docker не менялся.
+База — `python:3.13-slim-trixie` (Debian 13) + `mkvtoolnix`, `ffmpeg`, `libchromaprint-tools`
+из apt (`--no-install-recommends`). Запуск — `python /app/webapp.py --server` (веб-интерфейс,
+порт 5800). `docker/entrypoint.sh` отдаёт `/config` пользователю `USER_ID:GROUP_ID` (по
+умолчанию 1000) и через `setpriv` запускает программу от него; `USER_ID=0` — от root.
 
-- Версию базы пинить точно (`debian-13-v4.14.0`), обновлять осознанно.
-- `docker/main-window-selection.xml` — на весь экран разворачивается только главное окно
-  (`Class=Tk`); без него openbox растягивает и все `Toplevel` (настройки, сетка постеров).
-- Локали `en_US`/`ru_RU` генерируются в образе: база объявляет `LANG=en_US.UTF-8`, но
-  локаль не ставит, и **mkvmerge падает на старте** (`_S_create_c_locale name not valid`).
-- `webbrowser.open` в контейнере ничего не откроет — браузера там нет.
+- Настройки — там же, где их держал прежний образ на `jlesage/baseimage-gui`:
+  `HOME=/config`, `XDG_CONFIG_HOME=/config/xdg/config`, `XDG_CACHE_HOME=/config/xdg/cache`.
+  **Эти пути не менять** — иначе после обновления пропадут введённые ключи и корни.
+- `MEDIA_ROOT=/media` — окно выбора папки не выходит за медиатеку; `MT_SERVER=1` — режим
+  сервера (слушать сеть, браузер не открывать, не выключаться самому).
+- `LANG=C.UTF-8` задан явно: без локали mkvmerge не открывает файлы с кириллицей в имени.
+- Пароль на вход — необязательная `WEB_PASSWORD`.
 - Тесты внутри образа (там другие версии ffmpeg/MKVToolNix, чем на маке):
   ```bash
   docker build -t media-toolkit:dev .
   docker run --rm --entrypoint sh -v "$PWD/tests:/app/tests:ro" media-toolkit:dev -c \
-    '/opt/venv/bin/pip install -q pytest && cd /app && /opt/venv/bin/python -m pytest tests -q'
+    'pip install -q pytest && cd /app && python -m pytest tests -q -p no:cacheprovider'
   ```
-- Скриншот экрана контейнера (проверить UI без браузера):
-  `docker exec -u 1000 <имя> /opt/venv/bin/python -c "from PIL import ImageGrab; ImageGrab.grab(xdisplay=':0').save('/tmp/s.png')"`.
 
 ## Релиз
 

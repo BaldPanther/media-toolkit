@@ -22,7 +22,8 @@ services:
       # программа переименовывает файлы и пишет .nfo, .edl, картинки.
       - USER_ID=1000
       - GROUP_ID=1000
-      - KEEP_APP_RUNNING=1
+      # Пароль на вход в интерфейс. Без него программу откроет любой в вашей сети.
+      # - WEB_PASSWORD=придумайте-пароль
 
 x-casaos:
   architectures:
@@ -32,7 +33,7 @@ x-casaos:
   author: BaldPanther
   category: Media
   description:
-    en_us: Prepare a Kodi media library right on the NAS, next to the files - no copying over Wi-Fi. Metadata and artwork from TMDb and Fanart.tv, Kodi-style folder and file naming, default audio and subtitle tracks in MKV, Russian subtitles, and .edl files to skip intros and credits. Desktop app shown in the browser.
+    en_us: Prepare a Kodi media library right on the NAS, next to the files - no copying over Wi-Fi. Metadata and artwork from TMDb and Fanart.tv, Kodi-style folder and file naming, default audio and subtitle tracks in MKV, Russian subtitles, and .edl files to skip intros and credits. Web interface in the browser.
     ru_ru: Подготовка медиатеки Kodi прямо на NAS, рядом с файлами — без копирования по Wi-Fi. Метаданные и картинки с TMDb и Fanart.tv, раскладка папок и имён под Kodi, дорожки по умолчанию в MKV, русские субтитры и .edl для пропуска заставок и титров. Интерфейс открывается в браузере.
   developer: BaldPanther
   icon: https://raw.githubusercontent.com/BaldPanther/media-toolkit/main/assets/app-icon-256.png

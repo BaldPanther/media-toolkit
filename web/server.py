@@ -192,7 +192,12 @@ def main(argv=None) -> int:
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--selfcheck", metavar="ОТЧЁТ",
+                        help="проверить зависимости и выйти (нужно сборкам) — selfcheck.py")
     args = parser.parse_args(argv)
+    if args.selfcheck:
+        import selfcheck
+        return selfcheck.run(args.selfcheck)
 
     server_mode = args.server or os.environ.get("MT_SERVER") == "1"
     mode = SERVER if server_mode else DESKTOP

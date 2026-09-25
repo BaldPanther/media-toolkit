@@ -9,3 +9,4 @@ __pycache__/
 assets/fpcalc.exe
 config/
 media/
+.venv/
