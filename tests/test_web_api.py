@@ -1,3 +1,6 @@
+import os
+import socket
+
 import pytest
 
 import metaconf
@@ -119,6 +122,21 @@ def test_path_change_and_busy_refusal(client, state, tmp_path):
     state.jobs.wait()
 
 
+def test_info_tells_busy_without_login(state, cfg):
+    # По нему автообновление в Docker (хук Watchtower) откладывает перезапуск.
+    app = server.create_app(state, password="пароль")
+    app.testing = True
+    c = app.test_client()
+    assert c.get("/api/info").get_json()["busy"] is False
+    import threading
+    gate = threading.Event()
+    state.jobs.start("Долгая", lambda job: gate.wait(5))
+    assert c.get("/api/info").get_json()["busy"] is True
+    gate.set()
+    state.jobs.wait()
+    assert c.get("/api/info").get_json()["busy"] is False
+
+
 def test_password_guards_api(state, cfg):
     app = server.create_app(state, password="пароль")
     app.testing = True
@@ -149,3 +167,38 @@ def test_ask_reply_roundtrip(state):
     assert [b["value"] for b in first["ask"]["buttons"]] == [None, True]
     second = c.post("/api/test-ask", json={"answers": {"go": True}}).get_json()
     assert second == {"ok": True}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="SIGTERM — сигнал POSIX")
+def test_server_mode_exits_on_sigterm(tmp_path):
+    # В Docker программа — процесс 1: без своего обработчика SIGTERM ядро его
+    # игнорирует, и docker stop (и автообновление) ждёт таймаута, а потом убивает.
+    import signal
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+    from pathlib import Path
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    env = {**os.environ, "HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "xdg")}
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.Popen([sys.executable, "app.py", "--server", "--host", "127.0.0.1",
+                             "--port", str(port)], cwd=root, env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/info", timeout=1)
+                break
+            except OSError:
+                time.sleep(0.1)
+        else:
+            pytest.fail("сервер не поднялся")
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=5) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
