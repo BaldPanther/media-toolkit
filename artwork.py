@@ -1,4 +1,4 @@
-"""Скачивание картинок медиатеки и кэш миниатюр для сетки выбора.
+"""Скачивание картинок медиатеки.
 
 Имена файлов — те же, что уже лежат в медиатеке после tinyMediaManager, иначе
 Kodi не подхватит: `poster.jpg`, `fanart.jpg`, `clearlogo.png`,
@@ -10,9 +10,6 @@ Kodi не подхватит: `poster.jpg`, `fanart.jpg`, `clearlogo.png`,
 """
 from __future__ import annotations
 
-import hashlib
-import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -141,34 +138,3 @@ def chosen_urls(tasks) -> tuple[dict, dict]:
         else:
             art[task.kind] = task.candidate.url
     return art, seasons
-
-
-# --------------------------------------------------------------------------- #
-# Кэш миниатюр для сетки выбора
-# --------------------------------------------------------------------------- #
-
-def cache_dir() -> Path:
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        return base / "media-toolkit" / "cache"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "media-toolkit"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "media-toolkit"
-
-
-def thumbnail_bytes(url: str) -> bytes:
-    """Миниатюра по URL с диск-кэшем: сетка выбора открывается повторно мгновенно."""
-    key = hashlib.sha1(url.encode("utf-8")).hexdigest()
-    path = cache_dir() / f"{key}{Path(url).suffix[:5] or '.img'}"
-    if path.is_file():
-        try:
-            return path.read_bytes()
-        except OSError:
-            pass
-    data = net.get_bytes(url)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-    except OSError:
-        pass          # кэш необязателен, без него просто медленнее
-    return data

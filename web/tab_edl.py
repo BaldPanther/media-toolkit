@@ -871,7 +871,6 @@ def delete_edl():
 @bp.post("/api/edl/write")
 def write_edl():
     t = _idle()
-    st = t.st
     data = replies.body()
     scope = t.scope(data)
     keep, to_end, pad = t.keep_first, t.outro_to_end, t.padding()
