@@ -139,9 +139,11 @@ Compose-файлы тянут `:latest`: после релиза на ZimaOS —
 - Проверка вида — Playwright с установленным браузером (только для разработки, в
   `requirements.txt` не входит): `chromium.launch(executable_path=…)`.
 
-Иконки: `assets/app-icon-256.png` → `web/static/icons/icon-64.png` и `icon-192.png`
-(значок вкладки), `assets/app-icon.ico` (Windows, кадры 16–256), крупный исходник
-`assets/app-icon-source.png` (из него `make_app.sh` собирает `.icns`).
+Иконки: `assets/app-icon.png` (1254 px, **прозрачные углы**) — из неё `assets/app-icon-256.png`
+(иконка в ZimaOS, по ссылке из `x-casaos`), `web/static/icons/icon-64.png` и `icon-192.png`
+(значок вкладки), `.icns` для macOS (`make_app.sh`, спека). `assets/app-icon.ico` — Windows,
+кадры 16–256. `assets/app-icon-source.png` — исходник на белом фоне, в сборки не идёт:
+углы у него белые (скругление — окружность, центр 214,7 px от края, радиус 215,2 px).
 
 ## Тесты
 

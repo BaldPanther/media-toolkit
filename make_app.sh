@@ -43,7 +43,7 @@ find_python() {
 # Берём самый крупный исходник: мельче 512 пикселей апскейл заметен на Retina.
 pick_icon_src() {
   local f
-  for f in app-icon-master.png app-icon-source.png app-icon.png; do
+  for f in app-icon-master.png app-icon.png; do
     [ -f "$HERE/assets/$f" ] && { echo "$HERE/assets/$f"; return 0; }
   done
   return 1

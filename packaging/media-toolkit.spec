@@ -46,7 +46,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-icon = os.path.join(ROOT, "assets", "app-icon.ico" if sys.platform == "win32" else "app-icon-source.png")
+icon = os.path.join(ROOT, "assets", "app-icon.ico" if sys.platform == "win32" else "app-icon.png")
 exe = EXE(
     pyz,
     a.scripts,
