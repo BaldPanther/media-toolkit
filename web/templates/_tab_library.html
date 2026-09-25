@@ -32,12 +32,12 @@
       <div class="field grow">
         <label for="l-query">Название <span class="faint">(или IMDb-ID вида tt2261227)</span></label>
         <input id="l-query" class="input" type="text" x-model="q" :disabled="busy" spellcheck="false"
-               @focus="typing = true" @change="form()" @keydown.enter.prevent="find()">
+               @focus="typing = true" @blur="typing = false" @change="form()" @keydown.enter.prevent="find()">
       </div>
       <div class="field">
         <label for="l-year">Год</label>
         <input id="l-year" class="input input-num" type="text" inputmode="numeric" x-model="y" :disabled="busy"
-               @focus="typing = true" @change="form()" @keydown.enter.prevent="find()">
+               @focus="typing = true" @blur="typing = false" @change="form()" @keydown.enter.prevent="find()">
       </div>
       <div class="field">
         <span class="label">&nbsp;</span>

@@ -12,7 +12,6 @@ from flask import Blueprint, current_app, jsonify
 
 import core
 from web import replies
-from web.api import start_scan
 from web.replies import Info, UserError
 
 bp = Blueprint("tracks", __name__)
@@ -210,15 +209,6 @@ def apply():
 
     job = st.jobs.start("Применение дорожек", work, on_done=done)
     return jsonify({"job": job.to_dict()})
-
-
-@bp.post("/api/tracks/rescan")
-def rescan():
-    st = tab().st
-    st.jobs.ensure_idle()
-    if not st.path:
-        raise Info("Нет папки", "Сначала выберите папку.")
-    return jsonify({"job": start_scan(st, st.path, st.recursive, rescan=True).to_dict()})
 
 
 @bp.post("/api/tracks/subs")
