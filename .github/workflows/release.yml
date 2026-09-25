@@ -79,7 +79,8 @@ jobs:
           python-version: "3.14"
       - name: Версия из тега
         run: echo "MT_VERSION=$( [ "$GITHUB_REF_TYPE" = tag ] && echo "${GITHUB_REF_NAME#v}" || echo 0.0.0 )" >> "$GITHUB_ENV"
-      - run: pip install pyinstaller -r requirements.txt
+      # Pillow — только чтобы PyInstaller сделал из PNG значок .icns; в .app он не попадает.
+      - run: pip install pyinstaller pillow -r requirements.txt
       - run: pyinstaller --noconfirm packaging/media-toolkit.spec
       - name: Самопроверка сборки
         run: |

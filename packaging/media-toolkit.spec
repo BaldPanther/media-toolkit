@@ -1,6 +1,6 @@
 # PyInstaller: сборка Media Toolkit — папка с exe на Windows, .app на macOS.
 #
-#   pip install pyinstaller -r requirements.txt
+#   pip install pyinstaller -r requirements.txt   (на macOS ещё pillow: PNG → .icns)
 #   pyinstaller --noconfirm packaging/media-toolkit.spec
 #
 # Версия — из переменной MT_VERSION (GitHub Actions подставляет тег).

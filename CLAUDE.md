@@ -83,7 +83,8 @@ Docker (теги `1.2.0`, `1.2`, `latest`) → GitHub Release с файлами.
 Compose-файлы тянут `:latest` — пока нет ни одного настоящего релиза, ставить не из чего.
 
 - Сборка — `packaging/media-toolkit.spec` (одна на обе ОС). Локально на маке:
-  `pip install pyinstaller -r requirements.txt && pyinstaller --noconfirm packaging/media-toolkit.spec`.
+  `pip install pyinstaller pillow -r requirements.txt && pyinstaller --noconfirm packaging/media-toolkit.spec`.
+  Pillow нужен только сборщику — сделать `.icns` из PNG (без него BUNDLE падает).
 - Каждая сборка проверяется `--selfcheck` (`selfcheck.py`): зависимости дёргаются
   по-настоящему, отчёт в файл. **Новая зависимость → добавить её проверку в
   `selfcheck.default_checks()`**, а модули, которые она грузит по имени, — в
