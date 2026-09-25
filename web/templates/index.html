@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Media Toolkit</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/icon-64.png">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ v }}">
+  <script src="/static/js/core.js?v={{ v }}"></script>
+  <script src="/static/js/app.js?v={{ v }}"></script>
+  <script src="/static/js/tracks.js?v={{ v }}"></script>
+  <script src="/static/js/library.js?v={{ v }}"></script>
+  <script src="/static/js/edl.js?v={{ v }}"></script>
+  <script defer src="/static/vendor/alpine.min.js?v={{ v }}"></script>
+</head>
+<body x-data="app" @keydown.window="if ($store.ui.key($event)) $event.preventDefault()">
+{% include "_icons.html" %}
+<div class="app" x-cloak>
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="/static/icons/icon-64.png" alt="">
+      <span>Media Toolkit</span>
+    </div>
+    <nav class="tabs">
+      <template x-for="t in tabsList" :key="t.id">
+        <button type="button" :class="{ on: tab === t.id }" @click="setTab(t.id)" x-text="t.label"></button>
+      </template>
+    </nav>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost btn-icon" title="Настройки"
+              @click="$dispatch('open-settings', {})">
+        <svg class="icon icon-lg"><use href="#i-gear"/></svg>
+      </button>
+      <button type="button" class="btn btn-ghost btn-icon" title="Выйти" x-show="$store.app.info.auth"
+              @click="logout()">
+        <svg class="icon icon-lg"><use href="#i-logout"/></svg>
+      </button>
+      <button type="button" class="btn btn-ghost btn-icon" title="Выключить программу"
+              x-show="$store.app.info.mode === 'desktop'" @click="shutdown()">
+        <svg class="icon icon-lg"><use href="#i-power"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="notice danger" style="margin: 12px 20px 0" x-show="!$store.app.connected">
+    <svg class="icon"><use href="#i-offline"/></svg>
+    <div>Нет связи с программой. Если её выключили — запустите снова; страница подхватит её сама.</div>
+  </div>
+
+  <!-- Папка — общая для всех вкладок, как строка вверху прежнего окна. -->
+  <section class="folderbar">
+    <div class="card">
+      <div class="row folder-row">
+        <input class="input grow mono" type="text" placeholder="Папка сериала или фильма — вставьте путь или нажмите «Обзор…»"
+               x-model="pathInput" @focus="pathFocused = true" @blur="commitPath()"
+               @keydown.enter.prevent="$event.target.blur()" :disabled="$store.app.busy"
+               spellcheck="false" aria-label="Папка">
+        <button type="button" class="btn" @click="browseFolder()" :disabled="$store.app.busy">
+          <svg class="icon"><use href="#i-folder"/></svg>Обзор…
+        </button>
+        <button type="button" class="btn" @click="browseFile()" :disabled="$store.app.busy"
+                title="Фильм, лежащий одним файлом без своей папки">
+          <svg class="icon"><use href="#i-film"/></svg>Файл…
+        </button>
+        <label class="check" :class="{ disabled: $store.app.busy }" style="margin: 0 6px 0 4px">
+          <input type="checkbox" :checked="$store.app.workspace.recursive" :disabled="$store.app.busy"
+                 @change="setRecursive($event.target.checked)">
+          Включая вложенные папки
+        </label>
+        <button type="button" class="btn btn-primary" @click="scan()"
+                :disabled="$store.app.busy || !pathInput.trim()">
+          <svg class="icon"><use href="#i-scan"/></svg>Сканировать
+        </button>
+      </div>
+      <div class="summary" x-text="$store.app.workspace.summary"></div>
+    </div>
+  </section>
+
+  <main class="main">
+    <div x-show="tab === 'library'">{% include "_tab_library.html" %}</div>
+    <div x-show="tab === 'tracks'">{% include "_tab_tracks.html" %}</div>
+    <div x-show="tab === 'edl'">{% include "_tab_edl.html" %}</div>
+  </main>
+
+  <!-- Нижняя панель: ход операции, «Отмена», журнал. -->
+  <footer class="dock">
+    <div class="dock-bar">
+      <div class="dock-status">
+        <div class="spinner" x-show="$store.app.busy"></div>
+        <svg class="icon" x-show="!$store.app.busy && $store.app.status.last && $store.app.status.last.status === 'failed'"
+             style="color: var(--danger)"><use href="#i-alert"/></svg>
+        <div class="progress" x-show="$store.app.busy"
+             :class="{ indeterminate: $store.app.status.job && !$store.app.status.job.maximum }">
+          <div :style="{ width: progressWidth() }"></div>
+        </div>
+        <div class="dock-text" x-html="dockText()"></div>
+      </div>
+      <button type="button" class="btn btn-sm" x-show="$store.app.busy" @click="cancel()"
+              :disabled="$store.app.status.job && $store.app.status.job.cancelling">Отмена</button>
+      <button type="button" class="btn btn-sm btn-ghost" @click="toggleLog()">
+        <svg class="icon"><use href="#i-list"/></svg>Журнал
+        <svg class="icon"><use :href="logOpen ? '#i-down' : '#i-up'"/></svg>
+      </button>
+    </div>
+    <div class="log" x-ref="log" x-show="logOpen" x-effect="$store.app.log.length; $nextTick(() => scrollLog())">
+      <template x-for="line in $store.app.log" :key="line.seq">
+        <div><span class="t" x-text="fmt.clock(line.time)"></span><span x-text="line.text"></span></div>
+      </template>
+      <div class="faint" x-show="!$store.app.log.length">Журнал пуст.</div>
+    </div>
+  </footer>
+
+  {% include "_settings.html" %}
+  {% include "_dialogs.html" %}
+
+  <div class="overlay" x-show="stopped" style="z-index: 90">
+    <div class="modal">
+      <div class="modal-head"><h3>Программа выключена</h3></div>
+      <div class="modal-body"><p class="text">Эту вкладку можно закрыть. Запустить снова — ярлыком программы.</p></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

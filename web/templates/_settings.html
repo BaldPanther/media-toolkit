@@ -1,0 +1,179 @@
+<!-- Настройки: ключи API, OpenSubtitles, языки, картинки, корни библиотеки. -->
+<div x-data="settings" @open-settings.window="open($event.detail && $event.detail.section)">
+  <div class="overlay" x-show="visible" x-transition.opacity.duration.120ms @mousedown.self="close()"
+       @keydown.escape.window="visible && !$store.ui.dialogs.length && !$store.browser.visible && close()">
+    <div class="modal xwide" style="height: min(640px, calc(100vh - 48px))" x-show="data">
+      <div class="modal-head">
+        <h3>Настройки</h3>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="close()" title="Закрыть">
+          <svg class="icon"><use href="#i-x"/></svg>
+        </button>
+      </div>
+      <template x-if="data">
+        <div class="split">
+          <nav>
+            <template x-for="s in sections" :key="s.id">
+              <button type="button" :class="{ on: section === s.id }" @click="section = s.id" class="row nowrap">
+                <svg class="icon"><use :href="'#' + s.icon"/></svg><span x-text="s.label"></span>
+              </button>
+            </template>
+          </nav>
+
+          <div class="pane">
+            <!-- Ключи API -->
+            <div class="stack" x-show="section === 'keys'">
+              <p class="muted">Ключи бесплатные и нужны по одному разу. Обязателен только TMDb. Без Fanart.tv
+                меньше вариантов логотипов и постеров, без OMDb в рейтингах остаётся только TMDb.</p>
+              <div class="field">
+                <label for="k-tmdb">Ключ TMDb <span class="danger-text">*</span></label>
+                <div class="input-group">
+                  <input id="k-tmdb" class="input mono" type="text" x-model="data.meta.tmdb_key" spellcheck="false" autocomplete="off">
+                  <a class="btn" :href="data.key_urls.tmdb" target="_blank" rel="noopener">Получить ключ<svg class="icon"><use href="#i-external"/></svg></a>
+                </div>
+              </div>
+              <div class="field">
+                <label for="k-fanart">Ключ Fanart.tv</label>
+                <div class="input-group">
+                  <input id="k-fanart" class="input mono" type="text" x-model="data.meta.fanart_key" spellcheck="false" autocomplete="off">
+                  <a class="btn" :href="data.key_urls.fanart" target="_blank" rel="noopener">Получить ключ<svg class="icon"><use href="#i-external"/></svg></a>
+                </div>
+              </div>
+              <div class="field">
+                <label for="k-omdb">Ключ OMDb</label>
+                <div class="input-group">
+                  <input id="k-omdb" class="input mono" type="text" x-model="data.meta.omdb_key" spellcheck="false" autocomplete="off">
+                  <a class="btn" :href="data.key_urls.omdb" target="_blank" rel="noopener">Получить ключ<svg class="icon"><use href="#i-external"/></svg></a>
+                </div>
+              </div>
+            </div>
+
+            <!-- OpenSubtitles -->
+            <div class="stack" x-show="section === 'subs'">
+              <p class="muted">Бесплатный аккаунт OpenSubtitles.com нужен для русских субтитров. API-ключ: войти на
+                opensubtitles.com → профиль → Consumers → New consumer. Поля можно оставить пустыми — тогда поиск идёт
+                только по запасным провайдерам (для русского там обычно пусто).</p>
+              <div class="field">
+                <label for="os-user">Логин</label>
+                <input id="os-user" class="input" type="text" x-model="data.subs.username" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="os-pass">Пароль</label>
+                <div class="input-group">
+                  <input id="os-pass" class="input" :type="showPass ? 'text' : 'password'" x-model="data.subs.password" autocomplete="new-password">
+                  <button type="button" class="btn btn-icon" @click="showPass = !showPass" :title="showPass ? 'Скрыть' : 'Показать'">
+                    <svg class="icon"><use :href="showPass ? '#i-eye-off' : '#i-eye'"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="field">
+                <label for="os-key">API-ключ</label>
+                <div class="input-group">
+                  <input id="os-key" class="input mono" type="text" x-model="data.subs.apikey" spellcheck="false" autocomplete="off">
+                  <a class="btn" :href="data.key_urls.opensubtitles" target="_blank" rel="noopener">Получить ключ<svg class="icon"><use href="#i-external"/></svg></a>
+                </div>
+              </div>
+              <label class="check">
+                <input type="checkbox" x-model="data.subs.use_fallback">
+                Использовать запасные провайдеры (podnapisi/tvsubtitles/gestdown)
+              </label>
+            </div>
+
+            <!-- Языки и имена -->
+            <div class="stack" x-show="section === 'lang'">
+              <div class="field">
+                <label for="s-lang">Язык описаний</label>
+                <select id="s-lang" class="input" style="width: 240px" x-model="data.meta.meta_language">
+                  <template x-for="[code, label] in Object.entries(data.choices.languages)" :key="code">
+                    <option :value="code" x-text="label" :selected="code === data.meta.meta_language"></option>
+                  </template>
+                </select>
+                <span class="hint">На этом языке пишутся названия и описания в .nfo.</span>
+              </div>
+              <div class="field">
+                <label for="s-name">Язык имён папок и файлов</label>
+                <select id="s-name" class="input" style="width: 340px" x-model="data.meta.name_language">
+                  <template x-for="[code, label] in Object.entries(data.choices.name_modes)" :key="code">
+                    <option :value="code" x-text="label" :selected="code === data.meta.name_language"></option>
+                  </template>
+                </select>
+              </div>
+              <div class="notice">
+                <svg class="icon"><use href="#i-alert"/></svg>
+                <div>Смена режима переименует уже разложенное — таблица плана покажет это до того, как что-то
+                  будет тронуто. Отдельному тайтлу язык имени задаётся на вкладке «Медиатека», там же, где «Найти».</div>
+              </div>
+            </div>
+
+            <!-- Картинки -->
+            <div class="stack" x-show="section === 'art'">
+              <div class="field">
+                <span class="label">Языки картинок — по порядку приоритета</span>
+                <div class="chips">
+                  <template x-for="(code, i) in data.meta.art_languages" :key="code + '|' + i">
+                    <span class="chip">
+                      <span class="n" x-text="i + 1"></span><span x-text="artLabel(code)"></span>
+                      <button type="button" title="Выше" :disabled="i === 0" @click="artMove(i, -1)"><svg class="icon"><use href="#i-left"/></svg></button>
+                      <button type="button" title="Ниже" :disabled="i === data.meta.art_languages.length - 1" @click="artMove(i, 1)"><svg class="icon"><use href="#i-right"/></svg></button>
+                      <button type="button" title="Убрать" @click="artRemove(i)"><svg class="icon"><use href="#i-x"/></svg></button>
+                    </span>
+                  </template>
+                  <span class="faint small" x-show="!data.meta.art_languages.length">Пусто — будет «русский, английский, без текста».</span>
+                </div>
+                <div class="row" style="margin-top: 4px">
+                  <select class="input" style="width: 220px" @change="artAdd($event)">
+                    <option value="__none__" selected>Добавить язык…</option>
+                    <template x-for="[code, label] in artAvailable()" :key="code">
+                      <option :value="code" x-text="label"></option>
+                    </template>
+                  </select>
+                  <input class="input mono" style="width: 110px" type="text" maxlength="2" placeholder="код: pl"
+                         x-model="artPick" @keydown.enter.prevent="artAddCode()">
+                  <button type="button" class="btn" @click="artAddCode()" :disabled="!/^[a-zA-Z]{2}$/.test(artPick.trim())">Добавить код</button>
+                </div>
+                <span class="hint">Если постера на первом языке нет, берётся следующий. «Язык оригинала» — язык страны
+                  тайтла (для аниме японский постер часто лучше английского).</span>
+              </div>
+              <div class="field">
+                <label for="s-size">Размер постера</label>
+                <select id="s-size" class="input" style="width: 240px" x-model="data.meta.poster_size">
+                  <template x-for="[code, label] in Object.entries(data.choices.poster_sizes)" :key="code">
+                    <option :value="code" x-text="label" :selected="code === data.meta.poster_size"></option>
+                  </template>
+                </select>
+                <span class="hint">На скорость программы не влияет — файл скачивается один раз.</span>
+              </div>
+            </div>
+
+            <!-- Корни библиотеки -->
+            <div class="stack" x-show="section === 'roots'">
+              <p class="muted">По корням программа сама понимает, фильм перед ней или сериал, когда тип стоит
+                «авто», и по ним ищет необработанное. Папок может быть несколько.</p>
+              <template x-for="kind in ['movies_roots', 'tv_roots']" :key="kind">
+                <div class="field">
+                  <span class="label" x-text="kind === 'movies_roots' ? 'Фильмы' : 'Сериалы'"></span>
+                  <div class="list">
+                    <template x-for="(p, i) in data.meta[kind]" :key="p">
+                      <div class="list-item">
+                        <svg class="icon" style="color: var(--accent-text)"><use href="#i-folder"/></svg>
+                        <span class="grow mono" x-text="p" :title="p"></span>
+                        <button type="button" class="btn btn-ghost btn-icon btn-sm" title="Убрать" @click="removeRoot(kind, i)">
+                          <svg class="icon"><use href="#i-x"/></svg>
+                        </button>
+                      </div>
+                    </template>
+                    <div class="list-empty" x-show="!data.meta[kind].length">Не задано.</div>
+                  </div>
+                  <div><button type="button" class="btn btn-sm" @click="addRoot(kind)"><svg class="icon"><use href="#i-plus"/></svg>Добавить…</button></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+      <div class="modal-foot">
+        <button type="button" class="btn" @click="close()">Отмена</button>
+        <button type="button" class="btn btn-primary" @click="save()" :disabled="saving">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>

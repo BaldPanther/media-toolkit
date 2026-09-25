@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — Media Toolkit</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/icon-64.png">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ v }}">
+</head>
+<body>
+<div class="login">
+  <form class="card stack" id="form">
+    <div class="brand"><img src="/static/icons/icon-64.png" alt=""><span>Media Toolkit</span></div>
+    <div class="field">
+      <label for="password">Пароль</label>
+      <input class="input" id="password" type="password" autocomplete="current-password" autofocus required>
+    </div>
+    <div class="danger-text small" id="error" hidden>Неверный пароль.</div>
+    <button class="btn btn-primary" type="submit">Войти</button>
+  </form>
+</div>
+<script>
+  document.getElementById("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const error = document.getElementById("error");
+    error.hidden = true;
+    const res = await fetch("/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: document.getElementById("password").value }),
+    });
+    if (res.ok) location.href = "/";
+    else error.hidden = false;
+  });
+</script>
+</body>
+</html>

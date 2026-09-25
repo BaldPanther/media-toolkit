@@ -7,6 +7,10 @@
 #   ffmpeg      mac: brew install ffmpeg        win: Gyan.FFmpeg через winget
 #   fpcalc      mac: brew install chromaprint   win: портативный в assets/fpcalc.exe
 
+# Веб-интерфейс: сервер и страница в браузере (python webapp.py).
+flask>=3.0
+waitress>=3.0
+
 # Опционально: для кнопки «Скачать русские субтитры».
 subliminal>=2.6
 

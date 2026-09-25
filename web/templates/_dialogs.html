@@ -1,0 +1,91 @@
+<!-- Окно выбора папки или файла. -->
+<div class="overlay" x-show="$store.browser.visible" x-transition.opacity.duration.120ms
+     @mousedown.self="$store.browser.done(null)" @keydown.escape.window="$store.browser.visible && !$store.ui.dialogs.length && $store.browser.done(null)">
+  <div class="modal wide" x-data>
+    <div class="modal-head">
+      <h3 x-text="$store.browser.title"></h3>
+      <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="$store.browser.done(null)" title="Закрыть">
+        <svg class="icon"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <div class="modal-body stack">
+      <div class="row nowrap">
+        <button type="button" class="btn btn-icon" title="На уровень выше" :disabled="!$store.browser.parent"
+                @click="$store.browser.go($store.browser.parent)">
+          <svg class="icon"><use href="#i-parent"/></svg>
+        </button>
+        <input class="input grow mono" type="text" x-model="$store.browser.typed" spellcheck="false"
+               placeholder="Путь — можно вставить" @keydown.enter.prevent.stop="$store.browser.go($store.browser.typed)">
+        <button type="button" class="btn" @click="$store.browser.go($store.browser.typed)">Перейти</button>
+      </div>
+      <div class="crumbs" x-show="$store.browser.path">
+        <template x-for="(c, i) in $store.browser.crumbs()" :key="c.path">
+          <span class="row nowrap" style="gap: 2px">
+            <span class="sep" x-show="i > 0">/</span>
+            <button type="button" @click="$store.browser.go(c.path)" x-text="c.name"></button>
+          </span>
+        </template>
+      </div>
+      <div class="fs">
+        <div class="fs-places">
+          <div class="label" style="padding: 0 10px 4px">Места</div>
+          <template x-for="r in $store.browser.roots" :key="r.path">
+            <button type="button" @click="$store.browser.go(r.path)" :title="r.path">
+              <svg class="icon"><use :href="r.name.startsWith('Домашняя') ? '#i-home' : (r.name.startsWith('Фильмы') || r.name.startsWith('Сериалы') ? '#i-library' : '#i-drive')"/></svg>
+              <span x-text="r.name"></span>
+            </button>
+          </template>
+          <div class="list-empty" x-show="!$store.browser.roots.length">Нет доступных мест.</div>
+        </div>
+        <div class="fs-list">
+          <template x-for="e in $store.browser.entries" :key="e.path">
+            <div class="fs-item" :class="{ dir: e.dir, on: $store.browser.selected === e.path }"
+                 @click="$store.browser.click(e)" @dblclick="$store.browser.pick(e)">
+              <svg class="icon"><use :href="e.dir ? '#i-folder' : '#i-film'"/></svg>
+              <span class="grow" x-text="e.name"></span>
+              <svg class="icon" x-show="e.dir" style="opacity:.5"><use href="#i-right"/></svg>
+            </div>
+          </template>
+          <div class="empty" x-show="$store.browser.path && !$store.browser.entries.length && !$store.browser.loading">
+            <span x-text="$store.browser.files ? 'Здесь нет ни папок, ни видеофайлов.' : 'Вложенных папок нет.'"></span>
+          </div>
+          <div class="empty" x-show="!$store.browser.path && !$store.browser.loading">Выберите место слева или вставьте путь.</div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <div class="grow small faint" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+           x-text="$store.browser.files ? ($store.browser.selected || 'Выберите видеофайл') : $store.browser.path"></div>
+      <button type="button" class="btn" @click="$store.browser.done(null)">Отмена</button>
+      <button type="button" class="btn btn-primary" @click="$store.browser.choose()"
+              :disabled="$store.browser.files ? !$store.browser.selected : !$store.browser.path"
+              x-text="$store.browser.files ? 'Выбрать файл' : 'Выбрать эту папку'"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Вопросы, ошибки, сообщения — стопкой, верхний отвечает на клавиши. -->
+<template x-for="d in $store.ui.dialogs" :key="d">
+  <div class="overlay" style="z-index: 70">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <svg class="icon icon-lg" x-show="d.kind === 'error'" style="color: var(--danger)"><use href="#i-alert"/></svg>
+        <svg class="icon icon-lg" x-show="d.kind === 'info'" style="color: var(--accent-text)"><use href="#i-info"/></svg>
+        <h3 x-text="d.title"></h3>
+      </div>
+      <div class="modal-body" x-show="d.text"><p class="text" x-text="d.text"></p></div>
+      <div class="modal-foot">
+        <template x-for="b in d.buttons" :key="b.label">
+          <button type="button" class="btn" :class="{ 'btn-primary': b.kind === 'primary', 'btn-danger': b.kind === 'danger' }"
+                  @click="$store.ui.close(d, b.value)" x-text="b.label"></button>
+        </template>
+      </div>
+    </div>
+  </div>
+</template>
+
+<div class="toasts">
+  <template x-for="t in $store.ui.toasts" :key="t.id">
+    <div class="toast" x-text="t.text" x-transition></div>
+  </template>
+</div>
