@@ -404,3 +404,36 @@ select.input option { background: var(--surface-2); color: var(--text); }
 .hit-thumb { width: 46px; height: 69px; flex: none; border-radius: 6px; overflow: hidden; background: var(--surface-3); }
 .hit-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .clamp3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }
+
+/* ---------------------------------------------------- вкладка «EDL» ----- */
+.edl-actions { gap: 8px; }
+.subtabs { display: flex; gap: 4px; margin: 16px 0 16px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.subtabs button { position: relative; border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+                  font: 500 13.5px var(--font); padding: 8px 12px 10px; white-space: nowrap; }
+.subtabs button:hover { color: var(--text); }
+.subtabs button.on { color: var(--text); }
+.subtabs button.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px;
+                            border-radius: 2px; background: var(--accent); }
+.form-grid { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 12px 16px; align-items: center; }
+.form-label { font-size: 13px; color: var(--text-2); }
+.pad-field { display: inline-flex; flex-direction: column; gap: 4px; margin-right: 8px; }
+.manual-grid { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 10px 16px; align-items: center; }
+.subcard { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2);
+           padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.subcard h3 { font-size: 13.5px; }
+.edl-table { max-height: 70vh; }
+.edl-table td { padding-top: 6px; padding-bottom: 6px; }
+.edit-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
+.edit-fields { display: flex; flex-direction: column; gap: 10px; }
+.edit-field { display: grid; grid-template-columns: 120px 90px minmax(0, 1fr); gap: 10px; align-items: center; }
+.frames { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.frame { display: flex; flex-direction: column; gap: 4px; align-items: stretch; padding: 3px; border-radius: 8px;
+         border: 2px solid transparent; background: transparent; cursor: pointer; color: inherit; font: inherit; }
+.frame:disabled { cursor: default; }
+.frame.on { border-color: var(--accent); background: var(--accent-soft); }
+.frame-img { aspect-ratio: 190 / 107; background: #000; border-radius: 5px; overflow: hidden; display: grid; place-items: center; }
+.frame-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+@media (max-width: 900px) {
+  .form-grid, .manual-grid, .edit-grid { grid-template-columns: 1fr; }
+  .form-grid > div:empty { display: none; }
+}

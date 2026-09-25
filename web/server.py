@@ -208,7 +208,9 @@ def main(argv=None) -> int:
     if not server_mode:
         # Второй запуск: программа уже работает — просто открыть её страницу.
         if _is_ours(host, port):
-            webbrowser.open(f"http://{host}:{port}/")
+            if not args.no_browser:
+                webbrowser.open(f"http://{host}:{port}/")
+            print(f"Media Toolkit уже работает: http://{host}:{port}/", flush=True)
             return 0
         if not _port_free(host, port):
             port = next((p for p in range(port + 1, port + 50) if _port_free(host, p)), 0)

@@ -1,1 +1,355 @@
-<div class="card empty">Вкладка переносится из прежнего окна.</div>
+<!-- Вкладка «Пропуск заставок (EDL)». -->
+<div x-data="edlTab" class="stack">
+
+  <div class="notice" x-show="t.tools_hint">
+    <svg class="icon"><use href="#i-alert"/></svg><div x-text="t.tools_hint"></div>
+  </div>
+
+  <section class="card">
+    <div class="row edl-actions">
+      <button type="button" class="btn btn-primary" @click="detect()"
+              :disabled="busy || !t.have_eps || (t.tools_missing || []).length > 0">
+        <svg class="icon"><use href="#i-search"/></svg>Определить автоматически
+      </button>
+      <button type="button" class="btn" @click="write()" :disabled="busy || !t.have_eps">
+        <svg class="icon"><use href="#i-check"/></svg>Записать .edl
+      </button>
+      <button type="button" class="btn" @click="del()" :disabled="busy || !t.have_files">
+        <svg class="icon"><use href="#i-trash"/></svg>Удалить .edl
+      </button>
+      <div class="spacer"></div>
+      <span class="small muted">Применять к:</span>
+      <div class="seg">
+        <button type="button" :class="{ on: scope === 'all' }" @click="scope = 'all'">ко всем сериям</button>
+        <button type="button" :class="{ on: scope === 'sel' }" @click="scope = 'sel'"
+                x-text="'к выделенным (' + selected().length + ')'"></button>
+      </div>
+    </div>
+
+    <nav class="subtabs">
+      <template x-for="s in [['opt','Настройки пропуска'],['manual','Задать вручную'],['more','Главы и онлайн']]" :key="s[0]">
+        <button type="button" :class="{ on: sub === s[0] }" @click="sub = s[0]" x-text="s[1]"></button>
+      </template>
+    </nav>
+
+    <!-- Настройки пропуска -->
+    <div class="form-grid" x-show="sub === 'opt'">
+      <div></div>
+      <label class="check" :class="{ disabled: busy }">
+        <input type="checkbox" :checked="t.keep_first" :disabled="busy" @change="settings({ keep_first: $event.target.checked })">
+        Показывать заставку в первой серии сезона (E01) — пропускать только титры
+      </label>
+
+      <span class="form-label">Дорожка для детекта</span>
+      <div class="row">
+        <select class="input" style="width: 200px" :disabled="busy" @change="settings({ track: $event.target.value })">
+          <template x-for="tr in t.tracks || []" :key="tr">
+            <option :value="tr" x-text="tr" :selected="tr === t.track"></option>
+          </template>
+        </select>
+        <span class="small accent-text" x-text="t.track_info"></span>
+      </div>
+
+      <span class="form-label">Окно поиска, сек</span>
+      <div class="row">
+        <span class="small muted">с начала</span>
+        <input class="input input-num" type="number" min="30" max="900" step="30" :disabled="busy"
+               :value="t.window && t.window.intro" @change="settings({ window: { intro: $event.target.value } })">
+        <span class="small muted" style="margin-left: 8px">с конца</span>
+        <input class="input input-num" type="number" min="30" max="900" step="30" :disabled="busy"
+               :value="t.window && t.window.outro" @change="settings({ window: { outro: $event.target.value } })">
+        <span class="hint" x-text="'по умолчанию ' + (t.window_default || 240) + '; заставка должна уложиться в окно целиком'"></span>
+      </div>
+
+      <span class="form-label">Отступы, сек<br><span class="hint">+ позже, − раньше</span></span>
+      <div class="row">
+        <template x-for="p in [['intro_start','начало интро'],['intro_end','конец интро'],['outro_start','начало титров'],['outro_end','конец титров']]" :key="p[0]">
+          <label class="pad-field">
+            <span class="small muted" x-text="p[1]"></span>
+            <input class="input input-num" type="number" min="-120" max="120" step="1"
+                   :disabled="busy || (p[0] === 'outro_end' && !t.outro_end_active)"
+                   :title="p[0] === 'outro_end' && !t.outro_end_active ? 'Титры идут до конца файла — отступу не к чему прибавляться' : ''"
+                   :value="t.pad && t.pad[p[0]]" @change="settings({ pad: { [p[0]]: $event.target.value } })">
+          </label>
+        </template>
+      </div>
+
+      <div></div>
+      <label class="check" :class="{ disabled: busy }">
+        <input type="checkbox" :checked="t.outro_to_end" :disabled="busy" @change="settings({ outro_to_end: $event.target.checked })">
+        Титры — до конца файла, когда конец не задан (снимите, если после титров есть сцена)
+      </label>
+
+      <div></div>
+      <label class="check" :class="{ disabled: busy }">
+        <input type="checkbox" :checked="t.trim_tail" :disabled="busy" @change="settings({ trim_tail: $event.target.checked })">
+        <span x-text="'Обрезать хвост после конца видео (звук дольше картинки больше ' + (t.trim_min || 2) + ' с) — без перекодирования, при записи .edl'"></span>
+      </label>
+    </div>
+
+    <!-- Задать вручную -->
+    <div x-show="sub === 'manual'">
+      <p class="hint" style="margin-bottom: 12px">Время: MM:SS, H:MM:SS или секунды. Применяется по переключателю
+        «Применять к» вверху.</p>
+      <div class="manual-grid">
+        <span class="form-label">Интро</span>
+        <div class="row">
+          <span class="small muted">начало</span><input class="input input-time" x-model="manual.intro_start" :disabled="busy">
+          <span class="small muted">конец</span><input class="input input-time" x-model="manual.intro_end" :disabled="busy">
+          <button type="button" class="btn btn-sm" @click="manualOp('intro')" :disabled="busy">Задать</button>
+        </div>
+        <span class="form-label faint">…или длительность</span>
+        <div class="row">
+          <input class="input input-time" x-model="manual.intro_dur" :disabled="busy"><span class="small muted">сек</span>
+          <button type="button" class="btn btn-sm" @click="manualOp('intro_dur')" :disabled="busy">Задать</button>
+          <span class="hint">продолжительность интро: конец = начало серии + N</span>
+        </div>
+
+        <span class="form-label">Титры</span>
+        <div class="row">
+          <span class="small muted">начало</span><input class="input input-time" x-model="manual.outro_start" :disabled="busy">
+          <span class="small muted">конец</span><input class="input input-time" x-model="manual.outro_end" :disabled="busy">
+          <button type="button" class="btn btn-sm" @click="manualOp('outro')" :disabled="busy">Задать</button>
+          <span class="hint">пусто — до конца файла; укажите, если после титров есть сцена</span>
+        </div>
+        <span class="form-label faint">…или последние</span>
+        <div class="row">
+          <input class="input input-time" x-model="manual.outro_last" :disabled="busy"><span class="small muted">сек</span>
+          <button type="button" class="btn btn-sm" @click="manualOp('outro_last')" :disabled="busy">Задать</button>
+          <span class="hint">продолжительность титров от конца файла</span>
+        </div>
+        <span class="form-label faint">…знаете только начало</span>
+        <div class="row">
+          <input class="input input-time" x-model="manual.outro_from_start" :disabled="busy" placeholder="56:10">
+          <button type="button" class="btn btn-sm" @click="calc()" :disabled="busy">Посчитать</button>
+          <span class="hint" x-text="calcText || 'время начала титров — посчитаем продолжительность по выделенной серии'"></span>
+        </div>
+
+        <span class="form-label">Recap</span>
+        <div class="row">
+          <span class="small muted">до</span><input class="input input-time" x-model="manual.recap_end" :disabled="busy">
+          <button type="button" class="btn btn-sm" @click="manualOp('recap')" :disabled="busy">Задать</button>
+          <span class="hint">с начала файла</span>
+        </div>
+
+        <span class="form-label">Убрать</span>
+        <div class="row">
+          <button type="button" class="btn btn-sm" @click="manualOp('clear_intro')" :disabled="busy">интро</button>
+          <button type="button" class="btn btn-sm" @click="manualOp('clear_outro')" :disabled="busy">титры</button>
+          <button type="button" class="btn btn-sm" @click="manualOp('clear_recap')" :disabled="busy">recap</button>
+          <button type="button" class="btn btn-sm" @click="manualOp('clear_all')" :disabled="busy">всё</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Главы и онлайн -->
+    <div class="cards-2" x-show="sub === 'more'">
+      <div class="subcard">
+        <h3>Главы Matroska</h3>
+        <p class="hint">Чтобы разметка работала и в других плеерах: .edl понимает только Kodi, а главы — любой.
+          Пишутся в заголовок MKV, без перекодирования.</p>
+        <label class="check" :class="{ disabled: busy }">
+          <input type="checkbox" :checked="t.chapters_with_edl" :disabled="busy" @change="settings({ chapters_with_edl: $event.target.checked })">
+          писать вместе с .edl
+        </label>
+        <label class="check" :class="{ disabled: busy }">
+          <input type="checkbox" :checked="t.chapters_force" :disabled="busy" @change="settings({ chapters_force: $event.target.checked })">
+          перезаписывать чужие главы (их деление на сцены пропадёт)
+        </label>
+        <div class="row">
+          <button type="button" class="btn btn-sm" @click="writeChapters()" :disabled="busy || !t.have_eps">Записать главы</button>
+          <button type="button" class="btn btn-sm" @click="clearChapters()" :disabled="busy || !t.have_chapters">Убрать главы</button>
+        </div>
+      </div>
+      <div class="subcard">
+        <h3>Онлайн-тайминги (AniSkip / TheIntroDB)</h3>
+        <p class="hint">Готовые интро и титры из открытых баз — рядом с найденными локально, в отдельных колонках.
+          В активные переносятся кнопкой, по «Применять к».</p>
+        <div class="row">
+          <button type="button" class="btn btn-sm" @click="openOnline()" :disabled="busy || !t.have_eps">Загрузить онлайн…</button>
+          <button type="button" class="btn btn-sm" @click="manualOp('take_online')" :disabled="busy || !t.have_online">Взять онлайн</button>
+          <button type="button" class="btn btn-sm" @click="manualOp('take_local')" :disabled="busy || !t.have_eps">Вернуть локальные</button>
+        </div>
+        <p class="small accent-text" x-show="t.online_status" x-text="t.online_status"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Серии</h2>
+      <span class="sub" x-text="t.status"></span>
+      <div class="spacer"></div>
+      <span class="hint" x-show="t.have_eps">двойной клик по строке — правка вручную; Shift/⌘ — выделить несколько</span>
+    </div>
+    <div class="empty" x-show="!t.have_eps">
+      <svg class="icon"><use href="#i-film"/></svg>
+      <div>Просканируйте папку сериала, затем «Определить автоматически».</div>
+    </div>
+    <div class="table-wrap edl-table" x-show="t.have_eps">
+      <table class="table">
+        <thead>
+          <tr>
+            <th class="check-cell"><label class="check"><input type="checkbox" :checked="allSelected()" @change="toggleAll()" title="Выделить все"></label></th>
+            <template x-for="c in [['file','Файл'],['se','S/E'],['recap','Recap'],['intro','Интро (актив.)'],['intro_on','Интро (онлайн)'],['outro','Титры (актив.)'],['outro_on','Титры (онлайн)'],['edl','.edl'],['ch','главы'],['tail','хвост'],['note','Заметка']]" :key="c[0]">
+              <th class="sortable" @click="!busy && sortBy(c[0])" x-text="c[1] + sortMark(c[0])"></th>
+            </template>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(r, i) in rows" :key="r.path">
+            <tr class="clickable" :class="{ selected: sel[r.path] }"
+                @click="rowClick($event, r, i)" @dblclick="openEdit(r)">
+              <td class="check-cell" @click.stop><label class="check"><input type="checkbox" :checked="sel[r.path]" @change="toggleRow(r, i)"></label></td>
+              <td class="file" x-text="r.file" :title="r.path"></td>
+              <td class="time" x-text="r.se"></td>
+              <td class="time" x-text="r.recap"></td>
+              <td class="time" :class="{ 'accent-text': r.first }" x-text="r.intro"></td>
+              <td class="time faint" x-text="r.intro_on"></td>
+              <td class="time" x-text="r.outro"></td>
+              <td class="time faint" x-text="r.outro_on"></td>
+              <td><span class="badge ok" x-show="r.edl">есть</span></td>
+              <td class="num" x-text="r.ch || '—'"></td>
+              <td class="num warn-text" x-text="r.tail"></td>
+              <td class="small muted" x-text="r.note"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Окно: правка серии и проверка кадром. -->
+  <div class="overlay" x-show="edit" x-transition.opacity.duration.120ms @mousedown.self="closeEdit()"
+       @keydown.escape.window="edit && !$store.ui.dialogs.length && closeEdit()">
+    <div class="modal xwide" style="max-height: calc(100vh - 32px)">
+      <template x-if="edit">
+        <div style="display: contents">
+          <div class="modal-head"><h3 x-text="'Правка: ' + edit.name"></h3>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="closeEdit()"><svg class="icon"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="modal-body">
+            <div class="edit-grid">
+              <div class="stack">
+                <p class="hint">Время: MM:SS, H:MM:SS или секунды. Пусто — сегмента нет. Отступы сезона
+                  ложатся на интро и титры поверх этих значений.</p>
+                <div class="edit-fields">
+                  <template x-for="f in [['rc','Recap до','с начала файла'],['is','Интро: начало',''],['ie','Интро: конец','пусто — начало + длительность из «Задать вручную»'],['os','Титры: начало',''],['oe','Титры: конец','пусто — до конца файла']]" :key="f[0]">
+                    <div class="edit-field">
+                      <label class="form-label" x-text="f[1]"></label>
+                      <input class="input input-time" x-model="edit[f[0]]" :placeholder="f[0] === 'oe' ? 'до конца' : ''">
+                      <span class="hint" x-text="lengthText(f[0]) || f[2]"></span>
+                    </div>
+                  </template>
+                </div>
+                <div class="row">
+                  <span class="small muted">Убрать:</span>
+                  <button type="button" class="btn btn-sm" @click="edit.is = ''; edit.ie = ''">интро</button>
+                  <button type="button" class="btn btn-sm" @click="edit.os = ''; edit.oe = ''">титры</button>
+                  <button type="button" class="btn btn-sm" @click="edit.rc = ''">recap</button>
+                </div>
+              </div>
+
+              <div class="subcard frames-box">
+                <h3>Проверка кадром</h3>
+                <div class="row">
+                  <select class="input" style="width: 170px" x-model="fr.bound" @change="boundChanged()">
+                    <template x-for="b in EDL_BOUNDS" :key="b[0]"><option :value="b[0]" x-text="b[1]"></option></template>
+                  </select>
+                  <span class="small muted">шаг</span>
+                  <select class="input input-num" x-model="fr.step">
+                    <template x-for="s in ['1','2','5','10']" :key="s"><option :value="s" x-text="s + ' с'"></option></template>
+                  </select>
+                  <button type="button" class="btn" @click="showFrames()" :disabled="!!fr.status">
+                    <svg class="icon"><use href="#i-image"/></svg>Показать кадры
+                  </button>
+                  <span class="small faint" x-text="fr.status"></span>
+                </div>
+                <div class="frames">
+                  <template x-for="(tm, i) in (fr.times.length ? fr.times : Array(8).fill(null))" :key="i">
+                    <button type="button" class="frame" :class="{ on: fr.pick !== null && tm === fr.pick }"
+                            @click="tm !== null && pickFrame(i)" :disabled="tm === null || !fr.ready[i]">
+                      <div class="frame-img">
+                        <img x-show="tm !== null && fr.ready[i]" :src="tm !== null ? frameSrc(i) : ''" alt="">
+                        <span x-show="tm !== null && fr.ready[i] === false" class="small faint">нет кадра</span>
+                      </div>
+                      <span class="small muted" x-text="tm === null ? '—' : fmt.time(tm)"></span>
+                    </button>
+                  </template>
+                </div>
+                <p class="small" x-text="fr.note"></p>
+                <div class="row">
+                  <button type="button" class="btn btn-sm" @click="toEpisode()" :disabled="fr.pick === null">Применить к этой серии</button>
+                  <button type="button" class="btn btn-sm" @click="toSeason()" :disabled="fr.pick === null || fr.bound === 'rc'"
+                          x-text="fr.pick === null ? 'Сдвинуть все серии' : 'Сдвинуть все серии на ' + (delta() >= 0 ? '+' : '') + Math.round(delta()) + ' с'"></button>
+                  <button type="button" class="btn btn-sm btn-ghost" x-show="$store.app.info.player" @click="inPlayer()"
+                          x-text="'Открыть в ' + $store.app.info.player"></button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button type="button" class="btn" @click="closeEdit()">Отмена</button>
+            <button type="button" class="btn btn-primary" @click="saveEdit()" :disabled="busy">Сохранить</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Окно: правила онлайн-таймингов. -->
+  <div class="overlay" x-show="online" x-transition.opacity.duration.120ms @mousedown.self="online = null"
+       @keydown.escape.window="online && !$store.ui.dialogs.length && (online = null)">
+    <div class="modal wide">
+      <template x-if="online">
+        <div style="display: contents">
+          <div class="modal-head"><h3>Онлайн-тайминги</h3>
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="online = null"><svg class="icon"><use href="#i-x"/></svg></button>
+          </div>
+          <div class="modal-body stack">
+            <p class="muted small">Правила сопоставления серий с онлайн-базой. Для аниме — AniSkip (ID = MyAnimeList),
+              для сериалов и фильмов — TheIntroDB (ID = TMDb-число или IMDb вида tt…). «Серии от…до» — по номеру E
+              из имени файла; «онлайн E1» — какой серии базы соответствует первая серия диапазона (для AniSkip;
+              лечит склейку двух cours).
+              <span x-text="'Найденные серии: E' + String(online.emin).padStart(2, '0') + '–E' + String(online.emax).padStart(2, '0') + '.'"></span></p>
+            <div class="table-wrap" style="max-height: 40vh">
+              <table class="table">
+                <thead><tr><th>Источник</th><th>ID</th><th>Серии от</th><th>до</th><th>онлайн E1</th><th></th></tr></thead>
+                <tbody>
+                  <template x-for="(r, i) in online.rules" :key="i">
+                    <tr>
+                      <td><select class="input" x-model="r.source"><option>AniSkip</option><option>TheIntroDB</option></select></td>
+                      <td><input class="input mono" style="width: 150px" x-model="r.id" spellcheck="false"></td>
+                      <td><input class="input input-num" x-model="r.from"></td>
+                      <td><input class="input input-num" x-model="r.to"></td>
+                      <td><input class="input input-num" x-model="r.first"></td>
+                      <td><button type="button" class="btn btn-ghost btn-icon btn-sm" title="Убрать правило"
+                                  @click="online.rules.splice(i, 1)"><svg class="icon"><use href="#i-x"/></svg></button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <div class="row">
+              <button type="button" class="btn btn-sm" @click="addRule()"><svg class="icon"><use href="#i-plus"/></svg>правило</button>
+              <button type="button" class="btn btn-sm" @click="suggest()" :disabled="online.suggesting">
+                <span class="spinner" x-show="online.suggesting"></span>Авто-подобрать
+              </button>
+            </div>
+            <p class="small accent-text" x-show="online.summary" x-text="online.summary"></p>
+            <div class="notice info" x-show="online.candidates.length">
+              <svg class="icon"><use href="#i-info"/></svg>
+              <div>Проверьте авто-разбивку по сезонам/cours — кандидаты MAL:
+                <template x-for="c in online.candidates" :key="c"><div x-text="'• ' + c"></div></template>
+                Если раскладка серий неверна — поправьте «Серии от…до» и ID вручную.</div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button type="button" class="btn" @click="online = null">Отмена</button>
+            <button type="button" class="btn btn-primary" @click="loadOnline()">Загрузить тайминги</button>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
