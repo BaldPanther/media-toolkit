@@ -171,6 +171,7 @@
         </div>
       </template>
       <div class="modal-foot">
+        <span class="small faint grow" x-text="'Media Toolkit ' + ($store.app.info.version || '(из исходников)')"></span>
         <button type="button" class="btn" @click="close()">Отмена</button>
         <button type="button" class="btn btn-primary" @click="save()" :disabled="saving">Сохранить</button>
       </div>

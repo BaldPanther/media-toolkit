@@ -50,6 +50,17 @@ def state():
     return current_app.config["STATE"]
 
 
+def app_version() -> str:
+    """Версия: из окружения (Docker) или из файла VERSION (сборки); из исходников — пусто."""
+    env = os.environ.get("MT_VERSION", "").strip()
+    if env:
+        return env
+    try:
+        return (Path(__file__).resolve().parent.parent / "VERSION").read_text("ascii").strip()
+    except OSError:
+        return ""
+
+
 # ------------------------------------------------------------- статус --
 @bp.get("/api/info")
 def info():
@@ -64,7 +75,7 @@ def info():
     player = edl.find_player() if st.mode == "desktop" else None
     return jsonify({
         "app": "media-toolkit",
-        "version": os.environ.get("MT_VERSION", ""),
+        "version": app_version(),
         "mode": st.mode,
         "platform": sys.platform,
         "auth": bool(current_app.config.get("PASSWORD")),

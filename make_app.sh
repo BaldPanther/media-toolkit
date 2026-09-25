@@ -22,18 +22,21 @@ warn() { printf '  ⚠ %s\n' "$*"; }
 die()  { printf '  ✗ %s\n' "$*" >&2; exit 1; }
 
 # --- интерпретатор ---------------------------------------------------------
-# Нужен питон с tkinter 8.6+. У системного (из Xcode) стоит Tk 8.5 — в нём
-# ttk-виджеты выглядят плохо, поэтому такой кандидат отбраковывается.
+# Нужен питон 3.10+ с зависимостями программы (Flask, waitress — сервер
+# страницы). Первым берётся тот, у которого они уже стоят.
 find_python() {
-  local cands=(/opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3)
+  local cands=(/opt/homebrew/bin/python3.14 /opt/homebrew/bin/python3 /usr/local/bin/python3)
   command -v python3.14 >/dev/null 2>&1 && cands+=("$(command -v python3.14)")
-  local p
+  command -v python3 >/dev/null 2>&1 && cands+=("$(command -v python3)")
+  local p first=""
   for p in "${cands[@]}"; do
     [ -x "$p" ] || continue
-    "$p" -c 'import tkinter,sys; sys.exit(0 if tkinter.TkVersion >= 8.6 else 1)' 2>/dev/null \
-      && { echo "$p"; return 0; }
+    "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null || continue
+    [ -n "$first" ] || first="$p"
+    "$p" -c 'import flask, waitress' 2>/dev/null && { echo "$p"; return 0; }
   done
-  die "не найден python с tkinter 8.6+. Поставь: brew install python-tk@3.14"
+  [ -n "$first" ] || die "не найден python 3.10+. Поставь: brew install python@3.14"
+  die "у $first нет зависимостей программы. Поставь: $first -m pip install --break-system-packages -r \"$HERE/requirements.txt\""
 }
 
 # --- иконка ----------------------------------------------------------------
@@ -62,8 +65,8 @@ build_icns() {
 PY="$(find_python)"
 [ -f "$HERE/app.py" ] || die "нет app.py рядом со скриптом"
 mkdir -p "$DEST" || die "не могу создать $DEST (для /Applications нужен sudo)"
-printf '\nИнтерпретатор: %s (Tk %s)\nКуда:          %s\n\n' "$PY" \
-  "$("$PY" -c 'import tkinter; print(tkinter.TkVersion)')" "$DEST"
+printf '\nИнтерпретатор: %s (Python %s)\nКуда:          %s\n\n' "$PY" \
+  "$("$PY" -c 'import platform; print(platform.python_version())')" "$DEST"
 
 BUNDLE="$DEST/$TITLE.app"
 rm -rf "$BUNDLE"
@@ -79,8 +82,9 @@ exec "$PY" "$HERE/app.py" "\$@" >>"\$LOG" 2>&1
 LAUNCHER
 chmod +x "$BUNDLE/Contents/MacOS/launcher"
 
-# NSHighResolutionCapable обязателен: без него macOS рисует окно в 1x
-# и растягивает — шрифт получается мыльным.
+# LSUIElement: своего окна у программы нет — страница открывается в браузере, —
+# поэтому и значка в Dock не нужно: без окна он висел бы «не отвечает».
+# Выключается программа кнопкой на странице или сама, когда страницу закрыли.
 cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -95,7 +99,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundleVersion</key>           <string>1</string>
     <key>LSMinimumSystemVersion</key>    <string>13.0</string>
-    <key>NSHighResolutionCapable</key>   <true/>
+    <key>LSUIElement</key>               <true/>
 </dict>
 </plist>
 PLIST
@@ -112,6 +116,7 @@ ok "$TITLE.app"
 cat <<NEXT
 
 Готово: $BUNDLE
-Для быстрого доступа перетащи его в Dock.
-Если приложение не открылось, смотри ~/Library/Logs/$TITLE.log
+Запуск открывает страницу программы в браузере по умолчанию. Для быстрого
+доступа перетащи приложение в Dock (значок там появляется только как ярлык).
+Если страница не открылась, смотри ~/Library/Logs/$TITLE.log
 NEXT

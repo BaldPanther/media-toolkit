@@ -4,12 +4,10 @@ This build bundles third-party components under their own licenses.
 Source code of each is available at the linked project pages.
 
 Python ............ PSF-2.0          https://www.python.org/
-Tcl/Tk ............ Tcl/Tk License   https://www.tcl.tk/
 numpy ............. BSD-3-Clause     https://numpy.org/
 Flask ............. BSD-3-Clause     https://flask.palletsprojects.com/
 waitress .......... ZPL-2.1          https://github.com/Pylons/waitress
 Alpine.js ......... MIT              https://alpinejs.dev/
-Pillow ............ MIT-CMU          https://python-pillow.org/
 Send2Trash ........ BSD-3-Clause     https://github.com/arsenetar/send2trash
 subliminal ........ MIT              https://github.com/Diaoul/subliminal
 guessit ........... LGPL-3.0+        https://github.com/guessit-io/guessit

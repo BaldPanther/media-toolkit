@@ -32,5 +32,5 @@ def test_optional_failure_is_reported_but_passes(tmp_path):
 
 def test_default_checks_cover_bundled_dependencies():
     names = {name for name, _, _ in selfcheck.default_checks()}
-    assert {"tkinter", "модули программы", "numpy", "Pillow", "send2trash",
+    assert {"модули программы", "веб-интерфейс", "numpy", "send2trash",
             "subliminal", "иконки", "fpcalc"} <= names

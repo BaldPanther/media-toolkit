@@ -7,7 +7,7 @@
     тайминги в миллисекундах, сегменты intro/credits/recap.
 Плюс подбор ID: разбор соседних .nfo (tinyMediaManager/Kodi) и поиск MAL через Jikan.
 
-Только stdlib (urllib + xml.etree) — без внешних зависимостей и без Tkinter, поэтому
+Только stdlib (urllib + xml.etree) — без внешних зависимостей, поэтому
 модуль пригоден для headless-тестов. Форматы ответов сверены с живым API (2026-07).
 """
 from __future__ import annotations

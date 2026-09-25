@@ -128,7 +128,7 @@ jobs:
         run: |
           code=0
           docker run --rm -u 1000:1000 --entrypoint sh media-toolkit:ci -c \
-            'python /app/webapp.py --selfcheck /tmp/selfcheck.txt; c=$?; cat /tmp/selfcheck.txt; exit $c' || code=$?
+            'python /app/app.py --selfcheck /tmp/selfcheck.txt; c=$?; cat /tmp/selfcheck.txt; exit $c' || code=$?
           exit $code
       - name: Страница отвечает
         run: |

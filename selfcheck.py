@@ -17,15 +17,6 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 
 
-def _tk():
-    import tkinter as tk
-    root = tk.Tk()
-    root.withdraw()
-    version = tk.TkVersion
-    root.destroy()
-    return f"Tk {version}"
-
-
 def _modules():
     import artwork, chapters, core, edl, fanart, library, metaconf, metadata  # noqa: F401, E401
     import net, nfo, omdb, online, paths, pipeline, subs, tmdb, trim  # noqa: F401, E401
@@ -52,12 +43,6 @@ def _web():
 def _numpy():
     import numpy
     return numpy.__version__
-
-
-def _pillow():
-    import PIL
-    from PIL import Image  # noqa: F401 — миниатюры в сетке постеров прежнего окна на Tk
-    return PIL.__version__
 
 
 def _send2trash():
@@ -119,9 +104,7 @@ def default_checks() -> list[tuple[str, object, bool]]:
     return [
         ("модули программы", _modules, True),
         ("веб-интерфейс", _web, True),
-        ("tkinter", _tk, False),
         ("numpy", _numpy, True),
-        ("Pillow", _pillow, False),
         ("send2trash", _send2trash, True),
         ("subliminal", _subliminal, True),
         ("иконки", _assets, True),

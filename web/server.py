@@ -93,7 +93,7 @@ def create_app(state: AppState, password: str = "") -> Flask:
 
     # Метка версии в адресах стилей и скриптов: после обновления программы
     # браузер возьмёт новые файлы, а не старые из своего кэша.
-    asset_version = os.environ.get("MT_VERSION") or str(int(time.time()))
+    asset_version = api.app_version() or str(int(time.time()))
 
     @app.get("/")
     def index():
@@ -188,7 +188,24 @@ def serve(state: AppState, host: str, port: int, password: str = "",
     waitress_serve(app, host=host, port=port, threads=8, ident="media-toolkit")
 
 
+def _log_to_file() -> None:
+    """Сборка без консоли (Windows, .app): вывод — в файл, иначе ошибки не увидеть."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        path = paths.config_dir() / "media-toolkit.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 1_000_000:
+            path.replace(path.with_suffix(".log.old"))
+        log = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115 — живёт до выхода
+    except OSError:
+        return
+    sys.stdout = sys.stdout or log
+    sys.stderr = sys.stderr or log
+
+
 def main(argv=None) -> int:
+    _log_to_file()
     parser = argparse.ArgumentParser(prog="media-toolkit")
     parser.add_argument("folder", nargs="?", default="",
                         help="папка, которую открыть, если прошлой нет")

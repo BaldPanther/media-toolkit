@@ -31,3 +31,6 @@ media/
 # Сборки PyInstaller
 build/
 dist/
+
+# Версия, которую сборка кладёт рядом с программой (packaging/media-toolkit.spec).
+/VERSION
