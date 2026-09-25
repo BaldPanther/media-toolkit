@@ -1,1 +1,289 @@
-<div class="card empty">Вкладка переносится из прежнего окна.</div>
+<!-- Вкладка «Медиатека». -->
+<div x-data="libraryTab" class="stack">
+
+  <!-- Что это: тип, название, год, найденный тайтл, язык имени. -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Что это</h2>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-sm" @click="pending()" :disabled="busy">
+        <svg class="icon"><use href="#i-list"/></svg>Что не обработано…
+      </button>
+      <button type="button" class="btn btn-sm btn-ghost" x-show="t.pending && t.pending.length" @click="openPending()"
+              x-text="'список (' + (t.pending || []).length + ')'"></button>
+      <button type="button" class="btn btn-sm btn-ghost" @click="systemJunk()" :disabled="busy">
+        <svg class="icon"><use href="#i-trash"/></svg>Убрать служебные файлы…
+      </button>
+      <button type="button" class="btn btn-sm btn-ghost" @click="$dispatch('open-settings', { section: 'keys' })">
+        <svg class="icon"><use href="#i-gear"/></svg>Настройки скрапера…
+      </button>
+    </div>
+
+    <div class="identify">
+      <div class="field">
+        <span class="label">Тип</span>
+        <div class="seg">
+          <template x-for="k in [['auto','авто'],['movie','фильм'],['tv','сериал']]" :key="k[0]">
+            <button type="button" :class="{ on: t.kind_choice === k[0] }" :disabled="busy"
+                    @click="setKind(k[0])" x-text="k[1]"></button>
+          </template>
+        </div>
+      </div>
+      <div class="field grow">
+        <label for="l-query">Название <span class="faint">(или IMDb-ID вида tt2261227)</span></label>
+        <input id="l-query" class="input" type="text" x-model="q" :disabled="busy" spellcheck="false"
+               @focus="typing = true" @change="form()" @keydown.enter.prevent="find()">
+      </div>
+      <div class="field">
+        <label for="l-year">Год</label>
+        <input id="l-year" class="input input-num" type="text" inputmode="numeric" x-model="y" :disabled="busy"
+               @focus="typing = true" @change="form()" @keydown.enter.prevent="find()">
+      </div>
+      <div class="field">
+        <span class="label">&nbsp;</span>
+        <div class="row nowrap">
+          <button type="button" class="btn btn-primary" @click="find()" :disabled="busy">
+            <svg class="icon"><use href="#i-search"/></svg>Найти
+          </button>
+          <button type="button" class="btn btn-ghost btn-icon" title="Подставить из имени папки" @click="guess()" :disabled="busy">
+            <svg class="icon"><use href="#i-folder"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="hit">
+      <img class="hit-poster" :src="t.hit && t.hit.poster" x-show="t.hit && t.hit.poster" alt="">
+      <div class="grow">
+        <div x-show="!t.hit" class="muted">Тайтл не выбран. Укажите папку и нажмите «Найти».</div>
+        <template x-if="t.hit">
+          <div>
+            <div><span class="muted">Выбрано:</span> <b x-text="t.hit.label"></b>
+              <span class="faint" x-text="'· TMDb ' + t.hit.tmdb_id"></span></div>
+            <div class="small muted" x-show="t.info" style="margin-top: 2px">
+              язык оригинала: <span x-text="t.info && t.info.original_language"></span>
+              · папка: <span class="mono" x-text="t.info && t.info.folder"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div class="field" x-show="t.info">
+        <label for="l-name">Язык имени</label>
+        <select id="l-name" class="input" style="width: 240px" :disabled="busy || !t.info"
+                @change="nameLanguage($event.target.value)">
+          <template x-for="c in t.name_choices || []" :key="c[0]">
+            <option :value="c[0]" x-text="c[1]" :selected="c[0] === t.name_choice"></option>
+          </template>
+        </select>
+      </div>
+      <button type="button" class="btn" x-show="t.hits && t.hits.length > 1" @click="openHits()" :disabled="busy">Сменить…</button>
+    </div>
+  </section>
+
+  <!-- Картинки: лучший вариант уже подставлен, «Выбрать…» — сетка вариантов. -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Картинки</h2>
+      <div class="spacer"></div>
+      <label class="small muted" for="l-artlang">Язык картинок</label>
+      <select id="l-artlang" class="input" style="width: 200px" :disabled="busy || !t.info"
+              @change="artLanguage($event.target.value)">
+        <template x-for="c in t.art_lang_choices || []" :key="c[0]">
+          <option :value="c[0]" x-text="c[1]" :selected="c[0] === t.art_lang"></option>
+        </template>
+      </select>
+    </div>
+    <div class="art-cells">
+      <template x-for="cell in t.art || []" :key="cell.kind">
+        <div class="art-cell">
+          <div class="row nowrap art-cell-head">
+            <span x-text="cell.label"></span>
+            <select class="input input-num" x-show="cell.kind === 'seasonposter'" :disabled="busy || !(t.seasons || []).length"
+                    @change="setSeason($event.target.value)" style="height: var(--h-sm)">
+              <template x-for="s in t.seasons || []" :key="s">
+                <option :value="s" x-text="s" :selected="s === t.season"></option>
+              </template>
+            </select>
+          </div>
+          <div class="art-box" :class="artClass(cell.kind)">
+            <img x-show="cell.candidate" :src="cell.candidate && cell.candidate.thumb" alt="" loading="lazy">
+            <span x-show="!cell.candidate" class="faint" x-text="t.info ? 'нет' : '—'"></span>
+          </div>
+          <div class="small faint art-label" x-text="cell.candidate ? cell.candidate.label : ''"></div>
+          <button type="button" class="btn btn-sm" :disabled="busy || !cell.available" @click="openArt(cell.kind)">Выбрать…</button>
+        </div>
+      </template>
+    </div>
+    <p class="hint" style="margin-top: 8px">Язык картинок — приоритет, а не фильтр: если на этом языке нет, берётся
+      следующий из настроек.</p>
+  </section>
+
+  <!-- План «Сейчас → Станет» и применение. -->
+  <section class="card">
+    <div class="card-head">
+      <h2>План</h2>
+      <span class="sub" x-text="t.plan_status"></span>
+    </div>
+    <div class="row" style="margin-bottom: 12px">
+      <label class="check" :class="{ disabled: busy || !t.send2trash }"
+             :title="t.send2trash ? '' : 'Нужен пакет send2trash'">
+        <input type="checkbox" :checked="t.delete_junk" :disabled="busy || !t.send2trash"
+               @change="options({ delete_junk: $event.target.checked })">
+        удалять мусор<span x-show="!t.send2trash" class="faint"> (нужен send2trash)</span>
+      </label>
+      <span class="small muted" style="margin-left: 12px">Существующие .nfo и картинки:</span>
+      <select class="input" style="width: 240px" :disabled="busy" @change="options({ policy: $event.target.value })">
+        <template x-for="p in t.policies || []" :key="p[0]">
+          <option :value="p[0]" x-text="p[1]" :selected="p[0] === t.policy"></option>
+        </template>
+      </select>
+      <div class="spacer"></div>
+      <button type="button" class="btn" @click="rebuild()" :disabled="busy || !t.info">
+        <svg class="icon"><use href="#i-scan"/></svg>Пересчитать план
+      </button>
+      <button type="button" class="btn btn-primary" @click="apply()" :disabled="busy || !t.can_apply">
+        <svg class="icon"><use href="#i-check"/></svg>Применить
+      </button>
+    </div>
+    <div class="empty" x-show="!(t.rows || []).length">
+      <svg class="icon"><use href="#i-library"/></svg>
+      <div>План «Сейчас → Станет» построится сам после «Найти» — ничего не меняя на диске.</div>
+    </div>
+    <div class="table-wrap" x-show="(t.rows || []).length">
+      <table class="table">
+        <thead><tr><th class="check-cell"></th><th>Сейчас</th><th>Станет</th><th>Статус</th></tr></thead>
+        <tbody>
+          <template x-for="(r, n) in t.rows || []" :key="n">
+            <tr :class="{ dim: r.kind === 'nochange', clickable: r.video }" @dblclick="editEpisode(r)"
+                :title="r.video ? 'Двойной клик — задать сезон и номер серии вручную' : ''">
+              <td class="check-cell">
+                <label class="check" x-show="r.junk" title="Мусор: в Extras или удалить">
+                  <input type="checkbox" :checked="r.sel" :disabled="busy" @change="toggleJunk(r)">
+                </label>
+              </td>
+              <td class="file" x-text="r.now"></td>
+              <td class="file" :class="{ 'accent-text': r.kind === 'change' }" x-text="r.next"></td>
+              <td><span class="badge" :class="rowBadge(r.kind)" x-text="r.status"></span></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted" style="margin-top: 10px" x-show="t.status" x-text="t.status"></p>
+  </section>
+
+  <!-- Окно: выбор тайтла из найденных. -->
+  <div class="overlay" x-show="hitsOpen" x-transition.opacity.duration.120ms @mousedown.self="hitsOpen = false"
+       @keydown.escape.window="hitsOpen && (hitsOpen = false)">
+    <div class="modal wide">
+      <div class="modal-head"><h3>Выбор тайтла</h3>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="hitsOpen = false"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="hits">
+          <template x-for="h in t.hits || []" :key="h.i">
+            <div class="hit-item" :class="{ on: hitIndex === h.i }" @click="hitIndex = h.i" @dblclick="pickHit(h.i)">
+              <div class="hit-thumb"><img :src="h.poster" x-show="h.poster" alt="" loading="lazy"></div>
+              <div class="grow">
+                <div><b x-text="h.label"></b> <span class="faint small" x-text="'· ' + h.kind + ' · TMDb ' + h.tmdb_id"></span></div>
+                <div class="small muted clamp3" x-text="h.overview"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn" @click="hitsOpen = false">Отмена</button>
+        <button type="button" class="btn btn-primary" @click="pickHit(hitIndex)">Выбрать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Окно: сетка вариантов картинки. -->
+  <div class="overlay" x-show="art" x-transition.opacity.duration.120ms @mousedown.self="art = null"
+       @keydown.escape.window="art && (art = null)">
+    <div class="modal xwide" style="height: min(760px, calc(100vh - 48px))">
+      <div class="modal-head">
+        <h3 x-text="art ? 'Выбор: ' + art.title : ''"></h3>
+        <div class="seg">
+          <template x-for="f in [['all','все'],['ru','ru'],['en','en'],['none','без текста']]" :key="f[0]">
+            <button type="button" :class="{ on: artFilter === f[0] }" @click="artFilter = f[0]" x-text="f[1]"></button>
+          </template>
+        </div>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="art = null"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="art-grid" :class="art && artClass(art.kind)">
+          <template x-for="c in artItems()" :key="c.i">
+            <button type="button" class="art-option" :class="{ on: c.chosen }" @click="chooseArt(c)">
+              <div class="art-box" :class="art && artClass(art.kind)"><img :src="c.thumb" alt="" loading="lazy"></div>
+              <span class="small muted" x-text="c.label"></span>
+            </button>
+          </template>
+        </div>
+        <div class="empty" x-show="art && !artItems().length">С таким языком вариантов нет.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Окно: что в библиотеке не обработано. -->
+  <div class="overlay" x-show="pendingOpen" x-transition.opacity.duration.120ms @mousedown.self="pendingOpen = false"
+       @keydown.escape.window="pendingOpen && !$store.ui.dialogs.length && (pendingOpen = false)">
+    <div class="modal xwide">
+      <div class="modal-head"><h3>Что не обработано</h3>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="pendingOpen = false"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body stack">
+        <p class="muted">Список составлен по самим файлам: базы программа не ведёт. Выберите строку — путь
+          подставится наверх, дальше обычный прогон.</p>
+        <div class="table-wrap" style="max-height: 52vh">
+          <table class="table">
+            <thead><tr><th>Тип</th><th>Папка</th><th>Чего не хватает</th></tr></thead>
+            <tbody>
+              <template x-for="p in t.pending || []" :key="p.path">
+                <tr class="clickable" :class="{ selected: pendingSel === p.path }"
+                    @click="pendingSel = p.path" @dblclick="take(p.path)">
+                  <td x-text="p.kind"></td>
+                  <td class="file" x-text="p.name" :title="p.path"></td>
+                  <td x-text="p.why"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn" @click="pendingOpen = false">Закрыть</button>
+        <button type="button" class="btn" @click="ignore()" :disabled="!pendingSel || busy">Больше не предлагать</button>
+        <button type="button" class="btn btn-primary" @click="take()" :disabled="!pendingSel || busy">Взять в работу</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Окно: сезон и серия вручную. -->
+  <div class="overlay" x-show="episode" x-transition.opacity.duration.120ms @mousedown.self="episode = null"
+       @keydown.escape.window="episode && (episode = null)">
+    <div class="modal">
+      <div class="modal-head"><h3>Сезон и серия</h3></div>
+      <template x-if="episode">
+        <div class="modal-body stack">
+          <p class="muted small mono" x-text="episode.name"></p>
+          <p class="muted">Номер из имени файла определить не удалось или он неверный. Задайте вручную — план
+            пересоберётся.</p>
+          <div class="row">
+            <div class="field"><label>Сезон (0 — спецвыпуск)</label>
+              <input class="input input-num" type="text" inputmode="numeric" x-model="episode.season"
+                     @keydown.enter.prevent="saveEpisode()"></div>
+            <div class="field"><label>Серия</label>
+              <input class="input input-num" type="text" inputmode="numeric" x-model="episode.episode"
+                     @keydown.enter.prevent="saveEpisode()"></div>
+          </div>
+        </div>
+      </template>
+      <div class="modal-foot">
+        <button type="button" class="btn" @click="episode = null">Отмена</button>
+        <button type="button" class="btn btn-primary" @click="saveEpisode()">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>

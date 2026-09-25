@@ -356,3 +356,51 @@ select.input option { background: var(--surface-2); color: var(--text); }
 .tracks-choice select { width: 100%; }
 @media (max-width: 1100px) { .tracks-top { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .tracks-choice { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------- вкладка «Медиатека» ----- */
+.identify { display: flex; gap: var(--gap); align-items: flex-end; flex-wrap: wrap; }
+.identify .field.grow { flex: 1 1 280px; }
+.identify .input { width: 100%; }
+.identify .input-num { width: 84px; }
+.hit { display: flex; gap: 14px; align-items: center; margin-top: 14px; padding-top: 14px;
+       border-top: 1px solid var(--border); flex-wrap: wrap; }
+.hit-poster { width: 46px; height: 69px; object-fit: cover; border-radius: 6px; background: var(--surface-3); }
+
+.art-cells { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.art-cell { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.art-cell-head { height: var(--h-sm); color: var(--text-2); font-size: 13px; gap: 8px; }
+.art-cell-head .input-num { width: 70px; }
+.art-box { display: grid; place-items: center; overflow: hidden; border-radius: 8px;
+           background: var(--surface-2); border: 1px solid var(--border); }
+.art-box img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.art-poster { width: 120px; height: 180px; }
+.art-poster img { object-fit: cover; }
+.art-fanart { width: 320px; height: 180px; }
+.art-fanart img { object-fit: cover; }
+.art-logo { width: 240px; height: 180px; padding: 12px;
+            background-color: #1d2230;
+            background-image: linear-gradient(45deg, #232838 25%, transparent 25%, transparent 75%, #232838 75%),
+                              linear-gradient(45deg, #232838 25%, transparent 25%, transparent 75%, #232838 75%);
+            background-size: 16px 16px; background-position: 0 0, 8px 8px; }
+.art-label { max-width: 320px; min-height: 18px; }
+
+.art-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.art-grid.art-fanart, .art-grid.art-logo { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); width: auto; height: auto; padding: 0; background: none; }
+.art-grid.art-poster { width: auto; height: auto; }
+.art-option { display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 6px; border-radius: 10px;
+              border: 2px solid transparent; background: transparent; cursor: pointer; color: inherit; font: inherit; text-align: center; }
+.art-option:hover { background: var(--surface-2); }
+.art-option.on { border-color: var(--accent); background: var(--accent-soft); }
+.art-option .art-box { width: 100%; height: auto; }
+.art-option .art-box.art-poster { aspect-ratio: 2 / 3; }
+.art-option .art-box.art-fanart { aspect-ratio: 16 / 9; }
+.art-option .art-box.art-logo { aspect-ratio: 2 / 1; }
+
+.hits { display: flex; flex-direction: column; gap: 4px; }
+.hit-item { display: flex; gap: 12px; align-items: flex-start; padding: 8px; border-radius: 10px; cursor: pointer;
+            border: 1px solid transparent; }
+.hit-item:hover { background: var(--surface-2); }
+.hit-item.on { background: var(--accent-soft); border-color: rgba(59, 130, 246, .35); }
+.hit-thumb { width: 46px; height: 69px; flex: none; border-radius: 6px; overflow: hidden; background: var(--surface-3); }
+.hit-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.clamp3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin-top: 2px; }

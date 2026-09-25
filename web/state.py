@@ -82,6 +82,9 @@ class AppState:
         if recursive is not None:
             self.recursive = bool(recursive)
         if changed:
+            # Прежняя сводка сканирования к новой папке не относится.
+            self.summary = ("Нажмите «Сканировать», чтобы увидеть дорожки и серии." if path
+                            else "Папка не выбрана.")
             for tab in self.tabs.values():
                 hook = getattr(tab, "on_path_changed", None)
                 if hook is not None:

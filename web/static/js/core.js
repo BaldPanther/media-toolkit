@@ -154,6 +154,7 @@ document.addEventListener("alpine:init", () => {
     loaded: false,
     watched: new Set(),   // операции, начатые с этой страницы, — их ошибки показать
     shownFailures: new Set(),
+    waiters: [],          // кто ждёт конца операции (waitJob)
 
     get busy() { return this.status.busy; },
 
@@ -191,6 +192,13 @@ document.addEventListener("alpine:init", () => {
         }
         if (data.version !== this.version) await this.loadState();
         const last = data.last;
+        if (this.waiters.length) {
+          this.waiters = this.waiters.filter((w) => {
+            if (data.job && data.job.id === w.id) return true;
+            if (last && last.id >= w.id) { w.resolve(last.id === w.id ? last : null); return false; }
+            return true;
+          });
+        }
         if (last && last.status === "failed" && this.watched.has(last.id)
             && !this.shownFailures.has(last.id)) {
           this.shownFailures.add(last.id);
@@ -200,6 +208,15 @@ document.addEventListener("alpine:init", () => {
         this.connected = false;
       }
       this._timer = setTimeout(() => this.poll(), this.status.busy ? 500 : 1000);
+    },
+
+    // Дождаться конца операции: отдаёт её итог (status: done/failed/cancelled).
+    waitJob(job) {
+      if (!job) return Promise.resolve(null);
+      return new Promise((resolve) => {
+        this.waiters.push({ id: job.id, resolve });
+        this.pollSoon();
+      });
     },
 
     pollSoon() {
