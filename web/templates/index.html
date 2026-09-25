@@ -49,6 +49,11 @@
     <div>Нет связи с программой. Если её выключили — запустите снова; страница подхватит её сама.</div>
   </div>
 
+  <div class="notice danger" style="margin: 12px 20px 0" x-show="$store.app.info.mkvtoolnix_error">
+    <svg class="icon"><use href="#i-alert"/></svg>
+    <div><b>MKVToolNix не найден.</b> <span x-text="$store.app.info.mkvtoolnix_error"></span></div>
+  </div>
+
   <!-- Папка — общая для всех вкладок, как строка вверху прежнего окна. -->
   <section class="folderbar">
     <div class="card">

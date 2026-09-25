@@ -220,7 +220,7 @@ select.input option { background: var(--surface-2); color: var(--text); }
 .table tbody tr:hover td { background: rgba(255, 255, 255, 0.025); }
 .table td.num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .table td.time { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.table td.file { word-break: break-word; }
+.table td.file { word-break: break-word; min-width: 180px; }
 .table .dim td { color: var(--text-3); }
 .table tr.selected td { background: var(--accent-soft) !important; }
 .table tr.clickable { cursor: pointer; }
@@ -422,6 +422,8 @@ select.input option { background: var(--surface-2); color: var(--text); }
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .subcard h3 { font-size: 13.5px; }
 .edl-table { max-height: 70vh; }
+.edl-table table { min-width: 1080px; }
+.edl-table td.file { min-width: 220px; }
 .edl-table td { padding-top: 6px; padding-bottom: 6px; }
 .edit-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; align-items: start; }
 .edit-fields { display: flex; flex-direction: column; gap: 10px; }

@@ -18,11 +18,13 @@
         <svg class="icon"><use href="#i-trash"/></svg>Удалить .edl
       </button>
       <div class="spacer"></div>
-      <span class="small muted">Применять к:</span>
-      <div class="seg">
-        <button type="button" :class="{ on: scope === 'all' }" @click="scope = 'all'">ко всем сериям</button>
-        <button type="button" :class="{ on: scope === 'sel' }" @click="scope = 'sel'"
-                x-text="'к выделенным (' + selected().length + ')'"></button>
+      <div class="row nowrap">
+        <span class="small muted">Применять к:</span>
+        <div class="seg">
+          <button type="button" :class="{ on: scope === 'all' }" @click="scope = 'all'">ко всем сериям</button>
+          <button type="button" :class="{ on: scope === 'sel' }" @click="scope = 'sel'"
+                  x-text="'к выделенным (' + selected().length + ')'"></button>
+        </div>
       </div>
     </div>
 

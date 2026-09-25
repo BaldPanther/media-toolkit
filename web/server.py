@@ -152,7 +152,12 @@ def _is_ours(host: str, port: int) -> bool:
 
 
 def _port_free(host: str, port: int) -> bool:
+    """Можно ли занять порт. SO_REUSEADDR — как у самого waitress: иначе порт
+    считался бы занятым ещё минуту после выхода программы (закрытые соединения
+    в TIME_WAIT), и перезапуск уезжал бы на соседний."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if os.name != "nt":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind((host, port))
             return True
