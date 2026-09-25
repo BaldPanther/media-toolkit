@@ -122,21 +122,6 @@ def test_path_change_and_busy_refusal(client, state, tmp_path):
     state.jobs.wait()
 
 
-def test_info_tells_busy_without_login(state, cfg):
-    # По нему автообновление в Docker (хук Watchtower) откладывает перезапуск.
-    app = server.create_app(state, password="пароль")
-    app.testing = True
-    c = app.test_client()
-    assert c.get("/api/info").get_json()["busy"] is False
-    import threading
-    gate = threading.Event()
-    state.jobs.start("Долгая", lambda job: gate.wait(5))
-    assert c.get("/api/info").get_json()["busy"] is True
-    gate.set()
-    state.jobs.wait()
-    assert c.get("/api/info").get_json()["busy"] is False
-
-
 def test_password_guards_api(state, cfg):
     app = server.create_app(state, password="пароль")
     app.testing = True

@@ -84,9 +84,6 @@ def info():
         "edl_hint": edl.install_hint(missing) if missing else "",
         "send2trash": library.send_to_trash_available(),
         "player": player[0] if player else "",
-        # Идёт ли операция. Открыт без входа: по нему автообновление в Docker
-        # (хук Watchtower в docker-compose.zimaos.yaml) откладывает перезапуск.
-        "busy": st.jobs.busy(),
     })
 
 
