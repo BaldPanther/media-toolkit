@@ -40,8 +40,8 @@ EDL-заметки, разборы конкретных сериалов — в�
 - **Docker** — `python app.py --server` (слушает сеть), для ZimaOS и любого
   сервера: обработка идёт рядом с медиатекой, без копирования по Wi-Fi. Один образ, два
   compose-файла: `docker-compose.yaml` (обычный Docker, относительные пути) и
-  `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos`, пути ZimaOS
-  `/DATA/AppData/…`, `/media` и сервис автообновления `updater`).
+  `docker-compose.zimaos.yaml` (то же + метаданные `x-casaos` и пути ZimaOS
+  `/DATA/AppData/…`, `/media`).
 - **Сборки** — GitHub Actions по тегу: Windows и macOS через PyInstaller,
   Docker-образ в GHCR (`ghcr.io/baldpanther/media-toolkit`, amd64 + arm64). См. «Релиз».
 
@@ -64,13 +64,12 @@ EDL-заметки, разборы конкретных сериалов — в�
   сервера (слушать сеть, браузер не открывать, не выключаться самому).
 - `LANG=C.UTF-8` задан явно: без локали mkvmerge не открывает файлы с кириллицей в имени.
 - Пароль на вход — необязательная `WEB_PASSWORD`.
-- **Автообновление** (только `docker-compose.zimaos.yaml`: ZimaOS custom-приложения не
-  обновляет — проверено на 1.7.1) — сервис `updater`, Watchtower-форк
-  `ghcr.io/nicholas-fedor/watchtower:1` (оригинальный containrrr заархивирован и не
-  работает с Docker 29+). Следит только за метками `…watchtower.scope: media-toolkit`,
-  раз в сутки. Pre-update хук читает `busy` из `/api/info` и отвечает 75 — «отложить»;
-  на любой ошибке — 0 (иначе Watchtower тоже пропустит, и сломанная версия не
-  обновится никогда). **`/api/info` держать открытым и с полем `busy`.**
+- Обновление на ZimaOS — вручную: «⋯» → Manage → Save (ZimaOS заново скачивает образ;
+  своей проверки обновлений для Custom Install нет — проверено на 1.7.1). Форма
+  Manage/Custom Install сама дописывает в compose лимит 1 CPU и 4 ГБ — для программы
+  не страшно (обрезка — `-c copy`, детект декодирует только звук).
+- В режиме сервера программа — процесс 1 контейнера: SIGTERM ловится сама
+  (`web/server.py`), иначе `docker stop` ждёт таймаута и убивает.
 - Тесты внутри образа (там другие версии ffmpeg/MKVToolNix, чем на маке):
   ```bash
   docker build -t media-toolkit:dev .
@@ -87,7 +86,7 @@ git tag v1.2.0 && git push origin v1.2.0
 Docker (теги `1.2.0`, `1.2`, `latest`) → GitHub Release с файлами. Ручной запуск
 (`gh workflow run release`) — те же сборки без релиза, образ с тегом `dev`.
 Тег с дефисом (`v1.2.0-rc.1`) — пробная версия: pre-release, образ без `latest`.
-Compose-файлы тянут `:latest`: новый релиз на ZimaOS приезжает сам (updater, ночью).
+Compose-файлы тянут `:latest`: после релиза на ZimaOS — «⋯» → Manage → Save.
 
 - Сборка — `packaging/media-toolkit.spec` (одна на обе ОС). Локально на маке:
   `pip install pyinstaller pillow -r requirements.txt && pyinstaller --noconfirm packaging/media-toolkit.spec`.
