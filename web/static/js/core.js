@@ -37,6 +37,51 @@ const fmt = {
   },
 };
 
+// ------------------------------------------------- выделение строк --
+// Общее для таблиц с «Применять к»: клик — одна строка, Shift — диапазон,
+// ⌘/Ctrl — добавить или убрать строку, галка в первой колонке — то же для
+// мыши и тачскрина. Компонент, который это подмешивает, отдаёт строки в `rows`
+// (у каждой есть `path`), а выбранное уходит на сервер через scopeBody().
+function rowSelection() {
+  return {
+    scope: "all",
+    sel: {},              // выделенные строки: путь → true
+    anchor: null,         // от какой строки тянуть выделение с Shift
+
+    selected() { return Object.keys(this.sel).filter((p) => this.sel[p]); },
+    scopeBody() { return { scope: this.scope, selected: this.selected() }; },
+    rowClick(ev, row, i) {
+      if (ev.detail > 1) return;                  // второй клик двойного — не трогаем выделение
+      if (ev.shiftKey && this.anchor !== null) {
+        const [a, b] = [Math.min(this.anchor, i), Math.max(this.anchor, i)];
+        if (!(ev.metaKey || ev.ctrlKey)) this.sel = {};
+        for (let k = a; k <= b; k++) this.sel[this.rows[k].path] = true;
+      } else if (ev.metaKey || ev.ctrlKey) {
+        this.sel[row.path] = !this.sel[row.path];
+        this.anchor = i;
+      } else {
+        const only = this.sel[row.path] && this.selected().length === 1;
+        this.sel = only ? {} : { [row.path]: true };
+        this.anchor = i;
+      }
+    },
+    toggleRow(row, i) {
+      this.sel[row.path] = !this.sel[row.path];
+      this.anchor = i;
+    },
+    allSelected() { return this.rows.length > 0 && this.selected().length === this.rows.length; },
+    toggleAll() {
+      if (this.allSelected()) this.sel = {};
+      else this.sel = Object.fromEntries(this.rows.map((r) => [r.path, true]));
+    },
+    // Пересканировали — выделение по путям, которых больше нет, снимаем.
+    pruneSelection(rows) {
+      const have = new Set((rows || []).map((r) => r.path));
+      for (const p of Object.keys(this.sel)) if (!have.has(p)) delete this.sel[p];
+    },
+  };
+}
+
 // ------------------------------------------------------------ запросы --
 // Ответ сервера бывает четырёх видов: данные, ошибка (показать и остановиться),
 // сообщение (показать и продолжить) и вопрос. На вопрос страница показывает

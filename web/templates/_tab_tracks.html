@@ -32,8 +32,9 @@
           <svg class="icon"><use href="#i-check"/></svg>Применить (дорожки/субтитры)
         </button>
         <span class="small muted" x-show="hasFiles()">
-          К изменению: <b class="accent-text" x-text="t.n_change"></b>,
-          предупреждений: <b :class="t.n_warn ? 'warn-text' : ''" x-text="t.n_warn"></b>
+          К изменению: <b class="accent-text" x-text="count('change')"></b>,
+          предупреждений: <b :class="count('warn') > 0 ? 'warn-text' : ''" x-text="count('warn')"></b><span
+            x-show="scope === 'sel'"> — по выделенным</span>
         </span>
       </div>
     </section>
@@ -62,7 +63,16 @@
   <section class="card">
     <div class="card-head">
       <h2>Файлы</h2>
-      <span class="sub" x-show="hasFiles()" x-text="(t.rows || []).length + ' ' + fmt.plural((t.rows || []).length, 'файл', 'файла', 'файлов')"></span>
+      <span class="sub" x-show="hasFiles()" x-text="rows.length + ' ' + fmt.plural(rows.length, 'файл', 'файла', 'файлов')"></span>
+      <div class="spacer"></div>
+      <div class="row nowrap" x-show="hasFiles()">
+        <span class="small muted">Применять к:</span>
+        <div class="seg">
+          <button type="button" :class="{ on: scope === 'all' }" @click="scope = 'all'">ко всем файлам</button>
+          <button type="button" :class="{ on: scope === 'sel' }" @click="scope = 'sel'"
+                  x-text="'к выделенным (' + selected().length + ')'"></button>
+        </div>
+      </div>
     </div>
     <div class="empty" x-show="!hasFiles()">
       <svg class="icon"><use href="#i-film"/></svg>
@@ -73,13 +83,16 @@
       <table class="table">
         <thead>
           <tr>
+            <th class="check-cell"><label class="check"><input type="checkbox" :checked="allSelected()" @change="toggleAll()" title="Выделить все"></label></th>
             <th>Файл</th><th>Аудио сейчас</th><th>→ Новая аудио</th>
             <th>Субтитры сейчас</th><th>→ Новые субтитры</th><th>Статус</th>
           </tr>
         </thead>
         <tbody>
-          <template x-for="r in t.rows || []" :key="r.path">
-            <tr :class="{ dim: r.kind === 'nochange' }">
+          <template x-for="(r, i) in rows" :key="r.path">
+            <tr class="clickable" :class="{ dim: r.kind === 'nochange' || !inScope(r), selected: sel[r.path] }"
+                @click="rowClick($event, r, i)">
+              <td class="check-cell" @click.stop><label class="check"><input type="checkbox" :checked="sel[r.path]" @change="toggleRow(r, i)"></label></td>
               <td class="file" x-text="r.file" :title="r.path"></td>
               <td x-text="r.acur"></td>
               <td :class="{ 'accent-text': r.kind === 'change' }" x-text="r.anew"></td>

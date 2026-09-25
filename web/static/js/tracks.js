@@ -3,8 +3,22 @@
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("tracksTab", () => ({
+    ...rowSelection(),
+
     get t() { return this.$store.app.tabs.tracks || {}; },
-    hasFiles() { return (this.t.rows || []).length > 0; },
+    get rows() { return this.t.rows || []; },
+    hasFiles() { return this.rows.length > 0; },
+
+    init() {
+      this.$watch("t.rows", (rows) => this.pruneSelection(rows));
+    },
+
+    // Строка вне «Применять к» — её «Применить» не тронет, показываем приглушённой.
+    inScope(row) { return this.scope === "all" || !!this.sel[row.path]; },
+    count(kind) {
+      return this.rows.filter((r) => this.inScope(r)
+        && (kind === "warn" ? r.kind === "warn" || r.kind === "error" : r.kind === kind)).length;
+    },
 
     badge(kind) {
       return { change: "accent", warn: "warn", error: "danger", nochange: "plain" }[kind] || "";
@@ -14,10 +28,10 @@ document.addEventListener("alpine:init", () => {
       this.$store.app.loadState();
     },
     async apply() {
-      await api.post("/api/tracks/apply");
+      await api.post("/api/tracks/apply", this.scopeBody());
     },
     async downloadSubs() {
-      await api.post("/api/tracks/subs", { only_missing: this.t.subs_only_missing });
+      await api.post("/api/tracks/subs", { only_missing: this.t.subs_only_missing, ...this.scopeBody() });
     },
   }));
 });

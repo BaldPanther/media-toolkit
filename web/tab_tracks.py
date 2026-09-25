@@ -51,8 +51,26 @@ class TracksTab:
         self.subs_status = ""
 
     # ------------------------------------------------------------- план --
-    def plans(self):
-        return core.plan_changes(self.st.files, self.audio_key, self.sub_key)
+    def plans(self, files=None):
+        return core.plan_changes(self.st.files if files is None else files,
+                                 self.audio_key, self.sub_key)
+
+    def scope(self, data: dict) -> list:
+        """Файлы, к которым применять: все или выделенные в таблице («Применять к»)."""
+        if not self.st.files:
+            raise Info("Нет данных", "Сначала просканируйте папку.")
+        if data.get("scope") == "sel":
+            wanted = {str(p) for p in data.get("selected") or []}
+            files = [f for f in self.st.files if str(f.path) in wanted]
+            if not files:
+                raise Info("Нет выделения",
+                           "Выделите файлы в таблице или переключите «Применять к: ко всем файлам».")
+            return files
+        return list(self.st.files)
+
+    @staticmethod
+    def scope_phrase(data: dict) -> str:
+        return " — по выделенным файлам" if data.get("scope") == "sel" else ""
 
     @staticmethod
     def _cur_default(tracks) -> str:
@@ -163,20 +181,20 @@ def apply():
     t = tab()
     st = t.st
     st.jobs.ensure_idle()
-    if not st.files:
-        raise Info("Нет данных", "Сначала просканируйте папку.")
+    data = replies.body()
+    files = t.scope(data)
     if t.audio_key is None and t.sub_key is None:
         raise Info("Ничего не выбрано", "Выберите аудио и/или субтитры.")
     try:
         _, propedit = core.find_tools()
     except FileNotFoundError as e:
         raise UserError("MKVToolNix не найден", str(e))
-    plans = t.plans()
+    plans = t.plans(files)
     todo = [p for p in plans if not p.file.error and core.build_command(propedit, p)]
     if not todo:
-        raise Info("Нечего применять", "Во всех файлах уже стоят нужные дорожки.")
+        raise Info("Нечего применять", "В этих файлах уже стоят нужные дорожки.")
     warns = sum(1 for p in plans if p.warnings)
-    text = f"Будет изменено файлов: {len(todo)}."
+    text = f"Будет изменено файлов: {len(todo)}{t.scope_phrase(data)}."
     if warns:
         text += f"\nС предупреждениями (будут пропущены или частично): {warns}."
     text += "\n\nИзменения обратимы — само видео не трогается."
@@ -222,9 +240,8 @@ def download_subs():
     if err:
         raise UserError("subliminal не установлен",
                         f"Для скачивания субтитров нужен пакет subliminal:\n\n    pip install subliminal\n\n({err})")
-    if not st.files:
-        raise Info("Нет данных", "Сначала просканируйте папку.")
     data = replies.body()
+    files = t.scope(data)
     if "only_missing" in data:
         t.subs_only_missing = bool(data["only_missing"])
     settings = subsmod.load_settings()
@@ -237,15 +254,16 @@ def download_subs():
                         "Данные OpenSubtitles не заданы. Бесплатные источники для русского "
                         "почти всегда пусты.\nПродолжить только на запасных провайдерах?",
                         yes="Продолжить")
-    ok_files = [f for f in st.files if not f.error]
+    ok_files = [f for f in files if not f.error]
     if t.subs_only_missing:
         targets = [f.path for f in subsmod.missing_russian(ok_files)]
     else:
         targets = [f.path for f in ok_files]
     if not targets:
-        raise Info("Нечего качать", "У всех серий русские субтитры уже есть.")
+        raise Info("Нечего качать", "У этих серий русские субтитры уже есть.")
     replies.confirm("go", "Скачивание субтитров",
-                    f"Найти и скачать русские субтитры для {len(targets)} серий?\n"
+                    f"Найти и скачать русские субтитры для {len(targets)} серий"
+                    f"{t.scope_phrase(data)}?\n"
                     "Файлы лягут рядом как .ru.srt — видео не трогается.", yes="Скачать")
 
     t.subs_status = ""

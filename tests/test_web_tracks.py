@@ -124,3 +124,35 @@ def test_subs_download_asks_and_reports(env, monkeypatch):
     assert st.jobs.wait()
     assert got["targets"] == ["S01E01.mkv", "S01E02.mkv"]
     assert _tab(c)["subs_status"] == "Субтитры: скачано 2, не найдено 0, ошибок 0."
+
+
+def test_apply_only_selected_files(env, monkeypatch):
+    st, c = env
+    files = [_file("S01E01.mkv"), _file("S01E02.mkv"), _file("S01E03.mkv")]
+    st.apply_scan(files)
+    monkeypatch.setattr(core, "find_tools", lambda: ("mkvmerge", "mkvpropedit"))
+    applied = []
+    monkeypatch.setattr(core, "apply_plan", lambda pe, plan: (applied.append(plan.file.path.name),
+                                                             core.ApplyResult(plan=plan, ok=True))[1])
+    monkeypatch.setattr(core, "scan_folder", lambda folder, recursive, **kw: files)
+    lostfilm = _tab(c)["audio_options"][0]["id"]
+    c.post("/api/tracks/choice", json={"audio": lostfilm, "sub": ""})
+    body = {"scope": "sel", "selected": [str(files[1].path)]}
+    ask = c.post("/api/tracks/apply", json=body).get_json()
+    assert "Будет изменено файлов: 1 — по выделенным файлам." in ask["ask"]["text"]
+    c.post("/api/tracks/apply", json={**body, "answers": {"apply": True}})
+    assert st.jobs.wait()
+    assert applied == ["S01E02.mkv"]
+    empty = c.post("/api/tracks/apply", json={"scope": "sel", "selected": []}).get_json()
+    assert empty["message"]["title"] == "Нет выделения"
+
+
+def test_subs_only_selected_files(env, monkeypatch):
+    import subs
+    st, c = env
+    st.apply_scan([_file("S01E01.mkv"), _file("S01E02.mkv")])
+    monkeypatch.setattr(subs, "subliminal_available", lambda: "")
+    monkeypatch.setattr(subs, "load_settings", lambda: subs.Settings("u", "p", "k", False))
+    ask = c.post("/api/tracks/subs", json={"only_missing": False, "scope": "sel",
+                                           "selected": ["/lib/Show/S01E02.mkv"]}).get_json()
+    assert "для 1 серий — по выделенным файлам?" in ask["ask"]["text"]

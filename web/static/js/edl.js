@@ -10,10 +10,8 @@ const EDL_BOUND_PAD = { is: "intro_start", ie: "intro_end", os: "outro_start", o
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("edlTab", () => ({
+    ...rowSelection(),
     sub: "opt",
-    scope: "all",
-    sel: {},              // выделенные серии: путь → true
-    anchor: null,         // от какой строки тянуть выделение с Shift
     manual: { intro_start: "", intro_end: "", intro_dur: "", outro_start: "", outro_end: "",
               outro_last: "", outro_from_start: "", recap_end: "" },
     calcText: "",
@@ -26,39 +24,7 @@ document.addEventListener("alpine:init", () => {
     get rows() { return this.t.rows || []; },
 
     init() {
-      // Пересканировали — выделение по путям, которых больше нет, снимаем.
-      this.$watch("t.rows", (rows) => {
-        const have = new Set((rows || []).map((r) => r.path));
-        for (const p of Object.keys(this.sel)) if (!have.has(p)) delete this.sel[p];
-      });
-    },
-
-    // ---------------------------------------------------- выделение --
-    selected() { return Object.keys(this.sel).filter((p) => this.sel[p]); },
-    scopeBody() { return { scope: this.scope, selected: this.selected() }; },
-    rowClick(ev, row, i) {
-      if (ev.detail > 1) return;                  // второй клик двойного — не трогаем выделение
-      if (ev.shiftKey && this.anchor !== null) {
-        const [a, b] = [Math.min(this.anchor, i), Math.max(this.anchor, i)];
-        if (!(ev.metaKey || ev.ctrlKey)) this.sel = {};
-        for (let k = a; k <= b; k++) this.sel[this.rows[k].path] = true;
-      } else if (ev.metaKey || ev.ctrlKey) {
-        this.sel[row.path] = !this.sel[row.path];
-        this.anchor = i;
-      } else {
-        const only = this.sel[row.path] && this.selected().length === 1;
-        this.sel = only ? {} : { [row.path]: true };
-        this.anchor = i;
-      }
-    },
-    toggleRow(row, i) {
-      this.sel[row.path] = !this.sel[row.path];
-      this.anchor = i;
-    },
-    allSelected() { return this.rows.length > 0 && this.selected().length === this.rows.length; },
-    toggleAll() {
-      if (this.allSelected()) this.sel = {};
-      else this.sel = Object.fromEntries(this.rows.map((r) => [r.path, true]));
+      this.$watch("t.rows", (rows) => this.pruneSelection(rows));
     },
 
     // ----------------------------------------------------- настройки --

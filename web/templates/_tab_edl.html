@@ -90,56 +90,83 @@
     </div>
 
     <!-- Задать вручную -->
-    <div x-show="sub === 'manual'">
-      <p class="hint" style="margin-bottom: 12px">Время: MM:SS, H:MM:SS или секунды. Применяется по переключателю
-        «Применять к» вверху.</p>
-      <div class="manual-grid">
-        <span class="form-label">Интро</span>
-        <div class="row">
-          <span class="small muted">начало</span><input class="input input-time" x-model="manual.intro_start" :disabled="busy">
-          <span class="small muted">конец</span><input class="input input-time" x-model="manual.intro_end" :disabled="busy">
-          <button type="button" class="btn btn-sm" @click="manualOp('intro')" :disabled="busy">Задать</button>
-        </div>
-        <span class="form-label faint">…или длительность</span>
-        <div class="row">
-          <input class="input input-time" x-model="manual.intro_dur" :disabled="busy"><span class="small muted">сек</span>
-          <button type="button" class="btn btn-sm" @click="manualOp('intro_dur')" :disabled="busy">Задать</button>
-          <span class="hint">продолжительность интро: конец = начало серии + N</span>
-        </div>
-
-        <span class="form-label">Титры</span>
-        <div class="row">
-          <span class="small muted">начало</span><input class="input input-time" x-model="manual.outro_start" :disabled="busy">
-          <span class="small muted">конец</span><input class="input input-time" x-model="manual.outro_end" :disabled="busy">
-          <button type="button" class="btn btn-sm" @click="manualOp('outro')" :disabled="busy">Задать</button>
-          <span class="hint">пусто — до конца файла; укажите, если после титров есть сцена</span>
-        </div>
-        <span class="form-label faint">…или последние</span>
-        <div class="row">
-          <input class="input input-time" x-model="manual.outro_last" :disabled="busy"><span class="small muted">сек</span>
-          <button type="button" class="btn btn-sm" @click="manualOp('outro_last')" :disabled="busy">Задать</button>
-          <span class="hint">продолжительность титров от конца файла</span>
-        </div>
-        <span class="form-label faint">…знаете только начало</span>
-        <div class="row">
-          <input class="input input-time" x-model="manual.outro_from_start" :disabled="busy" placeholder="56:10">
-          <button type="button" class="btn btn-sm" @click="calc()" :disabled="busy">Посчитать</button>
-          <span class="hint" x-text="calcText || 'время начала титров — посчитаем продолжительность по выделенной серии'"></span>
+    <div class="stack" x-show="sub === 'manual'">
+      <p class="hint">Время: MM:SS, H:MM:SS или секунды. Действует на серии по «Применять к» вверху.</p>
+      <div class="manual-cards">
+        <div class="subcard">
+          <h3>Интро</h3>
+          <div class="field">
+            <span class="label">Начало и конец</span>
+            <div class="row nowrap">
+              <input class="input input-time" placeholder="начало" x-model="manual.intro_start" :disabled="busy">
+              <span class="faint">–</span>
+              <input class="input input-time" placeholder="конец" x-model="manual.intro_end" :disabled="busy">
+              <button type="button" class="btn" @click="manualOp('intro')" :disabled="busy">Задать</button>
+            </div>
+          </div>
+          <div class="field">
+            <span class="label">Или длительность, сек</span>
+            <div class="row nowrap">
+              <input class="input input-time" x-model="manual.intro_dur" :disabled="busy">
+              <button type="button" class="btn" @click="manualOp('intro_dur')" :disabled="busy">Задать</button>
+            </div>
+            <span class="hint">Конец = начало серии + N. Серии без найденного начала пропускаются.</span>
+          </div>
         </div>
 
-        <span class="form-label">Recap</span>
-        <div class="row">
-          <span class="small muted">до</span><input class="input input-time" x-model="manual.recap_end" :disabled="busy">
-          <button type="button" class="btn btn-sm" @click="manualOp('recap')" :disabled="busy">Задать</button>
-          <span class="hint">с начала файла</span>
+        <div class="subcard">
+          <h3>Титры</h3>
+          <div class="field">
+            <span class="label">Начало и конец</span>
+            <div class="row nowrap">
+              <input class="input input-time" placeholder="начало" x-model="manual.outro_start" :disabled="busy">
+              <span class="faint">–</span>
+              <input class="input input-time" placeholder="конец" x-model="manual.outro_end" :disabled="busy">
+              <button type="button" class="btn" @click="manualOp('outro')" :disabled="busy">Задать</button>
+            </div>
+            <span class="hint">Конец пустой — до конца файла. Укажите его, если после титров есть сцена.</span>
+          </div>
+          <div class="field">
+            <span class="label">Или последние, сек</span>
+            <div class="row nowrap">
+              <input class="input input-time" x-model="manual.outro_last" :disabled="busy">
+              <button type="button" class="btn" @click="manualOp('outro_last')" :disabled="busy">Задать</button>
+            </div>
+            <span class="hint">Отсчитываются от конца файла: удобно, когда титры везде одной длины.</span>
+          </div>
+          <div class="field">
+            <span class="label">Знаю только начало</span>
+            <div class="row nowrap">
+              <input class="input input-time" x-model="manual.outro_from_start" :disabled="busy" placeholder="56:10">
+              <button type="button" class="btn" @click="calc()" :disabled="busy">Посчитать</button>
+            </div>
+            <span class="hint" :class="{ 'accent-text': calcText }"
+                  x-text="calcText || 'Продолжительность посчитается по выделенной серии и подставится в «Или последние».'"></span>
+          </div>
         </div>
 
-        <span class="form-label">Убрать</span>
-        <div class="row">
-          <button type="button" class="btn btn-sm" @click="manualOp('clear_intro')" :disabled="busy">интро</button>
-          <button type="button" class="btn btn-sm" @click="manualOp('clear_outro')" :disabled="busy">титры</button>
-          <button type="button" class="btn btn-sm" @click="manualOp('clear_recap')" :disabled="busy">recap</button>
-          <button type="button" class="btn btn-sm" @click="manualOp('clear_all')" :disabled="busy">всё</button>
+        <div class="stack">
+          <div class="subcard">
+            <h3>Recap</h3>
+            <div class="field">
+              <span class="label">До, от начала файла</span>
+              <div class="row nowrap">
+                <input class="input input-time" x-model="manual.recap_end" :disabled="busy">
+                <button type="button" class="btn" @click="manualOp('recap')" :disabled="busy">Задать</button>
+              </div>
+              <span class="hint">«В предыдущих сериях» — автоматически не ищется.</span>
+            </div>
+          </div>
+          <div class="subcard">
+            <h3>Убрать</h3>
+            <div class="row">
+              <button type="button" class="btn" @click="manualOp('clear_intro')" :disabled="busy">интро</button>
+              <button type="button" class="btn" @click="manualOp('clear_outro')" :disabled="busy">титры</button>
+              <button type="button" class="btn" @click="manualOp('clear_recap')" :disabled="busy">recap</button>
+              <button type="button" class="btn" @click="manualOp('clear_all')" :disabled="busy">всё</button>
+            </div>
+            <span class="hint">Сегмент целиком — например, когда детект нашёл лишнее.</span>
+          </div>
         </div>
       </div>
     </div>
