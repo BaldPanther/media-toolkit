@@ -89,8 +89,10 @@ document.addEventListener("alpine:init", () => {
     dialogs: [],        // стек: {kind, title, text, buttons, resolve}
     toasts: [],
 
+    _seq: 0,
     open(dialog) {
-      return new Promise((resolve) => this.dialogs.push({ ...dialog, resolve }));
+      const id = ++this._seq;
+      return new Promise((resolve) => this.dialogs.push({ ...dialog, id, resolve }));
     },
     close(dialog, value) {
       this.dialogs = this.dialogs.filter((d) => d !== dialog);

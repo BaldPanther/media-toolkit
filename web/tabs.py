@@ -3,7 +3,7 @@ from __future__ import annotations
 
 # Порядок = порядок вкладок на странице и порядок работы: сначала раскладка и
 # метаданные (она переименовывает файлы), потом дорожки и заставки.
-_MODULES: list[str] = []
+_MODULES: list[str] = ["tab_tracks"]
 
 
 def register(app, state) -> None:

@@ -289,3 +289,76 @@ def browse():
 
 def remember_path(path: str) -> None:
     update_app_settings(last_path=path)
+
+
+# --------------------------------------------------------- сканирование --
+def scan_summary(files, target: Path) -> str:
+    ok = [f for f in files if not f.error]
+    groups = core.group_by_audio_signature(ok)
+    errs = len(files) - len(ok)
+    msg = f"Найдено MKV: {len(files)} (ошибок: {errs}). Раскладок аудио: {len(groups)}."
+    if len(groups) > 1:
+        msg += "  ⚠ Раскладки различаются между файлами — выбирайте дорожку по названию."
+    if not files and target.is_file():
+        # Указан одиночный файл не того формата: mkvpropedit работает
+        # только с MKV, но вкладка «Медиатека» такой файл всё равно разложит.
+        msg = (f"«{target.name}» — не MKV, дорожки в нём менять нечем. "
+               "Разложить его по папкам можно на вкладке «Медиатека».")
+    return msg
+
+
+def start_scan(st, folder: str, recursive: bool, rescan: bool = False, title="Сканирование"):
+    """Сканирует папку в фоне; результат — во вкладки. Возвращает операцию."""
+    def work(job):
+        job.progress(0, 0, "список файлов…")
+        try:
+            return core.scan_folder(
+                folder, recursive, stop=job.cancelled,
+                progress=lambda i, total, p: job.progress(i, total, f"{i}/{total}: {Path(p).name}"))
+        except Exception:
+            st.summary = "Ошибка сканирования."
+            raise
+
+    def done(job, files):
+        if job.cancelled():
+            # Частичный список не показываем — остаётся прежнее состояние.
+            st.summary = "Сканирование отменено."
+            st.log.add("Сканирование отменено.")
+            job.summary = st.summary
+            return
+        msg = scan_summary(files, Path(folder))
+        st.summary = msg
+        st.log.add(msg)
+        job.summary = msg
+        st.apply_scan(files, rescan)
+
+    return st.jobs.start(title, work, on_done=done)
+
+
+@bp.post("/api/scan")
+def scan():
+    st = state()
+    st.jobs.ensure_idle()
+    data = replies.body()
+    folder = str(data.get("path") or st.path).strip()
+    # Путь может указывать и на одиночный файл фильма — его выбирают
+    # кнопкой «Файл…», и дорожки в нём настраиваются так же, как в сериале.
+    if not folder or not Path(folder).exists():
+        raise UserError("Нет такой папки", "Укажите существующую папку или файл.")
+    recursive = bool(data.get("recursive", st.recursive))
+    st.set_path(folder, recursive)
+    remember_path(folder)
+    # Нажатие «Сканировать» — тоже подтверждение выбора папки: вкладка
+    # «Медиатека» подставляет по ней название, если его ещё нет.
+    for tab in st.tabs.values():
+        hook = getattr(tab, "on_scan_requested", None)
+        if hook is not None:
+            hook(folder)
+    try:
+        core.find_tools()
+    except FileNotFoundError as e:
+        raise UserError("MKVToolNix не найден", str(e))
+    st.summary = "Сканирование…"
+    st.log.add(f"Сканирование: {folder} (рекурсивно: {'да' if recursive else 'нет'})")
+    job = start_scan(st, folder, recursive)
+    return jsonify({"job": job.to_dict()})

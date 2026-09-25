@@ -349,3 +349,10 @@ select.input option { background: var(--surface-2); color: var(--text); }
   .dock-bar { padding: 0 12px; }
   .progress { flex-basis: 30%; }
 }
+
+/* ------------------------------------------------ вкладка «Дорожки» ----- */
+.tracks-top { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--gap); }
+.tracks-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--gap); }
+.tracks-choice select { width: 100%; }
+@media (max-width: 1100px) { .tracks-top { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .tracks-choice { grid-template-columns: 1fr; } }

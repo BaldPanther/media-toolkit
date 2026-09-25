@@ -55,6 +55,9 @@ class AppState:
         self.path = start_path
         self.recursive = True
         self.summary = "Папка не выбрана."
+        # Результат последнего сканирования (core.MkvFile) — общий для вкладок
+        # «Дорожки» и «EDL», как и в прежнем окне.
+        self.files: list = []
         # Вкладки: у каждой своё состояние и свои реакции на смену папки и скан.
         self.tabs: dict[str, object] = {}
         # Когда страница последний раз спрашивала статус. На своей машине сервер
@@ -92,5 +95,22 @@ class AppState:
         p = Path(self.path)
         return p if p.exists() else None
 
+    def apply_scan(self, files, rescan: bool = False) -> None:
+        """Новый результат сканирования — вкладкам. rescan: после «Применить»,
+        выбор в вкладках сохраняется."""
+        with self.lock:
+            self.files = files
+            for tab in self.tabs.values():
+                hook = getattr(tab, "on_scan", None)
+                if hook is not None:
+                    hook(files, rescan)
+        self.touch()
+
+    def replace_file(self, fresh) -> None:
+        """Один файл пересканирован (после обрезки хвоста) — подменить его в списке."""
+        with self.lock:
+            self.files = [fresh if str(f.path) == str(fresh.path) else f for f in self.files]
+
     def to_dict(self) -> dict:
-        return {"path": self.path, "recursive": self.recursive, "summary": self.summary}
+        return {"path": self.path, "recursive": self.recursive, "summary": self.summary,
+                "scanned": len(self.files)}

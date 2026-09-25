@@ -65,7 +65,7 @@
 </div>
 
 <!-- Вопросы, ошибки, сообщения — стопкой, верхний отвечает на клавиши. -->
-<template x-for="d in $store.ui.dialogs" :key="d">
+<template x-for="d in $store.ui.dialogs" :key="d.id">
   <div class="overlay" style="z-index: 70">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
