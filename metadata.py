@@ -541,6 +541,20 @@ def search(kind: str, query: str, settings, year: int | None = None) -> list[Sea
     return hits
 
 
+def search_any(query: str, settings) -> list[SearchHit]:
+    """Фильмы и сериалы сразу — когда вид заранее не выбран (поиск раздач)."""
+    hits = []
+    for r in tmdb.search_multi(query, settings.tmdb_key, language=settings.meta_language):
+        date = r.get("release_date") or r.get("first_air_date")
+        hits.append(SearchHit(
+            kind=MOVIE if r["media_type"] == "movie" else TV, tmdb_id=r.get("id"),
+            title=r.get("title") or r.get("name") or "", year=_year(date),
+            overview=r.get("overview") or "",
+            poster_url=tmdb.image_url(r.get("poster_path"), "w185") or "",
+        ))
+    return hits
+
+
 def search_by_imdb(imdb_id: str, settings) -> list[SearchHit]:
     """Поиск по вставленному IMDb-ID — запасной путь, когда название не находится."""
     data = tmdb.find_by_imdb(imdb_id, settings.tmdb_key)

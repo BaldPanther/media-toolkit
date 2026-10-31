@@ -16,12 +16,8 @@
       <h2>Найти и скачать</h2><span class="sub">ищет по всем названиям тайтла из TMDb на трекерах</span>
     </div>
     <div class="row nowrap">
-      <div class="seg">
-        <button type="button" :class="{ on: kind === 'tv' }" @click="kind = 'tv'">сериал</button>
-        <button type="button" :class="{ on: kind === 'movie' }" @click="kind = 'movie'">фильм</button>
-      </div>
       <input class="input grow" type="text" x-model="q" @keydown.enter.prevent="find()"
-             placeholder="Название — например, Тёмная материя" spellcheck="false" :disabled="busy">
+             placeholder="Фильм или сериал — например, Тёмная материя" spellcheck="false" :disabled="busy">
       <button type="button" class="btn btn-primary" @click="find()" :disabled="busy || !q.trim()">
         <svg class="icon"><use href="#i-search"/></svg>Найти
       </button>
@@ -33,7 +29,7 @@
         <div class="hit clickable-hit" @click="pick(h.i)">
           <img class="hit-poster" :src="h.poster" x-show="h.poster" alt="">
           <div class="grow">
-            <div><b x-text="h.label"></b> <span class="small faint" x-text="h.kind"></span></div>
+            <div><b x-text="h.label"></b> <span class="badge plain" x-text="h.kind"></span></div>
             <div class="small muted clamp2" x-text="h.overview"></div>
           </div>
         </div>

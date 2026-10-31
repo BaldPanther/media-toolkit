@@ -5,7 +5,6 @@ document.addEventListener("alpine:init", () => {
   Alpine.data("torrentsTab", () => ({
     view: "search",
     q: "",
-    kind: "tv",
     showAll: false,
     choosing: false,      // снова показать карточки TMDb, когда тайтл уже выбран
     sorts: [["best", "Лучшие"], ["seeds", "По сидам"], ["size", "По размеру"]],
@@ -23,7 +22,6 @@ document.addEventListener("alpine:init", () => {
         if (this.sorts.some((o) => o[0] === by)) { this.sortBy = by; this.sortDesc = dir !== "asc"; }
       } catch (e) { /* без хранилища */ }
       this.$watch("s.query", (v) => { if (v && !this.q) this.q = v; });
-      this.$watch("s.kind", (v) => { if (v) this.kind = v; });
     },
     setView(v) {
       this.view = v;
@@ -35,7 +33,7 @@ document.addEventListener("alpine:init", () => {
     async find() {
       if (!this.q.trim()) return;
       this.showAll = false;
-      const res = await api.post("/api/torrents/search", { query: this.q, kind: this.kind });
+      const res = await api.post("/api/torrents/search", { query: this.q });
       if (!res) return;
       await this.$store.app.waitJob(res.job);
       await this.$store.app.loadState();

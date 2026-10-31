@@ -168,7 +168,7 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "_LEGACY_DIR", tmp_path / "legacy")
     metaconf.save_settings(metaconf.Settings(tmdb_key="k", tv_roots=[str(tmp_path / "tv")]))
     qbit.save_settings(qbit.Settings(url="http://q", auto=True))
-    monkeypatch.setattr(metadata, "search", lambda kind, q, s, year=None:
+    monkeypatch.setattr(metadata, "search_any", lambda q, s:
                         [metadata.SearchHit(library.TV, 1, "Dark Matter", 2024)])
     monkeypatch.setattr(search, "title_info", lambda kind, tmdb_id, key: _title())
     monkeypatch.setattr(search, "find", lambda title, sources=None, log=None: _releases([
@@ -236,3 +236,14 @@ def test_watch_from_search(web):
     assert c.get("/api/state").get_json()["tabs"]["torrents"]["watch"][0]["mode"] == "episode"
     c.post("/api/torrents/watch/remove", json={"id": w["id"]})
     assert c.get("/api/state").get_json()["tabs"]["torrents"]["watch"] == []
+
+
+def test_search_any_mixes_movies_and_series(monkeypatch):
+    import tmdb
+    monkeypatch.setattr(tmdb, "_call", lambda path, key, **p: {"results": [
+        {"media_type": "movie", "id": 1, "title": "Дюна", "release_date": "2021-09-15"},
+        {"media_type": "person", "id": 2, "name": "Дени Вильнёв"},
+        {"media_type": "tv", "id": 3, "name": "Дюна: Пророчество", "first_air_date": "2024-11-17"},
+    ]} if path == "/search/multi" else None)
+    hits = metadata.search_any("Дюна", type("S", (), {"tmdb_key": "k", "meta_language": "ru-RU"})())
+    assert [(h.kind, h.tmdb_id, h.year) for h in hits] == [(library.MOVIE, 1, 2021), (library.TV, 3, 2024)]

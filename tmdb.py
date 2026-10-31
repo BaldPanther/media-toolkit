@@ -66,6 +66,13 @@ def search(kind: str, query: str, api_key: str, year: int | None = None,
     return (data or {}).get("results", []) or []
 
 
+def search_multi(query: str, api_key: str, language: str = "en-US") -> list[dict]:
+    """Фильмы и сериалы одним списком, по релевантности TMDb; люди отброшены.
+    У каждого результата `media_type` — "movie" или "tv"."""
+    data = _call("/search/multi", api_key, query=query, language=language, include_adult="false")
+    return [r for r in (data or {}).get("results", []) or [] if r.get("media_type") in KINDS]
+
+
 def find_by_imdb(imdb_id: str, api_key: str) -> dict:
     """IMDb ID (tt…) → {'movie_results': [...], 'tv_results': [...]}.
 

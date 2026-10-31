@@ -35,7 +35,6 @@ class TorrentsTab:
                                          autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.
         self.query = ""
-        self.kind = library.TV
         self.hits: list[metadata.SearchHit] = []
         self.hit: metadata.SearchHit | None = None
         self.title: search.Title | None = None
@@ -90,7 +89,6 @@ class TorrentsTab:
             search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
         return {
             "query": self.query,
-            "kind": self.kind,
             "hits": [{"i": i, "label": h.label(), "poster": h.poster_url, "overview": h.overview,
                       "kind": "фильм" if h.kind == library.MOVIE else "сериал"}
                      for i, h in enumerate(self.hits)],
@@ -180,13 +178,12 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
 
 @bp.post("/api/torrents/search")
 def search_title():
-    """Название → карточки TMDb; одна — сразу к раздачам."""
+    """Название → карточки TMDb, фильмы и сериалы вместе; одна — сразу к раздачам.
+    Категория qBittorrent и папка — по выбранной карточке."""
     t = tab()
     t.st.jobs.ensure_idle()
     data = replies.body()
     t.query = str(data.get("query", t.query)).strip()
-    if data.get("kind") in (library.TV, library.MOVIE):
-        t.kind = data["kind"]
     if not t.query:
         raise UserError("Нет названия", "Впишите, что искать.")
     meta = metaconf.load_settings()
@@ -195,7 +192,7 @@ def search_title():
 
     def work(job):
         job.progress(0, 0, "поиск в TMDb…")
-        t.hits, t.hit, t.title, t.releases = metadata.search(t.kind, t.query, meta), None, None, []
+        t.hits, t.hit, t.title, t.releases = metadata.search_any(t.query, meta), None, None, []
         t.search_status = ""
         if len(t.hits) == 1:
             _select(t, t.hits[0], job)
