@@ -103,9 +103,28 @@ class Title:
     original: str = ""
     seasons: list[Season] = field(default_factory=list)
     status: str = ""                    # у сериала: «Returning Series», «Ended»
+    last_aired: tuple[int, int] = (0, 0)     # (сезон, серия) последней вышедшей
+    next_air: tuple[int, int, str] = (0, 0, "")  # следующая: (сезон, серия, дата)
 
     def season(self, number: int) -> Season | None:
         return next((s for s in self.seasons if s.number == number), None)
+
+    def aired(self, number: int) -> int:
+        """Сколько серий сезона уже вышло (по последней вышедшей серии)."""
+        season, episode = self.last_aired
+        s = self.season(number)
+        if s is None or season < number:
+            return 0
+        return s.episodes if season > number else min(episode, s.episodes)
+
+    def season_complete(self, number: int) -> bool:
+        """Сезон вышел целиком: все серии позади и следующей в нём не ждут."""
+        s = self.season(number)
+        if s is None or not s.episodes:
+            return False
+        if self.next_air[0] == number:
+            return False
+        return self.aired(number) >= s.episodes
 
 
 def _year(date: str | None) -> int | None:
@@ -125,9 +144,11 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         if tr.get("iso_639_1") in ("en", "ru"):
             data = tr.get("data") or {}
             names.append(data.get("title") or data.get("name") or "")
+    # Альтернативные — только российские: американские бывают рабочими
+    # названиями («Durango 60623»), по которым трекеры тайтл не знают.
     alt = d.get("alternative_titles") or {}
     for a in alt.get("titles") or alt.get("results") or []:
-        if a.get("iso_3166_1") in ("RU", "US", "GB", ""):
+        if a.get("iso_3166_1") == "RU":
             names.append(a.get("title") or "")
     seen = set()
     for n in names:
@@ -135,6 +156,10 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         if key and key not in seen:
             seen.add(key)
             t.names.append(n.strip())
+    last, nxt = d.get("last_episode_to_air") or {}, d.get("next_episode_to_air") or {}
+    t.last_aired = (int(last.get("season_number") or 0), int(last.get("episode_number") or 0))
+    t.next_air = (int(nxt.get("season_number") or 0), int(nxt.get("episode_number") or 0),
+                  str(nxt.get("air_date") or ""))
     for s in d.get("seasons") or []:
         number = s.get("season_number")
         if isinstance(number, int) and number > 0:
@@ -310,8 +335,9 @@ def group(items: list[Release]) -> list[Release]:
         if g is None:
             by_hash[r.hash] = r
             continue
+        # Трекер — один раз, даже если раздача лежит у него в двух темах.
         for tr in r.trackers:
-            if tr not in g.trackers:
+            if all(tr[0] != have[0] for have in g.trackers):
                 g.trackers.append(tr)
         if r.seeds > g.seeds:
             g.seeds, g.peers = r.seeds, max(g.peers, r.peers)

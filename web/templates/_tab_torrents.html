@@ -3,6 +3,8 @@
   <div class="row">
     <div class="seg">
       <button type="button" :class="{ on: view === 'search' }" @click="setView('search')">Поиск</button>
+      <button type="button" :class="{ on: view === 'watch' }" @click="setView('watch')"
+              x-text="'Слежение' + ((t.watch || []).length ? ' (' + t.watch.length + ')' : '')"></button>
       <button type="button" :class="{ on: view === 'auto' }" @click="setView('auto')"
               x-text="'Автоматика' + (asking() ? ' (' + asking() + ')' : '')"></button>
     </div>
@@ -13,7 +15,7 @@
     <div class="card-head">
       <h2>Найти и скачать</h2><span class="sub">ищет по всем названиям тайтла из TMDb на трекерах</span>
     </div>
-    <div class="identify">
+    <div class="row nowrap">
       <div class="seg">
         <button type="button" :class="{ on: kind === 'tv' }" @click="kind = 'tv'">сериал</button>
         <button type="button" :class="{ on: kind === 'movie' }" @click="kind = 'movie'">фильм</button>
@@ -43,7 +45,11 @@
       <div class="grow">
         <div><b x-text="s.title && s.title.label"></b>
           <button type="button" class="btn btn-sm btn-ghost" x-show="s.hits && s.hits.length > 1"
-                  @click="pickOther()">другой…</button></div>
+                  @click="pickOther()">другой…</button>
+          <button type="button" class="btn btn-sm" x-show="s.title && !s.title.watching" @click="watch()"
+                  title="Раз в день проверять, что вышло и появилось ли на трекерах; писать в Telegram">
+            <svg class="icon"><use href="#i-eye"/></svg>Следить</button>
+          <span class="badge ok" x-show="s.title && s.title.watching">в слежении</span></div>
         <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
@@ -140,7 +146,57 @@
     </div>
     <div class="card-foot" x-show="(s.releases || []).length > 30">
       <button type="button" class="btn btn-sm btn-ghost" @click="showAll = !showAll"
-              x-text="showAll ? 'Показать первые 30' : 'Показать все (' + s.releases.length + ')'"></button>
+              x-text="showAll ? 'Показать первые 30' : 'Показать все (' + (s.releases || []).length + ')'"></button>
+    </div>
+  </section>
+
+  <!-- =================================================== слежение ===== -->
+  <section class="card" x-show="view === 'watch'">
+    <div class="card-head">
+      <h2>Слежение</h2><span class="sub">раз в день: что вышло и появилось ли на трекерах; новости — в Telegram</span>
+    </div>
+    <div class="empty" x-show="!(t.watch || []).length">Пусто. Найдите сериал или фильм в «Поиске» и нажмите
+      «Следить».</div>
+    <div class="table-wrap" x-show="(t.watch || []).length">
+      <table class="table">
+        <thead><tr><th>Тайтл</th><th>Режим</th><th>Что сейчас</th><th></th></tr></thead>
+        <tbody>
+          <template x-for="w in t.watch || []" :key="w.id">
+            <tr>
+              <td class="file">
+                <div class="row nowrap">
+                  <img class="hit-poster" style="width: 32px; height: 48px" :src="w.poster" x-show="w.poster" alt="">
+                  <div><b x-text="w.title"></b><div class="small faint" x-text="w.kind === 'tv' ? 'сериал' : 'фильм'"></div></div>
+                </div>
+              </td>
+              <td>
+                <select class="input" style="width: 170px" @change="watchMode(w.id, $event.target.value)">
+                  <template x-for="m in w.modes" :key="m[0]">
+                    <option :value="m[0]" x-text="m[1]" :selected="m[0] === w.mode"></option>
+                  </template>
+                </select>
+              </td>
+              <td>
+                <div x-text="w.status || (w.last_check ? '' : 'ещё не проверялось')"></div>
+                <div class="small danger-text" x-show="w.error" x-text="w.error"></div>
+                <div class="small faint" x-show="w.last_check" x-text="'Проверено ' + fmt.clock(w.last_check)"></div>
+                <template x-for="(o, n) in w.offer" :key="o.hash">
+                  <div class="row nowrap small" style="margin-top: 6px">
+                    <button type="button" class="btn btn-sm" :class="{ 'btn-primary': n === 0 }"
+                            @click="watchDownload(w.id, o.hash)" :title="o.title">
+                      <svg class="icon"><use href="#i-download"/></svg><span x-text="(n === 0 ? '⭐ ' : '') + o.why"></span></button>
+                    <a class="faint" :href="o.page" target="_blank" rel="noopener" x-show="o.page">страница</a>
+                  </div>
+                </template>
+              </td>
+              <td class="nowrap">
+                <button type="button" class="btn btn-sm btn-ghost" @click="watchCheck(w.id)">Проверить</button>
+                <button type="button" class="btn btn-sm btn-ghost" @click="watchRemove(w)">Убрать</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
     </div>
   </section>
 

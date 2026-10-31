@@ -1,8 +1,8 @@
-"""Вкладка «Торренты»: поиск раздач и автоматика qBittorrent.
+"""Вкладка «Торренты»: поиск раздач, слежение и автоматика qBittorrent.
 
-Логика — в `search.py`, `autopilot.py` и `telegram.py`. Фоновые потоки
-(автоматику и бота) запускает `web/server.serve` через `start_background`: в
-тестах их нет.
+Логика — в `search.py`, `watchlist.py`, `autopilot.py` и `telegram.py`. Фоновые
+потоки (автоматику, слежение и бота) запускает `web/server.serve` через
+`start_background`: в тестах их нет.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ import metadata
 import qbit
 import search
 import telegram
+import watchlist
 from web import replies
 from web.replies import Info, UserError
 
@@ -31,6 +32,8 @@ class TorrentsTab:
         self.bot = telegram.Service(log=state.log.add)
         self.autopilot = autopilot.Autopilot(log=state.log.add, bot=self.bot,
                                              on_change=state.touch)
+        self.watcher = watchlist.Watcher(log=state.log.add, bot=self.bot,
+                                         autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.
         self.query = ""
         self.kind = library.TV
@@ -48,6 +51,7 @@ class TorrentsTab:
     def start_background(self) -> None:
         self.bot.start()
         self.autopilot.start()
+        self.watcher.start()
 
     # ------------------------------------------------------------ поиск --
     def default_seasons(self) -> list[int]:
@@ -82,7 +86,9 @@ class TorrentsTab:
             "title": ({"label": library.title_with_year(title.title, title.year),
                        "kind": title.kind, "names": title.names, "status": title.status,
                        "poster": self.hit.poster_url if self.hit else "",
-                       "library": self.library_dir} if title else None),
+                       "library": self.library_dir,
+                       "watching": self.watcher.find(title.kind, title.tmdb_id) is not None}
+                      if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,
                          "have": self.have.get(s.number, 0),
                          "selected": s.number in self.seasons}
@@ -120,6 +126,15 @@ class TorrentsTab:
                 "progress": i.progress,
             } for i in ap.recent()],
             "search": self.search_dict(),
+            "watch": [{
+                "id": w.id, "kind": w.kind, "title": w.title, "poster": w.poster,
+                "mode": w.mode, "status": w.status, "error": w.error,
+                "last_check": w.last_check,
+                "modes": [[m, label] for m, label in watchlist.MODE_LABELS.items()
+                          if (m == watchlist.MOVIE) == (w.kind == library.MOVIE)],
+                "offer": [{"hash": o["hash"], "why": o["why"], "title": o["title"],
+                           "page": o.get("page", "")} for o in w.offer],
+            } for w in sorted(self.watcher.items.values(), key=lambda w: w.title)],
         }
 
 
@@ -247,6 +262,66 @@ def search_download():
         raise Info("Добавлено в qBittorrent",
                    "Автоматика выключена — когда начнёт качаться, разложите раздачу на вкладке "
                    "«Медиатека» или включите «Раскладывать новые раздачи сами».")
+    return jsonify({"ok": True})
+
+
+# ------------------------------------------------------------ слежение --
+def _watch_id() -> str:
+    wid = str(replies.body().get("id", ""))
+    if wid not in tab().watcher.items:
+        raise UserError("Нет такого тайтла в слежении", "Обновите страницу.")
+    return wid
+
+
+@bp.post("/api/torrents/watch/add")
+def watch_add():
+    """Следить за тайтлом, выбранным в поиске."""
+    t = tab()
+    if t.title is None:
+        raise UserError("Нет тайтла", "Сначала найдите его в поиске.")
+    have_seasons = max((n for n, c in t.have.items() if c), default=0)
+    w = t.watcher.add(t.title.kind, t.title.tmdb_id,
+                      library.title_with_year(t.title.title, t.title.year),
+                      t.hit.poster_url if t.hit else "", have_seasons)
+    t.st.log.add(f"Слежение: добавлено — {w.title}")
+    t.st.touch()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/remove")
+def watch_remove():
+    t = tab()
+    t.watcher.remove(_watch_id())
+    t.st.touch()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/mode")
+def watch_mode():
+    t = tab()
+    t.watcher.set_mode(_watch_id(), str(replies.body().get("mode", "")))
+    t.st.touch()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/check")
+def watch_check():
+    """Проверить сейчас один тайтл или все (без id)."""
+    t = tab()
+    wid = str(replies.body().get("id", ""))
+    if wid and wid not in t.watcher.items:
+        raise UserError("Нет такого тайтла в слежении", "Обновите страницу.")
+    t.watcher.check_now(wid)
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/download")
+def watch_download():
+    t = tab()
+    text = t.watcher.download(_watch_id(), str(replies.body().get("hash", "")))
+    if text != "Скачиваю.":
+        raise UserError("Не получилось", text)
+    t.st.touch()
     return jsonify({"ok": True})
 
 

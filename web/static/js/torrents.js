@@ -76,6 +76,36 @@ document.addEventListener("alpine:init", () => {
       return gb >= 1 ? `${gb.toFixed(gb >= 100 ? 0 : 1)} ГБ` : `${Math.round(bytes / 1024 ** 2)} МБ`;
     },
 
+    // --------------------------------------------------------- слежение --
+    async watch() {
+      if (await api.post("/api/torrents/watch/add")) {
+        this.$store.ui.toast("В слежении — проверю сейчас и дальше раз в день");
+        await this.$store.app.loadState();
+      }
+    },
+    async watchMode(id, mode) {
+      await api.post("/api/torrents/watch/mode", { id, mode });
+      await this.$store.app.loadState();
+    },
+    async watchCheck(id) {
+      if (await api.post("/api/torrents/watch/check", { id })) this.$store.ui.toast("Проверяю…");
+    },
+    async watchRemove(w) {
+      const ok = await this.$store.ui.ask({
+        title: "Убрать из слежения?", text: w.title,
+        buttons: [{ label: "Отмена", value: null, kind: "secondary" },
+                  { label: "Убрать", value: true, kind: "danger" }],
+      });
+      if (!ok) return;
+      await api.post("/api/torrents/watch/remove", { id: w.id });
+      await this.$store.app.loadState();
+    },
+    async watchDownload(id, hash) {
+      if (await api.post("/api/torrents/watch/download", { id, hash })) {
+        this.$store.ui.toast("Добавлено в qBittorrent — разложу сам");
+      }
+    },
+
     // ------------------------------------------------------- автоматика --
     lastCheck() {
       if (!this.t.last_check) return "Проверок ещё не было.";

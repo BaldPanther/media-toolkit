@@ -186,3 +186,19 @@ def test_search_flow_select_filter_download(web):
     assert added == [("magnet:?xt=urn:btih:" + "2" * 40, "tv")]
     item = st.tabs["torrents"].autopilot.items["2" * 40]
     assert item.tmdb_id == 1 and item.wanted == [2]
+
+
+def test_watch_from_search(web):
+    st, c, _ = web
+    c.post("/api/torrents/search", json={"query": "Тёмная материя", "kind": "tv"})
+    assert st.jobs.wait()
+    assert c.post("/api/torrents/watch/add", json={}).get_json()["ok"]
+    tab = c.get("/api/state").get_json()["tabs"]["torrents"]
+    assert tab["search"]["title"]["watching"] is True
+    w = tab["watch"][0]
+    assert w["title"] == "Тёмная материя (2024)" and w["mode"] == "season"
+    assert [m[0] for m in w["modes"]] == ["season", "episode", "new_seasons"]
+    c.post("/api/torrents/watch/mode", json={"id": w["id"], "mode": "episode"})
+    assert c.get("/api/state").get_json()["tabs"]["torrents"]["watch"][0]["mode"] == "episode"
+    c.post("/api/torrents/watch/remove", json={"id": w["id"]})
+    assert c.get("/api/state").get_json()["tabs"]["torrents"]["watch"] == []
