@@ -9,13 +9,13 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify
 
+import arrange
 import artwork
 import core
 import edl
 import library
 import metaconf
 import metadata
-import nfo
 import qbit
 from web import replies
 from web.replies import Info, UserError
@@ -190,11 +190,8 @@ class LibraryTab:
         return next((k for k, (_, v) in NAME_CHOICES.items() if v == saved), "settings")
 
     def resolve_name_language(self) -> None:
-        info = self.info
-        if info is not None:
-            info.name_language = metadata.resolve_name_language(
-                metaconf.name_language_for(self.settings, info.kind, info.tmdb_id),
-                info.original_language, self.settings.meta_language)
+        if self.info is not None:
+            arrange.resolve_name_language(self.info, self.settings)
 
     def refresh_name_language(self) -> None:
         """Пересчитать язык имени текущего тайтла по настройкам и обновить план.
@@ -217,20 +214,7 @@ class LibraryTab:
         base = list(self.settings.art_languages)
         if code is not None:
             base = [code] + [lang for lang in base if lang != code]
-        return self._resolve_art_original(base)
-
-    def _resolve_art_original(self, langs: list[str]) -> list[str]:
-        """Псевдоязык «оригинал» → код языка оригинала тайтла."""
-        original = self.info.original_language if self.info else ""
-        out: list[str] = []
-        for lang in langs:
-            if lang == metaconf.ART_ORIGINAL:
-                if not original:
-                    continue
-                lang = original
-            if lang not in out:
-                out.append(lang)
-        return out
+        return arrange.art_languages(base, self.info.original_language if self.info else "")
 
     def seasons(self) -> list[int]:
         return metadata.seasons_with_art(self.info.art) if self.info else []
@@ -239,16 +223,8 @@ class LibraryTab:
         self.chosen.clear()
         if self.info is None:
             return
-        langs = self.art_languages()
-        for kind, _ in ART_ROWS:
-            best = metadata.best_art(self.info.art, kind, langs)
-            if best:
-                self.chosen[(kind, None)] = best
+        self.chosen.update(arrange.choose_art(self.info, self.art_languages()))
         seasons = self.seasons()
-        for season in seasons:
-            best = metadata.best_art(self.info.art, metadata.ART_SEASON, langs, season=season)
-            if best:
-                self.chosen[(metadata.ART_SEASON, season)] = best
         if self.season not in seasons:
             self.season = seasons[0] if seasons else None
 
@@ -745,64 +721,6 @@ def episode_current():
 
 
 # ---------------------------------------------------------- применение --
-def _title_watch_state(t: LibraryTab) -> dict:
-    """Отметки просмотра тайтла — до того, как план тронет файлы.
-
-    У фильма они могут лежать только в старом `Фильм (1994).nfo` от
-    tinyMediaManager, а он в этом же прогоне уедет в мусор. Читаем, пока он
-    на месте: всё остальное в .nfo придёт заново из TMDb, а просмотр — нет.
-    """
-    name = "movie.nfo" if t.info.kind == library.MOVIE else "tvshow.nfo"
-    found = [r.src for r in t.plan.rows if r.src is not None and r.src.name.lower() == name]
-    if t.info.kind == library.MOVIE:
-        found += [r.src for r in t.plan.rows
-                  if r.src is not None and r.what == "junk" and r.src.suffix.lower() == ".nfo"]
-    for path in found:
-        state = nfo.read_watch_state(path)
-        if state:
-            return state
-    return {}
-
-
-def _write_episode_nfo(t: LibraryTab, policy: str) -> int:
-    if t.info.kind != library.TV:
-        return 0
-    written = 0
-    for row in t.plan.rows:
-        if row.what != "video" or row.dst is None or row.action == library.A_SKIP:
-            continue
-        season, numbers = library.parse_episodes(row.dst)
-        # В одном файле может лежать несколько серий — тогда и блоков в
-        # .nfo должно быть столько же, иначе Kodi потеряет остальные.
-        eps = [t.info.episodes[(season, n)] for n in numbers if (season, n) in t.info.episodes]
-        if not eps:
-            continue
-        path = row.dst.with_suffix(".nfo")
-        if path.exists() and policy == metaconf.POLICY_MISSING:
-            continue
-        preserve = nfo.read_watch_state(path)
-        text = (nfo.make_episode_nfo(t.info, eps[0], preserve=preserve) if len(eps) == 1
-                else nfo.make_episodes_nfo(t.info, eps, preserve=preserve))
-        nfo.write(path, text)
-        written += 1
-    return written
-
-
-def _write_title_nfo(t: LibraryTab, policy: str, art_urls: dict, season_urls: dict,
-                     preserve: dict) -> int:
-    name = "movie.nfo" if t.info.kind == library.MOVIE else "tvshow.nfo"
-    path = t.plan.root / name
-    if path.exists() and policy == metaconf.POLICY_MISSING:
-        return 0
-    if t.info.kind == library.MOVIE:
-        text = nfo.make_movie_nfo(t.info, art=art_urls, preserve=preserve)
-    else:
-        text = nfo.make_tvshow_nfo(t.info, art=art_urls, season_art=season_urls,
-                                   preserve=preserve)
-    nfo.write(path, text)
-    return 1
-
-
 @bp.post("/api/library/apply")
 def apply():
     t = _idle()
@@ -846,46 +764,20 @@ def apply():
     def work(job):
         stop = job.cancelled
         progress = lambda i, total, item: job.progress(i, total, f"{i}/{total}: {Path(str(item)).name}")
-        preserve = _title_watch_state(t)
         torrents = t.torrents
-        if torrents is not None:
-            job.progress(0, 0, "переименование через qBittorrent…")
-        results = library.apply_plan(plan, delete_junk=delete, stop=stop, progress=progress,
-                                     files=torrents)
-        failed = [r for r in results if not r.ok]
+        out = arrange.apply(plan, t.info, t.chosen, policy, delete_junk=delete,
+                            torrents=torrents, stop=stop, progress=progress,
+                            status=lambda text: job.progress(0, 0, text))
+        results, failed, via, written = out.results, out.failed, out.via_qbit, out.nfo
+        art_done, art_skipped = out.art_done, out.art_skipped
         for r in failed:
             st.log.add(f"✗ {r.row.src}: {r.error}")
         # Удалённое насовсем называем поимённо: восстановить его уже неоткуда.
         for r in results:
             if r.disposal == library.DISPOSE_DELETE:
                 st.log.add(f"Удалено насовсем: {r.row.src}")
-        via = (sum(1 for r in results if r.ok and torrents.owns(r.row.dst))
-               if torrents is not None else 0)
-        if torrents is not None:
-            # Папки под .nfo и картинки — с правами родителя: созданные от root,
-            # они не пустили бы qBittorrent положить туда ещё не скачанные серии.
-            dirs = {plan.root} | {r.dst.parent for r in plan.rows if r.what == "video"
-                                  and r.dst is not None and r.action != library.A_SKIP}
-            for d in sorted(dirs):
-                try:
-                    qbit.make_dirs(d)
-                except OSError as e:
-                    st.log.add(f"✗ {d}: {e}")
-        written = art_done = art_skipped = 0
-        if not stop():
-            job.progress(0, 0, "запись .nfo…")
-            written = _write_episode_nfo(t, policy)
-        if not stop():
-            tasks = artwork.plan_art(plan.root, t.chosen, policy)
-            art_results = artwork.download(tasks, stop=stop, progress=progress)
-            art_done = sum(1 for r in art_results if r.ok and not r.skipped)
-            art_skipped = sum(1 for r in art_results if r.skipped)
-            for r in art_results:
-                if not r.ok:
-                    st.log.add(f"✗ {r.task.dest.name}: {r.error}")
-            art_urls, season_urls = artwork.chosen_urls(tasks)
-            # Пишется после картинок: в .nfo идут URL именно тех, что легли на диск.
-            written += _write_title_nfo(t, policy, art_urls, season_urls, preserve)
+        for e in out.errors:
+            st.log.add(f"✗ {e}")
         disposed = [r for r in results if r.disposal]
         parts = [f"переименовано {len(results) - len(failed) - len(disposed)}"]
         if via:
