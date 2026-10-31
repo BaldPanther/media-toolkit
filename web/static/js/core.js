@@ -162,7 +162,8 @@ document.addEventListener("alpine:init", () => {
     toast(text, ms = 3500) {
       const t = { id: Date.now() + Math.random(), text };
       this.toasts.push(t);
-      setTimeout(() => { this.toasts = this.toasts.filter((x) => x !== t); }, ms);
+      // По id: в хранилище Alpine лежит обёртка, а не сам объект `t`.
+      setTimeout(() => { this.toasts = this.toasts.filter((x) => x.id !== t.id); }, ms);
     },
     // Клавиши в верхнем диалоге: Esc — отмена, Enter — главная кнопка.
     key(e) {
