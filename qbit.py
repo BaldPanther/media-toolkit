@@ -325,6 +325,7 @@ class TorrentFile:
     rel: str          # путь внутри раздачи, как его знает qBittorrent («/» всегда)
     size: int
     progress: float
+    index: int = 0    # номер файла в раздаче — для приоритетов
 
 
 @dataclass
@@ -357,8 +358,8 @@ def torrent_of(item: dict, client: Client, pmap: PathMap) -> Torrent | None:
     if content is None or save is None:
         return None
     files = [TorrentFile(str(f.get("name", "")), int(f.get("size") or 0),
-                         float(f.get("progress") or 0))
-             for f in client.files(str(item.get("hash", "")))]
+                         float(f.get("progress") or 0), int(f.get("index", n)))
+             for n, f in enumerate(client.files(str(item.get("hash", ""))))]
     if not files:
         return None
     return Torrent(str(item.get("hash", "")), str(item.get("name", "")),

@@ -43,8 +43,8 @@ class FakeClient:
         if self.lag:
             self.lag -= 1
             return [{"name": "старое"}]
-        return [{"name": n, "size": self.sizes[h].get(n, 1), "progress": 0.5}
-                for n in self.names[h]]
+        return [{"name": n, "size": self.sizes[h].get(n, 1), "progress": 0.5, "index": i}
+                for i, n in enumerate(self.names[h])]
 
     def rename_file(self, h, old, new):
         names = self.names[h]
@@ -55,6 +55,9 @@ class FakeClient:
         if src.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.rename(dst)
+
+    def set_file_priority(self, h, ids, priority):
+        self.priorities = getattr(self, "priorities", []) + [(h, sorted(ids), priority)]
 
     def toggle_sequential(self, h):
         self.toggled.append(("seq", h))

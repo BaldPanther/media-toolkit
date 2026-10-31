@@ -1,6 +1,151 @@
-<!-- Вкладка «Торренты»: автоматика qBittorrent — что разложено, что ждёт выбора. -->
+<!-- Вкладка «Торренты»: поиск раздач и автоматика qBittorrent. -->
 <div x-data="torrentsTab" class="stack">
-  <section class="card">
+  <div class="row">
+    <div class="seg">
+      <button type="button" :class="{ on: view === 'search' }" @click="setView('search')">Поиск</button>
+      <button type="button" :class="{ on: view === 'auto' }" @click="setView('auto')"
+              x-text="'Автоматика' + (asking() ? ' (' + asking() + ')' : '')"></button>
+    </div>
+  </div>
+
+  <!-- ===================================================== поиск ===== -->
+  <section class="card" x-show="view === 'search'">
+    <div class="card-head">
+      <h2>Найти и скачать</h2><span class="sub">ищет по всем названиям тайтла из TMDb на трекерах</span>
+    </div>
+    <div class="identify">
+      <div class="seg">
+        <button type="button" :class="{ on: kind === 'tv' }" @click="kind = 'tv'">сериал</button>
+        <button type="button" :class="{ on: kind === 'movie' }" @click="kind = 'movie'">фильм</button>
+      </div>
+      <input class="input grow" type="text" x-model="q" @keydown.enter.prevent="find()"
+             placeholder="Название — например, Тёмная материя" spellcheck="false" :disabled="busy">
+      <button type="button" class="btn btn-primary" @click="find()" :disabled="busy || !q.trim()">
+        <svg class="icon"><use href="#i-search"/></svg>Найти
+      </button>
+    </div>
+
+    <div class="stack" style="margin-top: 14px" x-show="s.hits && s.hits.length > 1 && (!s.title || choosing)">
+      <span class="small muted">Какой именно?</span>
+      <template x-for="h in s.hits" :key="h.i">
+        <div class="hit clickable-hit" @click="pick(h.i)">
+          <img class="hit-poster" :src="h.poster" x-show="h.poster" alt="">
+          <div class="grow">
+            <div><b x-text="h.label"></b> <span class="small faint" x-text="h.kind"></span></div>
+            <div class="small muted clamp2" x-text="h.overview"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <div class="hit" x-show="s.title">
+      <img class="hit-poster" :src="s.title && s.title.poster" x-show="s.title && s.title.poster" alt="">
+      <div class="grow">
+        <div><b x-text="s.title && s.title.label"></b>
+          <button type="button" class="btn btn-sm btn-ghost" x-show="s.hits && s.hits.length > 1"
+                  @click="pickOther()">другой…</button></div>
+        <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
+        <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
+             x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" x-show="view === 'search' && s.title">
+    <div class="card-head">
+      <h2>Раздачи</h2><span class="sub" x-text="s.status"></span>
+    </div>
+    <div class="stack">
+      <div class="row" x-show="s.seasons && s.seasons.length">
+        <span class="small muted">Сезоны:</span>
+        <template x-for="se in s.seasons" :key="se.number">
+          <button type="button" class="btn btn-sm" :class="{ 'btn-primary': se.selected }"
+                  @click="toggleSeason(se.number)" :title="seasonHint(se)"
+                  x-text="'Сезон ' + se.number + ' · ' + seasonState(se)"></button>
+        </template>
+      </div>
+      <div class="row">
+        <span class="small muted">Качество:</span>
+        <div class="seg">
+          <template x-for="qq in [[2160, '4K'], [1080, '1080p'], [720, '720p']]" :key="qq[0]">
+            <button type="button" :class="{ on: s.prefs && s.prefs.quality === qq[0] }"
+                    @click="opt({ quality: qq[0] })" x-text="qq[1]"></button>
+          </template>
+        </div>
+        <label class="check"><input type="checkbox" :checked="s.prefs && s.prefs.hdr"
+               @change="opt({ hdr: $event.target.checked })">HDR</label>
+        <label class="check"><input type="checkbox" :checked="s.prefs && s.prefs.dv"
+               @change="opt({ dv: $event.target.checked })">Dolby Vision</label>
+        <label class="check"><input type="checkbox" :checked="s.any_year"
+               @change="opt({ any_year: $event.target.checked })">и с другим годом</label>
+      </div>
+      <div class="row" x-show="s.voices && s.voices.length">
+        <span class="small muted">Озвучка:</span>
+        <button type="button" class="btn btn-sm" :class="{ 'btn-primary': !s.voice }" @click="opt({ voice: '' })">все</button>
+        <template x-for="v in s.voices" :key="v">
+          <button type="button" class="btn btn-sm" :class="{ 'btn-primary': s.voice === v }"
+                  @click="opt({ voice: s.voice === v ? '' : v })" x-text="v"></button>
+        </template>
+      </div>
+    </div>
+
+    <div class="empty" x-show="!(s.releases || []).length">
+      <div>Ничего не подходит<span x-show="s.total"> — снимите фильтры или отметьте «и с другим годом»</span>.</div>
+      <div class="row" style="justify-content: center; margin-top: 10px">
+        <template x-for="l in s.links || []" :key="l[0]">
+          <a class="btn btn-sm" :href="l[1]" target="_blank" rel="noopener">
+            <span x-text="'Искать на ' + l[0]"></span><svg class="icon"><use href="#i-external"/></svg></a>
+        </template>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top: 12px" x-show="(s.releases || []).length">
+      <table class="table">
+        <thead>
+          <tr><th>Раздача</th><th>Качество</th><th class="num">Серии</th><th class="num">Размер</th>
+            <th class="num">Сиды</th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="r in (showAll ? s.releases : (s.releases || []).slice(0, 30))" :key="r.hash">
+            <tr :class="{ selected: r.recommended }">
+              <td class="file">
+                <div><span x-show="r.recommended" title="Рекомендую">⭐ </span><span x-text="r.title"></span></div>
+                <div class="small muted" x-show="r.recommended" x-text="'Рекомендую: ' + r.why"></div>
+                <div class="row small" style="margin-top: 4px; gap: 6px">
+                  <template x-for="n in r.notes" :key="n"><span class="badge warn plain" x-text="n"></span></template>
+                  <template x-for="tr in r.trackers" :key="tr[0] + tr[1]">
+                    <a class="faint" :href="tr[1]" target="_blank" rel="noopener" x-text="tr[0]" title="Страница раздачи"></a>
+                  </template>
+                </div>
+                <div class="small faint" x-show="r.voices.length" x-text="r.voices.join(', ')"></div>
+              </td>
+              <td class="nowrap">
+                <span class="badge plain" :class="{ accent: r.quality >= 2160 }" x-text="qualityLabel(r.quality)"></span>
+                <span class="badge plain" x-show="r.dv">DV</span>
+                <span class="badge plain" x-show="r.hdr && !r.dv">HDR</span>
+              </td>
+              <td class="num" x-text="episodes(r)"></td>
+              <td class="num nowrap" x-text="size(r.size)"></td>
+              <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
+                  x-text="r.seeds"></td>
+              <td>
+                <button type="button" class="btn btn-sm" :class="{ 'btn-primary': r.recommended }"
+                        @click="download(r)" :disabled="!t.qbit">
+                  <svg class="icon"><use href="#i-download"/></svg>Скачать</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-foot" x-show="(s.releases || []).length > 30">
+      <button type="button" class="btn btn-sm btn-ghost" @click="showAll = !showAll"
+              x-text="showAll ? 'Показать первые 30' : 'Показать все (' + s.releases.length + ')'"></button>
+    </div>
+  </section>
+
+  <!-- ================================================= автоматика ===== -->
+  <section class="card" x-show="view === 'auto'">
     <div class="card-head">
       <h2>Автоматика</h2>
       <span class="badge" :class="t.auto ? 'ok' : ''" x-text="t.auto ? 'включена' : 'выключена'"></span>
@@ -33,9 +178,9 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" x-show="view === 'auto'">
     <div class="card-head">
-      <h2>Раздачи</h2><span class="sub">которые видела автоматика, свежие сверху</span>
+      <h2>Раздачи в qBittorrent</h2><span class="sub">которые видела автоматика, свежие сверху</span>
     </div>
     <div class="empty" x-show="!(t.items || []).length">Пока ничего: добавьте раздачу в qBittorrent с категорией
       сериалов или фильмов.</div>

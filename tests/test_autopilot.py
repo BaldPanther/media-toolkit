@@ -135,6 +135,21 @@ def test_tick_arranges_new_torrent_through_qbit(env):
     assert autopilot.Autopilot().items["h1"].status == autopilot.DONE
 
 
+def test_search_download_skips_unwanted_seasons_of_pack(env, monkeypatch):
+    tv, fake, hits = env
+    hits.clear()                        # опознание не нужно: тайтл известен из поиска
+    info = _info()
+    info.episodes[(2, 1)] = metadata.EpisodeInfo(2, 1, title="Э21", title_en="Ep 2x1")
+    monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    fake.add("pk", {"Show.S01-02/Show.S01E01.mkv": 100, "Show.S01-02/Show.S02E01.mkv": 100})
+    ap = autopilot.Autopilot()
+    ap.expect("pk", library.TV, 1, "Show S01-02", wanted=[2])
+    ap.tick()
+    assert ap.items["pk"].status == autopilot.DONE
+    assert fake.priorities == [("pk", [0], 0)]          # S01E01 — не загружать
+    assert [new for _, new in fake.renamed] == ["Show (2026)/Season 02/Show - S02E01 - Ep 2x1.mkv"]
+
+
 def test_tick_ignores_other_categories_and_disabled_auto(env):
     tv, fake, _ = env
     fake.category = "games"

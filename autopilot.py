@@ -53,6 +53,7 @@ class Item:
     error: str = ""
     candidates: list = field(default_factory=list)   # [[tmdb_id, «Название (год)»], …]
     tmdb_id: int = 0
+    wanted: list = field(default_factory=list)   # сезоны, нужные из сборника (из поиска)
     progress: float = 0.0
     seq_set: bool = False          # галки последовательной загрузки уже ставили
     done_notified: bool = False    # «скачано» уже сообщали
@@ -214,6 +215,16 @@ class Autopilot:
             self._answers.append((torrent_hash, index))
         self._wake.set()
 
+    def expect(self, torrent_hash: str, kind: str, tmdb_id: int, name: str,
+               wanted=()) -> None:
+        """Раздача добавлена из поиска: тайтл уже известен, опознавать не надо.
+        `wanted` — какие сезоны нужны из сборника; файлам остальных — «не загружать»."""
+        with self._lock:
+            self.items[torrent_hash] = Item(torrent_hash, name, kind, tmdb_id=tmdb_id,
+                                            wanted=sorted(set(wanted)), seen=time.time())
+        self.save()
+        self._wake.set()
+
     def retry(self, torrent_hash: str) -> None:
         with self._lock:
             item = self.items.get(torrent_hash)
@@ -293,7 +304,7 @@ class Autopilot:
             client.toggle_first_last(str(info["hash"]))
 
     def _process(self, item: Item, torrent, client, meta, roots) -> None:
-        known = known_tmdb_id(torrent, item.kind)
+        known = item.tmdb_id or known_tmdb_id(torrent, item.kind)
         if known:
             self._arrange(item, known, torrent, client, meta, roots)
             return
@@ -327,7 +338,8 @@ class Autopilot:
         files = qbit.TorrentFiles(client, [torrent])
         folder = torrent.content_path
         try:
-            extra = files.extra()
+            skipped = self._skip_unwanted(item, torrent, client)
+            extra = {p: s for p, s in files.extra().items() if p not in skipped}
             scan = library.scan_folder(folder, extra) if item.kind == library.TV else None
             info = metadata.fetch(item.kind, tmdb_id, meta,
                                   seasons=scan.seasons() if scan else [],
@@ -362,6 +374,29 @@ class Autopilot:
         self._notify(f"📥 Разложено: <b>{telegram.esc(item.title)}</b>\n"
                      f"{what}, скачано {item.progress:.0%}")
         self._kodi(item.root, roots)
+
+    def _skip_unwanted(self, item: Item, torrent, client) -> set:
+        """Сборник, а нужны не все сезоны: файлам лишних — «не загружать».
+        → их пути, чтобы не раскладывать то, чего не будет на диске."""
+        if not item.wanted or item.kind != library.TV:
+            return set()
+        skip, ids = set(), []
+        for f in torrent.files:
+            path = torrent.local(f.rel)
+            if not library.is_video(path):
+                continue
+            season = library.parse_episodes(path)[0]
+            if season is None:
+                season = next((s for s in (library.season_of_dir(p.name) for p in path.parents)
+                               if s is not None), None)
+            if season is not None and season not in item.wanted:
+                skip.add(path)
+                ids.append(f.index)
+        if ids:
+            client.set_file_priority(torrent.hash, ids, 0)
+            self.log(f"Автоматика: «{item.name}» — не загружать файлов: {len(ids)} "
+                     f"(нужны сезоны {', '.join(map(str, item.wanted))})")
+        return skip
 
     def _fail(self, item: Item, error: str) -> None:
         item.status, item.error = ERROR, error
