@@ -62,11 +62,12 @@ class TorrentsTab:
         return [self.title.seasons[-1].number]
 
     def fitting(self, prefs: search.Prefs) -> list[search.Release]:
-        """Подходят тайтлу и экрану: тип, год, сезоны, HDR/DV. Качество и озвучка — потом."""
+        """Подходят тайтлу и экрану: тип, год, сезоны, HDR/DV, английские по галке.
+        Качество и озвучка — потом."""
         if self.title is None:
             return []
         return [r for r in self.releases if search.fits(r, self.title, self.seasons, self.any_year)
-                and search.picture_ok(r, prefs)]
+                and search.picture_ok(r, prefs) and (prefs.english or search.russian(r))]
 
     def shown(self, prefs: search.Prefs | None = None) -> list[search.Release]:
         prefs = prefs or search.load_prefs()
@@ -110,7 +111,7 @@ class TorrentsTab:
             "voice": self.voice,
             "any_year": self.any_year,
             "prefs": {"quality": prefs.quality, "hdr": prefs.hdr, "dv": prefs.dv,
-                      "voices": prefs.voices},
+                      "english": prefs.english, "voices": prefs.voices},
             "status": (f"Найдено раздач: {len(self.releases)}, под фильтры: {len(shown)}"
                        if title else self.search_status),
             "links": search.tracker_search_links(title.names) if title and not shown else [],
@@ -220,7 +221,7 @@ def search_select():
 
 @bp.post("/api/torrents/search/options")
 def search_options():
-    """Фильтры на лету: сезоны, год, озвучка, качество, HDR, Dolby Vision."""
+    """Фильтры на лету: сезоны, год, озвучка, качество, HDR, Dolby Vision, английские."""
     t = tab()
     data = replies.body()
     if isinstance(data.get("seasons"), list) and t.title is not None:
@@ -233,7 +234,7 @@ def search_options():
     prefs = search.load_prefs()
     if data.get("quality") in search.QUALITIES:
         prefs.quality = int(data["quality"])
-    for key in ("hdr", "dv"):
+    for key in ("hdr", "dv", "english"):
         if key in data:
             setattr(prefs, key, bool(data[key]))
     if isinstance(data.get("voices"), list):

@@ -180,3 +180,14 @@ def test_offer_skips_hdr_without_checkbox_and_prefers_4k(env):
     w.check_now()
     w.tick(now=10 ** 9 + 1)
     assert [o["hash"][0] for o in item.offer] == ["h", "k", "a"]
+
+
+def test_offer_ignores_english_releases(env):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
+    eng = _rel("x", [1, 10, 10])
+    eng.title = "Dark.Matter.2024.S02.1080p"        # без кириллицы и озвучек
+    state["releases"] = [eng]
+    item = w.add(library.TV, 5, "Тёмная материя (2024)")
+    w.tick(now=10 ** 9)
+    assert item.offer == [] and bot.sent == []

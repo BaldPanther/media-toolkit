@@ -247,3 +247,64 @@ def test_search_any_mixes_movies_and_series(monkeypatch):
     ]} if path == "/search/multi" else None)
     hits = metadata.search_any("Дюна", type("S", (), {"tmdb_key": "k", "meta_language": "ru-RU"})())
     assert [(h.kind, h.tmdb_id, h.year) for h in hits] == [(library.MOVIE, 1, 2021), (library.TV, 3, 2024)]
+
+
+# ---------------------------------------------------------------- Knaben --
+
+def test_parse_title_scene_seasons_and_episodes():
+    p = search.parse_title("Dark.Matter.2024.S01E07.1080p.WEB.H264-SuccessfulCrab")
+    assert p["seasons"] == [1] and p["episodes"] == [7, 7, 0] and not p.get("pack")
+    assert search.parse_title("Show S02E01-E08 2160p")["episodes"] == [1, 8, 0]
+    p = search.parse_title("Dark.Matter.2024.S01.2160p.ATVP.WEB-DL.DDP5.1.HEVC")
+    assert p["seasons"] == [1] and p["pack"] and "episodes" not in p
+    assert search.parse_title("Dark Matter Season 2 Complete 1080p")["seasons"] == [2]
+
+
+def _knaben_hit(h, title, seeders=10, cat=(2000000, 2001000), tracker="The Pirate Bay"):
+    return {"hash": h * 40, "title": title, "seeders": seeders, "peers": 1, "bytes": 5 * 2 ** 30,
+            "categoryId": list(cat), "tracker": tracker, "details": f"https://tpb/{h}",
+            "magnetUrl": f"magnet:?xt=urn:btih:{h * 40}", "date": "2026-10-01T00:00:00+00:00"}
+
+
+def test_knaben_source_reads_english_releases(monkeypatch):
+    asked = []
+
+    def fake_post(url, body, timeout=None):
+        asked.append(body["query"])
+        return {"hits": [
+            _knaben_hit("e", "Dark.Matter.2024.S01.2160p.ATVP.WEB-DL.DDP5.1.HEVC", 170),
+            _knaben_hit("f", "Dark.Matter.2024.S01E07.1080p.WEB.H264", 60),
+            _knaben_hit("g", "Dark Matter OST FLAC", 5, cat=(1002000, 1000000)),
+        ]}
+
+    monkeypatch.setattr(search.net, "post_json", fake_post)
+    t = _title()
+    rels = search._knaben(search.KNABEN, t)
+    assert asked == ["Dark Matter"]                        # русские названия — у jac.red
+    assert [r.hash[0] for r in rels] == ["e", "f"]         # музыка мимо
+    pack, single = rels
+    assert pack.quality == 2160 and pack.pack and pack.trackers == [["The Pirate Bay", "https://tpb/e"]]
+    assert not search.russian(pack)
+    # Сезон вышел целиком — «S01» считается полным; одна серия — нет, всего — из TMDb.
+    t.last_aired = (2, 6)
+    assert search.complete(pack, t, [1])
+    assert not search.complete(single, t, [1]) and single.episodes == [7, 7, 9]
+
+
+def test_russian_releases_rank_above_english():
+    t = _title()
+    t.last_aired = (2, 6)
+    rels = _releases([_item("rutor", "Тёмная материя (1 сезон: 1-5 серии из 9)", h="1" * 40, sid=3)])
+    eng = search.Release(hash="2" * 40, title="Dark.Matter.2024.S01.1080p", magnet="m", seeds=500,
+                         quality=1080, seasons=[1], pack=True, year=2024)
+    ranked = search.rank(rels + [eng], t, search.Prefs(), [1])
+    assert [r.hash[0] for r in ranked] == ["1", "2"] and ranked[0].recommended
+    assert "английская" in ranked[1].notes and "англ." in ranked[1].why
+
+
+def test_episodes_text_for_partial_releases():
+    mk = lambda eps: search.Release(hash="a", title="x", magnet="m", episodes=eps)   # noqa: E731
+    assert search._episodes_text(mk([1, 5, 9])) == "5 из 9"
+    assert search._episodes_text(mk([9, 9, 9])) == "серия 9 из 9"
+    assert search._episodes_text(mk([6, 9, 9])) == "серии 6–9 из 9"
+    assert search._episodes_text(mk([7, 7, 0])) == "серия 7"

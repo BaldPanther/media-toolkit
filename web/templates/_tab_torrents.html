@@ -79,6 +79,8 @@
                :checked="s.prefs && s.prefs.hdr" @change="opt({ hdr: $event.target.checked })">HDR</label>
         <label class="check" title="Показывать раздачи с Dolby Vision — если телевизор его умеет"><input type="checkbox"
                :checked="s.prefs && s.prefs.dv" @change="opt({ dv: $event.target.checked })">Dolby Vision</label>
+        <label class="check" title="Раздачи с The Pirate Bay, 1337x, Nyaa (через Knaben) — обычно без русской озвучки"><input type="checkbox"
+               :checked="s.prefs && s.prefs.english" @change="opt({ english: $event.target.checked })">и английские</label>
         <label class="check"><input type="checkbox" :checked="s.any_year"
                @change="opt({ any_year: $event.target.checked })">и с другим годом</label>
       </div>

@@ -61,6 +61,21 @@ def get_json(url: str, headers: dict | None = None, retries: int = 2,
     return None
 
 
+def post_json(url: str, body, timeout: int = TIMEOUT):
+    """POST с телом JSON → распарсенный JSON (поиск Knaben)."""
+    req = _request(url, {"Content-Type": "application/json"})
+    req.data = json.dumps(body).encode("utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        raise NetError(f"HTTP {e.code} для {url}") from e
+    except urllib.error.URLError as e:
+        raise NetError(f"Сеть: {getattr(e, 'reason', e)}") from e
+    except (json.JSONDecodeError, ValueError) as e:
+        raise NetError(f"Битый ответ {url}: {e}") from e
+
+
 def build_url(base: str, path: str = "", **params) -> str:
     """Склейка URL с query-строкой; пустые параметры отбрасываются."""
     query = {k: v for k, v in params.items() if v not in (None, "")}

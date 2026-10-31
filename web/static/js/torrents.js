@@ -83,8 +83,12 @@ document.addEventListener("alpine:init", () => {
     },
     qualityLabel(q) { return q >= 2160 ? "4K" : q > 480 ? `${q}p` : q ? "SD" : "?"; },
     episodes(r) {
-      if (!r.episodes || !r.episodes.length) return r.seasons.length > 1 ? `сез. ${r.seasons[0]}–${r.seasons[r.seasons.length - 1]}` : "—";
+      if (!r.episodes || !r.episodes.length) {
+        if (r.seasons.length > 1) return `сез. ${r.seasons[0]}–${r.seasons[r.seasons.length - 1]}`;
+        return r.pack ? "сезон" : "—";
+      }
       const [first, last, total] = r.episodes;
+      if (!total) return first < last ? `${first}–${last}` : `серия ${last}`;   // «S01E07»: всего не знаем
       return first > 1 ? `${first}–${last}/${total}` : `${last}/${total}`;
     },
     size(bytes) {

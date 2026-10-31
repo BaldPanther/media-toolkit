@@ -242,10 +242,13 @@ class Watcher:
     def _offer(self, w: Watch, title, seasons, full: bool, more_than: int = 0,
                min_quality: int = 0) -> bool:
         """Лучшие раздачи для сезонов → `w.offer`. → нашлось ли что-нибудь.
-        Кнопка качества поиска сюда не относится: лучшее из 4K → 1080p → 720p."""
+        Кнопка качества поиска сюда не относится: лучшее из 4K → 1080p → 720p.
+        Только раздачи с русскими дорожками: иначе о сезоне сообщили бы по английской
+        раздаче, а о русской (событие то же) — уже нет."""
         prefs = search.load_prefs()
         fit = [r for r in search.find(title, log=self.log)
                if search.fits(r, title, seasons) and r.seeds >= 1 and search.picture_ok(r, prefs)
+               and search.russian(r)
                and (not full or search.complete(r, title, seasons))
                and (not more_than or (r.episodes and r.episodes[1] > more_than))
                and r.quality >= min_quality]
