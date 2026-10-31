@@ -111,6 +111,19 @@ class SearchHit:
         return f"{self.title} ({self.year})" if self.year else self.title
 
 
+# Заглушки TMDb вместо названия серии: «Episode 3», «Эпизод 3», «第3集». Так TMDb
+# подписывает серию без названия или без перевода на запрошенный язык.
+_PLACEHOLDER_EPISODE = re.compile(
+    r"^(?:episode|эпизод|серия|епізод|серія|folge|[ée]pisode|episodio|episódio|odcinek|bölüm"
+    r"|aflevering|avsnitt|jakso|epizoda|díl|에피소드)\s*#?\d+(?:\.\d+)?$"
+    r"|^第\s*\d+\s*[集話话回]$|^제?\s*\d+\s*화$", re.I)
+
+
+def real_title(*titles: str) -> str:
+    """Первое настоящее название серии — не пустое и не заглушка TMDb."""
+    return next((t for t in titles if t and not _PLACEHOLDER_EPISODE.match(t.strip())), "")
+
+
 @dataclass
 class EpisodeInfo:
     season: int
@@ -192,10 +205,13 @@ class MediaInfo:
         отдаёт только запрошенный язык, — поэтому в режиме «оригинал» серии
         подписываются локализованно. Для аниме это и лучше: японское название
         серии в имени файла не читается.
+
+        Заглушка «Эпизод 1» названием не считается: нет перевода — берётся
+        английское, нет и его — имя без названия («Show - S01E01.mkv»).
         """
         if self.name_language == metaconf.NAME_EN:
-            return episode.title_en or episode.title
-        return episode.title or episode.title_en
+            return real_title(episode.title_en, episode.title)
+        return real_title(episode.title, episode.title_en)
 
 
 def resolve_name_language(mode: str, original_language: str, meta_language: str) -> str:

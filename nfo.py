@@ -267,7 +267,8 @@ def make_episodes_nfo(info, episodes, preserve: dict | None = None) -> str:
 
 def make_episode_nfo(info, episode, preserve: dict | None = None) -> str:
     root = ET.Element("episodedetails")
-    _text(root, "title", episode.title or episode.title_en)
+    _text(root, "title", metadata.real_title(episode.title, episode.title_en)
+          or episode.title or episode.title_en)
     _text(root, "originaltitle", episode.title_en)
     _text(root, "showtitle", info.title or info.title_en)
     _text(root, "season", episode.season)

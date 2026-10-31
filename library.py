@@ -783,7 +783,8 @@ def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
         # файл в уже разложенной медиатеке («S14E09-E11 - Into the Cold»).
         ep = info.episodes.get((season, numbers[0]))
         if ep:
-            title, note = info.episode_name(ep), ""
+            title = info.episode_name(ep)
+            note = "" if title else "у TMDb нет названия серии — имя без названия"
         else:
             # У TMDb такой серии нет — сохраняем название, уже стоящее в имени,
             # вместо того чтобы его потерять.

@@ -443,12 +443,27 @@ def test_folder_title_falls_back_when_translation_is_missing():
 def test_episode_name_follows_the_title_language():
     # Иначе выходит «Что было дальше - S06E01 - Episode 1».
     info = title_info(kind="tv")
-    ep = metadata.EpisodeInfo(season=6, episode=1, title="Серия 1", title_en="Episode 1")
+    ep = metadata.EpisodeInfo(season=6, episode=1, title="Гость — Бурунов", title_en="Guest: Burunov")
     info.name_language = metaconf.NAME_EN
-    assert info.episode_name(ep) == "Episode 1"
+    assert info.episode_name(ep) == "Guest: Burunov"
     for mode in (metaconf.NAME_LOCAL, metaconf.NAME_ORIGINAL):
         info.name_language = mode
-        assert info.episode_name(ep) == "Серия 1"
+        assert info.episode_name(ep) == "Гость — Бурунов"
+
+
+def test_episode_name_skips_tmdb_placeholders():
+    # TMDb подписывает серию без названия (или без перевода) «Эпизод 1» / «Episode 1».
+    info = title_info(kind="tv")
+    info.name_language = metaconf.NAME_LOCAL
+    no_ru = metadata.EpisodeInfo(season=1, episode=1, title="Эпизод 1", title_en="Behind the Door")
+    assert info.episode_name(no_ru) == "Behind the Door"       # нет перевода — английское
+    none = metadata.EpisodeInfo(season=1, episode=2, title="Эпизод 2", title_en="Episode 2")
+    assert info.episode_name(none) == ""                       # нет вовсе — без названия
+    info.name_language = metaconf.NAME_EN
+    assert info.episode_name(none) == ""
+    for t in ("Серия 3", "Episode #1.2", "第1集", "Épisode 4"):
+        assert metadata.real_title(t) == "", t
+    assert metadata.real_title("Episode One") == "Episode One"
 
 
 def test_fetch_resolves_name_language_and_honours_override(monkeypatch):

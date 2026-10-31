@@ -813,6 +813,18 @@ def test_tv_plan_switches_episode_titles_with_the_show(tmp_path):
         "Что было дальше - S06E01 - Гость — Сергей Бурунов.mkv"
 
 
+def test_tv_plan_without_episode_titles_names_by_number(tmp_path):
+    src = tmp_path / "tv" / "Polden.S01"
+    touch(src / "S01E01.mkv")
+    info = MediaInfo(kind=library.TV, tmdb_id=3, year=2026, title="Полдень",
+                     title_en="Polden", original_title="Полдень", original_language="ru")
+    info.episodes[(1, 1)] = EpisodeInfo(season=1, episode=1, title="Эпизод 1", title_en="Episode 1")
+    info.name_language = metaconf.NAME_ORIGINAL
+    plan = library.build_tv_plan(src, info, make_settings())
+    assert dst_of(plan, "S01E01").name == "Полдень - S01E01.mkv"
+    assert "нет названия серии" in next(r for r in plan.rows if r.what == "video").note
+
+
 # --------------------------------------- служебные файлы систем --
 
 def test_recognises_system_junk():
