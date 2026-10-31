@@ -191,8 +191,8 @@
                 <input class="input mono" style="width: 120px" type="text" x-model="data.qbit.movies_category" spellcheck="false">
               </div>
               <span class="hint" x-show="data.qbit.auto">Раздачи этих категорий программа сама опознаёт в TMDb и
-                раскладывает через qBittorrent сразу после добавления, ставит им последовательную загрузку и пишет в
-                Telegram. Не уверена, что за тайтл, — спрашивает. Остальные категории не трогает. Что сделано — на
+                раскладывает через qBittorrent сразу после добавления и ставит им последовательную загрузку. Не уверена,
+                что за тайтл, — спрашивает на вкладке. Остальные категории не трогает. Что сделано — на
                 вкладке «Торренты».</span>
               <div class="row">
                 <button type="button" class="btn" @click="qbitCheck()" :disabled="checking || !data.qbit.url.trim()">
@@ -204,8 +204,8 @@
 
             <!-- Telegram -->
             <div class="stack" x-show="section === 'telegram'">
-              <p class="muted">Бот пишет, что разложено и что докачалось, и спрашивает кнопками, если не уверен, что за
-                сериал. Создать бота: в Telegram откройте @BotFather → /newbot → вставьте сюда токен, который он пришлёт.
+              <p class="muted">Бот присылает новости слежения: вышел сезон или серия, есть раздача — с кнопками «Скачать».
+                Создать бота: в Telegram откройте @BotFather → /newbot → вставьте сюда токен, который он пришлёт.
                 Потом напишите своему боту /start: он запомнит этот чат и будет слушать только его.</p>
               <div class="field">
                 <label for="tg-token">Токен бота</label>

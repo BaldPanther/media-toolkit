@@ -20,21 +20,6 @@ def _info(tmdb_id=1, title="Show", year=2026):
     return info
 
 
-class FakeBot:
-    def __init__(self):
-        self.sent, self.edited, self.handlers = [], [], {}
-
-    def on(self, prefix, handler):
-        self.handlers[prefix] = handler
-
-    def notify(self, text, buttons=None):
-        self.sent.append((text, buttons))
-        return len(self.sent)
-
-    def edit(self, message_id, text, buttons=None):
-        self.edited.append((message_id, text))
-
-
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
@@ -113,8 +98,7 @@ def test_identify_retries_without_season_year(monkeypatch):
 def test_tick_arranges_new_torrent_through_qbit(env):
     tv, fake, _ = env
     _add(tv, fake)
-    bot = FakeBot()
-    ap = autopilot.Autopilot(bot=bot)
+    ap = autopilot.Autopilot()
     ap.tick()
     item = ap.items["h1"]
     assert item.status == autopilot.DONE, item.error
@@ -125,7 +109,6 @@ def test_tick_arranges_new_torrent_through_qbit(env):
     assert ("seq", "h1") in fake.toggled and ("first_last", "h1") in fake.toggled
     # .nfo ещё не скачанной серии уже на месте.
     assert (tv / "Show (2026)" / "Season 01" / "Show - S01E02 - Ep 2.nfo").exists()
-    assert "Разложено" in bot.sent[0][0]
     # Повторная проверка ничего не переименовывает и галки не трогает.
     fake.renamed.clear()
     fake.toggled.clear()
@@ -176,21 +159,15 @@ def test_ambiguous_title_asks_and_answer_arranges(env, monkeypatch):
     hits[:] = [metadata.SearchHit(library.TV, 1, "Show", 2026),
                metadata.SearchHit(library.TV, 2, "Show", 1999)]
     _add(tv, fake)
-    bot = FakeBot()
-    ap = autopilot.Autopilot(bot=bot)
+    ap = autopilot.Autopilot()
     ap.tick()
     item = ap.items["h1"]
     assert item.status == autopilot.ASK and fake.renamed == []
-    text, buttons = bot.sent[0]
-    assert "Что это за сериал" in text
-    assert [b[0][1] for b in buttons] == [f"ap:{item.short}:0", f"ap:{item.short}:1",
-                                          f"ap:{item.short}:-1"]
-    # Ответ из Telegram: вторая кнопка.
-    assert bot.handlers["ap"](f"{item.short}:1") == "Раскладываю…"
+    assert [label for _, label in item.candidates] == ["Show (2026)", "Show (1999)"]
+    # Ответ на вкладке: второй вариант.
+    ap.answer("h1", 1)
     ap.tick()
     assert item.status == autopilot.DONE and item.tmdb_id == 2
-    assert bot.edited and "Выбрано" in bot.edited[0][1]
-    assert bot.handlers["ap"](f"{item.short}:0") == "Уже решено."
 
 
 def test_answer_skip_marks_skipped(env):
@@ -223,13 +200,13 @@ def test_finished_download_is_reported_once_and_kodi_scans(env, monkeypatch):
     _add(tv, fake)
     scanned = []
     monkeypatch.setattr(kodi, "scan", lambda path, roots, settings=None: scanned.append(path) or "x")
-    bot = FakeBot()
-    ap = autopilot.Autopilot(bot=bot)
+    logged = []
+    ap = autopilot.Autopilot(log=logged.append)
     ap.tick()
     fake.progress = 1.0
     ap.tick()
     ap.tick()
-    assert sum("Скачано" in t for t, _ in bot.sent) == 1
+    assert sum("скачано" in t for t in logged) == 1
     assert len(scanned) == 2            # после раскладки и после докачки
 
 
@@ -250,14 +227,14 @@ def test_telegram_binds_first_start_and_ignores_strangers(tmp_path, monkeypatch)
     telegram.save_settings(telegram.Settings(token="t"))
     svc = telegram.Service()
     pressed = []
-    svc.on("ap", lambda args: pressed.append(args) or "ок")
+    svc.on("wl", lambda args: pressed.append(args) or "ок")
     svc.handle({"message": {"chat": {"id": 42}, "text": "/start"}})
     assert telegram.load_settings().chat_id == 42
     # Чужой /start и чужая кнопка — молча мимо.
     svc.handle({"message": {"chat": {"id": 7}, "text": "/start"}})
-    svc.handle({"callback_query": {"id": "c1", "data": "ap:x:1", "message": {"chat": {"id": 7}}}})
+    svc.handle({"callback_query": {"id": "c1", "data": "wl:x:1", "message": {"chat": {"id": 7}}}})
     assert telegram.load_settings().chat_id == 42 and pressed == []
-    svc.handle({"callback_query": {"id": "c2", "data": "ap:x:1", "message": {"chat": {"id": 42}}}})
+    svc.handle({"callback_query": {"id": "c2", "data": "wl:x:1", "message": {"chat": {"id": 42}}}})
     assert pressed == ["x:1"]
     assert ("answerCallbackQuery", {"callback_query_id": "c2", "text": "ок"}) in calls
     assert svc.notify("hi") == 1
@@ -265,8 +242,8 @@ def test_telegram_binds_first_start_and_ignores_strangers(tmp_path, monkeypatch)
 
 
 def test_telegram_keyboard_shapes():
-    kb = telegram.keyboard([[("Да", "ap:1:0"), ("Страница", "https://rutor.info/t/1")]])
-    assert kb == {"inline_keyboard": [[{"text": "Да", "callback_data": "ap:1:0"},
+    kb = telegram.keyboard([[("Да", "wl:1:0"), ("Страница", "https://rutor.info/t/1")]])
+    assert kb == {"inline_keyboard": [[{"text": "Да", "callback_data": "wl:1:0"},
                                        {"text": "Страница", "url": "https://rutor.info/t/1"}]]}
 
 

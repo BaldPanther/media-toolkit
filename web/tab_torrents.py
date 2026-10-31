@@ -30,8 +30,7 @@ class TorrentsTab:
     def __init__(self, state):
         self.st = state
         self.bot = telegram.Service(log=state.log.add)
-        self.autopilot = autopilot.Autopilot(log=state.log.add, bot=self.bot,
-                                             on_change=state.touch)
+        self.autopilot = autopilot.Autopilot(log=state.log.add, on_change=state.touch)
         self.watcher = watchlist.Watcher(log=state.log.add, bot=self.bot,
                                          autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.

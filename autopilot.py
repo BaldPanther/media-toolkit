@@ -5,11 +5,13 @@
 
 1. ставит галки «последовательная загрузка» и «сначала первые и последние
    части» — один раз; снимете вручную — обратно не поставит;
-2. опознаёт тайтл в TMDb по имени раздачи. Не уверена — спрашивает в Telegram и
-   на вкладке «Торренты», вариантами с кнопками;
+2. опознаёт тайтл в TMDb по имени раздачи. Не уверена — спрашивает на вкладке
+   «Торренты» → «Автоматика», вариантами с кнопками;
 3. раскладывает через qBittorrent, как вкладка «Медиатека» (`arrange.apply`):
    загрузка продолжается под новыми именами, сразу пишутся .nfo и картинки;
-4. просит Kodi просканировать папку и пишет в Telegram; докачалась — ещё раз.
+4. просит Kodi просканировать папку; докачалась — ещё раз.
+
+В Telegram автоматика не пишет: туда — только слежение (`watchlist.py`).
 
 Торренты программа не удаляет и не останавливает. Что уже сделано — в
 `autopilot_state.json`, чтобы перезапуск не начинал всё заново.
@@ -30,7 +32,6 @@ import metadata
 import nfo
 import paths
 import qbit
-import telegram
 
 _STATE_NAME = "autopilot_state.json"
 INTERVAL = 30            # секунд между проверками
@@ -56,13 +57,8 @@ class Item:
     wanted: list = field(default_factory=list)   # сезоны, нужные из сборника (из поиска)
     progress: float = 0.0
     seq_set: bool = False          # галки последовательной загрузки уже ставили
-    done_notified: bool = False    # «скачано» уже сообщали
-    message_id: int = 0            # вопрос в Telegram — чтобы убрать кнопки после ответа
+    done_notified: bool = False    # докачку уже отметили (журнал, скан Kodi)
     seen: float = 0.0              # когда последний раз была в qBittorrent
-
-    @property
-    def short(self) -> str:
-        return self.hash[:10]
 
 
 # --------------------------------------------------------------------------- #
@@ -145,9 +141,8 @@ def is_video_torrent(torrent: qbit.Torrent) -> bool:
 # --------------------------------------------------------------------------- #
 
 class Autopilot:
-    def __init__(self, log=None, bot: telegram.Service | None = None, on_change=None):
+    def __init__(self, log=None, on_change=None):
         self.log = log or (lambda text: None)
-        self.bot = bot
         self.on_change = on_change or (lambda: None)
         self.items: dict[str, Item] = {}
         self.last_check = 0.0
@@ -157,8 +152,6 @@ class Autopilot:
         self._answers: list[tuple[str, int]] = []     # (hash, номер кандидата | -1)
         self._thread: threading.Thread | None = None
         self.load()
-        if bot is not None:
-            bot.on("ap", self._on_button)
 
     # ------------------------------------------------------------ состояние --
     def load(self) -> None:
@@ -232,19 +225,6 @@ class Autopilot:
                 item.status, item.error = NEW, ""
         self._wake.set()
 
-    def _on_button(self, args: str) -> str:
-        short, _, index = args.partition(":")
-        with self._lock:
-            item = next((i for i in self.items.values() if i.short == short), None)
-        if item is None or item.status != ASK:
-            return "Уже решено."
-        try:
-            n = int(index)
-        except ValueError:
-            return "Кнопка устарела."
-        self.answer(item.hash, n)
-        return "Не раскладываю." if n < 0 else "Раскладываю…"
-
     # ------------------------------------------------------------ проверка --
     def tick(self) -> None:
         qs = qbit.load_settings()
@@ -288,7 +268,6 @@ class Autopilot:
             if (item.status == DONE and item.progress >= 1 and not item.done_notified):
                 item.done_notified = True
                 self.log(f"Автоматика: скачано — {item.title}")
-                self._notify(f"✅ Скачано: <b>{telegram.esc(item.title)}</b>")
                 self._kodi(item.root, roots)
         with self._lock:
             for h in [h for h, i in self.items.items() if now - i.seen > KEEP_DAYS * 86400]:
@@ -316,22 +295,14 @@ class Autopilot:
             item.status = ASK
             item.candidates = [[c.tmdb_id, c.label()] for c in candidates]
             self.log(f"Автоматика: не уверена, что это — «{item.name}». Ждёт выбора.")
-            buttons = [[(label, f"ap:{item.short}:{n}")] for n, (_, label)
-                       in enumerate(item.candidates)]
-            buttons.append([("Не раскладывать", f"ap:{item.short}:-1")])
-            item.message_id = self._notify(
-                f"❓ Что это за {'сериал' if item.kind == library.TV else 'фильм'}?\n"
-                f"<code>{telegram.esc(item.name)}</code>", buttons)
             return
         self._arrange(item, hit.tmdb_id, torrent, client, meta, roots)
 
     def _apply_answer(self, item: Item, index: int, torrent, client, meta, roots) -> None:
         if index < 0 or index >= len(item.candidates):
             item.status, item.error = SKIP, "не раскладывать — выбрано вручную"
-            self._edit(item, f"Не раскладываю: <code>{telegram.esc(item.name)}</code>")
             return
-        tmdb_id, label = item.candidates[index]
-        self._edit(item, f"Выбрано: <b>{telegram.esc(label)}</b>")
+        tmdb_id, _ = item.candidates[index]
         self._arrange(item, int(tmdb_id), torrent, client, meta, roots)
 
     def _arrange(self, item: Item, tmdb_id: int, torrent, client, meta, roots) -> None:
@@ -367,12 +338,8 @@ class Autopilot:
             self._fail(item, f"не переименовано файлов: {len(out.failed)} — см. журнал")
             return
         item.status, item.error = DONE, ""
-        episodes = sum(1 for r in plan.rows if r.what == "video" and r.dst is not None)
         self.log(f"Автоматика: разложено — {item.title} ({plan.root}), "
                  f"через qBittorrent {out.via_qbit}, .nfo {out.nfo}, картинок {out.art_done}")
-        what = f"серий: {episodes}" if item.kind == library.TV else "фильм"
-        self._notify(f"📥 Разложено: <b>{telegram.esc(item.title)}</b>\n"
-                     f"{what}, скачано {item.progress:.0%}")
         self._kodi(item.root, roots)
 
     def _skip_unwanted(self, item: Item, torrent, client) -> set:
@@ -401,17 +368,8 @@ class Autopilot:
     def _fail(self, item: Item, error: str) -> None:
         item.status, item.error = ERROR, error
         self.log(f"⚠ Автоматика: «{item.name}» — {error}")
-        self._notify(f"⚠ Не разложено: <code>{telegram.esc(item.name)}</code>\n"
-                     f"{telegram.esc(error)}")
 
     # ------------------------------------------------------------ наружу --
-    def _notify(self, text: str, buttons=None) -> int:
-        return self.bot.notify(text, buttons) if self.bot is not None else 0
-
-    def _edit(self, item: Item, text: str) -> None:
-        if self.bot is not None and item.message_id:
-            self.bot.edit(item.message_id, text)
-        item.message_id = 0
 
     def _kodi(self, root: str, roots) -> None:
         if not root:
