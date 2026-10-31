@@ -27,6 +27,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+import library
 import paths
 
 _SETTINGS_NAME = "qbit_settings.json"
@@ -50,21 +51,39 @@ class Settings:
     # Соответствие путей вручную. Оба пустые — определяется само.
     remote_root: str = ""    # как путь видит qBittorrent: /data
     local_root: str = ""     # он же у программы: /media/disk1/nas
+    # Автоматика (`autopilot.py`): новые раздачи этих категорий раскладываются
+    # сами. Остальные категории программа не трогает никогда.
+    auto: bool = False
+    tv_category: str = "tv"
+    movies_category: str = "movies"
 
     def configured(self) -> bool:
         return bool(self.url.strip())
+
+    def kind_of(self, category: str):
+        """Категория раздачи → library.TV / library.MOVIE или None (не наша)."""
+        cat = (category or "").strip().casefold()
+        if cat and cat == self.tv_category.strip().casefold():
+            return library.TV
+        if cat and cat == self.movies_category.strip().casefold():
+            return library.MOVIE
+        return None
 
 
 def load_settings() -> Settings:
     d = paths.read_json(paths.settings_path(_SETTINGS_NAME))
     if isinstance(d, dict):
         try:
+            base = Settings()
             return Settings(
                 url=str(d.get("url", "")),
                 username=str(d.get("username", "")),
                 password=str(d.get("password", "")),
                 remote_root=str(d.get("remote_root", "")),
                 local_root=str(d.get("local_root", "")),
+                auto=bool(d.get("auto", base.auto)),
+                tv_category=str(d.get("tv_category", base.tv_category)),
+                movies_category=str(d.get("movies_category", base.movies_category)),
             )
         except Exception:  # noqa: BLE001 — поле неожиданного типа: значения по умолчанию
             pass
@@ -175,6 +194,35 @@ class Client:
                        {"hash": torrent_hash, "oldPath": old, "newPath": new})
         except QbitError as e:
             raise QbitError(f"qBittorrent не переименовал «{old}» → «{new}»: {e}") from e
+
+    def toggle_sequential(self, torrent_hash: str) -> None:
+        """Последовательная загрузка — переключатель, а не «включить»: зовём, только
+        если `seq_dl` у раздачи ещё false."""
+        self._call("torrents/toggleSequentialDownload", {"hashes": torrent_hash})
+
+    def toggle_first_last(self, torrent_hash: str) -> None:
+        """«Сначала первые и последние части» — тоже переключатель (`f_l_piece_prio`)."""
+        self._call("torrents/toggleFirstLastPiecePrio", {"hashes": torrent_hash})
+
+    def add(self, url: str, category: str = "", sequential: bool = True) -> None:
+        """Добавить раздачу по magnet- или http-ссылке на .torrent.
+
+        Папка — по категории (у категорий tv/movies это корни медиатеки).
+        """
+        data = {"urls": url, "sequentialDownload": str(sequential).lower(),
+                "firstLastPiecePrio": str(sequential).lower()}
+        if category:
+            data["category"] = category
+        text = self._call("torrents/add", data).decode("utf-8", "replace").strip()
+        if text and text != "Ok.":
+            raise QbitError(f"qBittorrent не добавил раздачу: {text}")
+
+    def set_file_priority(self, torrent_hash: str, ids, priority: int) -> None:
+        """Приоритет файлов раздачи по их номерам; 0 — не загружать."""
+        ids = list(ids)
+        if ids:
+            self._call("torrents/filePrio", {"hash": torrent_hash, "id": "|".join(map(str, ids)),
+                                             "priority": str(priority)})
 
 
 # --------------------------------------------------------------------------- #
@@ -299,25 +347,36 @@ class Torrent:
         return PurePosixPath(*parts[len(base):]).as_posix()
 
 
+def torrent_of(item: dict, client: Client, pmap: PathMap) -> Torrent | None:
+    """Раздача из ответа `torrents/info` — в путях программы и со списком файлов.
+
+    None — её папка вне медиатеки программы или у magnet ещё нет метаданных.
+    """
+    content = pmap.to_local(str(item.get("content_path") or ""))
+    save = pmap.to_local(str(item.get("save_path") or ""))
+    if content is None or save is None:
+        return None
+    files = [TorrentFile(str(f.get("name", "")), int(f.get("size") or 0),
+                         float(f.get("progress") or 0))
+             for f in client.files(str(item.get("hash", "")))]
+    if not files:
+        return None
+    return Torrent(str(item.get("hash", "")), str(item.get("name", "")),
+                   str(item.get("category", "")), float(item.get("progress") or 0),
+                   save, content, files)
+
+
 def find_torrents(folder, client: Client, pmap: PathMap) -> list[Torrent]:
     """Раздачи, чьи файлы лежат в `folder`, — или внутри которых лежит `folder`."""
     folder = Path(folder)
     found = []
     for item in client.torrents():
         content = pmap.to_local(str(item.get("content_path") or ""))
-        save = pmap.to_local(str(item.get("save_path") or ""))
-        if content is None or save is None:
+        if content is None or not (_within(content, folder) or _within(folder, content)):
             continue
-        if not (_within(content, folder) or _within(folder, content)):
-            continue
-        files = [TorrentFile(str(f.get("name", "")), int(f.get("size") or 0),
-                             float(f.get("progress") or 0))
-                 for f in client.files(str(item.get("hash", "")))]
-        if not files:
-            continue                    # magnet без метаданных: списка файлов ещё нет
-        found.append(Torrent(str(item.get("hash", "")), str(item.get("name", "")),
-                             str(item.get("category", "")), float(item.get("progress") or 0),
-                             save, content, files))
+        torrent = torrent_of(item, client, pmap)
+        if torrent is not None:
+            found.append(torrent)
     return found
 
 

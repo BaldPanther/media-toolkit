@@ -10,10 +10,12 @@ from flask import Blueprint, current_app, jsonify, request
 
 import core
 import edl
+import kodi
 import library
 import metaconf
 import qbit
 import subs
+import telegram
 from web import replies
 from web.replies import UserError
 from web.state import update_app_settings
@@ -135,6 +137,8 @@ def _settings_dict() -> dict:
     meta = metaconf.load_settings()
     sub = subs.load_settings()
     qb = qbit.load_settings()
+    tg = telegram.load_settings()
+    kd = kodi.load_settings()
     return {
         "meta": {
             "tmdb_key": meta.tmdb_key, "fanart_key": meta.fanart_key,
@@ -146,7 +150,11 @@ def _settings_dict() -> dict:
         "subs": {"username": sub.username, "password": sub.password,
                  "apikey": sub.apikey, "use_fallback": sub.use_fallback},
         "qbit": {"url": qb.url, "username": qb.username, "password": qb.password,
-                 "remote_root": qb.remote_root, "local_root": qb.local_root},
+                 "remote_root": qb.remote_root, "local_root": qb.local_root,
+                 "auto": qb.auto, "tv_category": qb.tv_category,
+                 "movies_category": qb.movies_category},
+        "telegram": {"token": tg.token, "bound": tg.configured() and bool(tg.chat_id)},
+        "kodi": {"url": kd.url, "username": kd.username, "password": kd.password},
         "choices": {
             "languages": metaconf.LANGUAGES,
             "name_modes": {m: metaconf.NAME_LABELS[m] for m in metaconf.NAME_MODES},
@@ -168,14 +176,34 @@ def _str_list(value) -> list[str]:
     return out
 
 
+def _text(data: dict, old, key: str) -> str:
+    """Поле формы; чего в ней нет — как было. Пароли не обрезаются."""
+    value = str(data.get(key, getattr(old, key)) or "")
+    return value if key == "password" else value.strip()
+
+
 def _qbit_from(data: dict, old: qbit.Settings) -> qbit.Settings:
     """Настройки qBittorrent из формы; чего в ней нет — как было."""
     def text(key: str) -> str:
-        value = str(data.get(key, getattr(old, key)) or "")
-        return value if key == "password" else value.strip()
+        return _text(data, old, key)
     return qbit.Settings(url=text("url"), username=text("username"),
                          password=text("password"), remote_root=text("remote_root"),
-                         local_root=text("local_root"))
+                         local_root=text("local_root"),
+                         auto=bool(data.get("auto", old.auto)),
+                         tv_category=text("tv_category") or old.tv_category,
+                         movies_category=text("movies_category") or old.movies_category)
+
+
+def _kodi_from(data: dict, old: kodi.Settings) -> kodi.Settings:
+    return kodi.Settings(url=_text(data, old, "url"), username=_text(data, old, "username"),
+                         password=_text(data, old, "password"))
+
+
+def _roots(data: dict) -> list[str]:
+    """Корни библиотеки из формы (ещё не сохранённые) или из настроек."""
+    meta = metaconf.load_settings()
+    roots = _str_list(data["roots"]) if "roots" in data else meta.tv_roots + meta.movies_roots
+    return [r for r in roots if r]
 
 
 @bp.get("/api/settings")
@@ -190,13 +218,48 @@ def qbit_check():
     s = _qbit_from(data.get("qbit") or {}, qbit.load_settings())
     if not s.configured():
         raise UserError("Нет адреса", "Впишите адрес веб-интерфейса qBittorrent.")
-    meta = metaconf.load_settings()
-    roots = _str_list(data["roots"]) if "roots" in data else meta.tv_roots + meta.movies_roots
     try:
-        text = qbit.check(s, [r for r in roots if r])
+        text = qbit.check(s, _roots(data))
     except qbit.QbitError as e:
         return jsonify({"ok": False, "text": str(e)})
     return jsonify({"ok": True, "text": text})
+
+
+@bp.post("/api/telegram/check")
+def telegram_check():
+    """Имя бота по токену из формы и привязан ли чат."""
+    token = str((replies.body().get("telegram") or {}).get("token", "")).strip()
+    if not token:
+        raise UserError("Нет токена", "Впишите токен бота от @BotFather.")
+    try:
+        return jsonify({"ok": True, "text": telegram.check(token)})
+    except telegram.TelegramError as e:
+        return jsonify({"ok": False, "text": str(e)})
+
+
+@bp.post("/api/telegram/test")
+def telegram_test():
+    """Пробное сообщение в привязанный чат — по сохранённым настройкам."""
+    s = telegram.load_settings()
+    if not s.configured() or not s.chat_id:
+        return jsonify({"ok": False, "text": "Сначала сохраните токен и напишите боту /start."})
+    try:
+        telegram.Bot(s.token).send(s.chat_id, "Проверка: бот медиатеки на связи.")
+    except telegram.TelegramError as e:
+        return jsonify({"ok": False, "text": str(e)})
+    return jsonify({"ok": True, "text": "Сообщение отправлено."})
+
+
+@bp.post("/api/kodi/check")
+def kodi_check():
+    data = replies.body()
+    s = _kodi_from(data.get("kodi") or {}, kodi.load_settings())
+    if not s.configured():
+        raise UserError("Нет адреса", "Впишите адрес Kodi.")
+    try:
+        return jsonify({"ok": True, "text": kodi.check(s, _roots(data))})
+    except kodi.KodiError as e:
+        return jsonify({"ok": False, "text": str(e)})
 
 
 @bp.post("/api/settings")
@@ -238,6 +301,16 @@ def save_settings():
     qbit_in = data.get("qbit")
     if isinstance(qbit_in, dict):
         qbit.save_settings(_qbit_from(qbit_in, qbit.load_settings()))
+    tg_in = data.get("telegram")
+    if isinstance(tg_in, dict) and "token" in tg_in:
+        old = telegram.load_settings()
+        token = str(tg_in.get("token") or "").strip()
+        # Другой бот — другой чат: привязку начинаем заново.
+        telegram.save_settings(telegram.Settings(
+            token=token, chat_id=old.chat_id if token == old.token.strip() else 0))
+    kodi_in = data.get("kodi")
+    if isinstance(kodi_in, dict):
+        kodi.save_settings(_kodi_from(kodi_in, kodi.load_settings()))
     st.log.add("Настройки сохранены.")
     for tab in st.tabs.values():
         hook = getattr(tab, "on_settings_changed", None)

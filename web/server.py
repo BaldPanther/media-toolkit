@@ -180,6 +180,11 @@ def serve(state: AppState, host: str, port: int, password: str = "",
     from waitress import serve as waitress_serve
 
     app = create_app(state, password)
+    # Автоматика торрентов и Telegram-бот — фоновые потоки. Здесь, а не в
+    # create_app: тестам и сборке страницы они не нужны.
+    torrents = state.tabs.get("torrents")
+    if torrents is not None:
+        torrents.start_background()
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}/"
     if idle_exit:
         threading.Thread(target=_idle_watchdog, args=(state, idle_exit), daemon=True).start()

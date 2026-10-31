@@ -12,6 +12,7 @@
   <script src="/static/js/tracks.js?v={{ v }}"></script>
   <script src="/static/js/library.js?v={{ v }}"></script>
   <script src="/static/js/edl.js?v={{ v }}"></script>
+  <script src="/static/js/torrents.js?v={{ v }}"></script>
   <script defer src="/static/vendor/alpine.min.js?v={{ v }}"></script>
 </head>
 <body x-data="app" @keydown.window="if ($store.ui.key($event)) $event.preventDefault()">
@@ -87,6 +88,7 @@
     <div x-show="tab === 'library'">{% include "_tab_library.html" %}</div>
     <div x-show="tab === 'tracks'">{% include "_tab_tracks.html" %}</div>
     <div x-show="tab === 'edl'">{% include "_tab_edl.html" %}</div>
+    <div x-show="tab === 'torrents'">{% include "_tab_torrents.html" %}</div>
   </main>
 
   <!-- Нижняя панель: ход операции, «Отмена», журнал. -->

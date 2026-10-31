@@ -22,6 +22,8 @@ class FakeClient:
         self.sizes: dict[str, dict[str, int]] = {}
         self.renamed: list[tuple[str, str]] = []
         self.lag = 0              # сколько опросов `files` отдавать старые имена
+        self.toggled: list[tuple[str, str]] = []
+        self.progress = 0.25
 
     def add(self, h: str, files: dict[str, int]) -> None:
         self.names[h] = list(files)
@@ -32,7 +34,8 @@ class FakeClient:
         for h, names in self.names.items():
             root = names[0].split("/")[0]
             content = f"{self.remote_save}/{root}" if "/" in names[0] else f"{self.remote_save}/{names[0]}"
-            out.append({"hash": h, "name": root, "category": self.category, "progress": 0.25,
+            out.append({"hash": h, "name": root, "category": self.category,
+                        "progress": self.progress, "seq_dl": False, "f_l_piece_prio": False,
                         "save_path": self.remote_save, "content_path": content})
         return out
 
@@ -52,6 +55,12 @@ class FakeClient:
         if src.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.rename(dst)
+
+    def toggle_sequential(self, h):
+        self.toggled.append(("seq", h))
+
+    def toggle_first_last(self, h):
+        self.toggled.append(("first_last", h))
 
     def categories(self):
         return {"tv": {"name": "tv", "savePath": self.remote_save}}

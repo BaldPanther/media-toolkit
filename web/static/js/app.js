@@ -13,6 +13,7 @@ document.addEventListener("alpine:init", () => {
       { id: "library", label: "Медиатека" },
       { id: "tracks", label: "Дорожки и субтитры" },
       { id: "edl", label: "Пропуск заставок (EDL)" },
+      { id: "torrents", label: "Торренты" },
     ],
 
     init() {
@@ -120,8 +121,11 @@ document.addEventListener("alpine:init", () => {
     saving: false,
     showPass: false,
     showQbitPass: false,
+    showKodiPass: false,
     checking: false,
     qbitResult: null,
+    tgResult: null,
+    kodiResult: null,
     artPick: "",
     sections: [
       { id: "keys", label: "Ключи API", icon: "i-key" },
@@ -129,6 +133,8 @@ document.addEventListener("alpine:init", () => {
       { id: "lang", label: "Языки и имена", icon: "i-globe" },
       { id: "art", label: "Картинки", icon: "i-image" },
       { id: "qbit", label: "qBittorrent", icon: "i-download" },
+      { id: "telegram", label: "Telegram", icon: "i-send" },
+      { id: "kodi", label: "Kodi", icon: "i-tv" },
       { id: "roots", label: "Корни библиотеки", icon: "i-library" },
     ],
 
@@ -139,22 +145,27 @@ document.addEventListener("alpine:init", () => {
       this.section = section || "keys";
       this.showPass = false;
       this.showQbitPass = false;
-      this.qbitResult = null;
+      this.showKodiPass = false;
+      this.qbitResult = this.tgResult = this.kodiResult = null;
       this.artPick = "";
       this.visible = true;
     },
 
-    // Проверка по тому, что сейчас в форме: сохранять для этого не нужно.
-    async qbitCheck() {
+    // Проверки — по тому, что сейчас в форме: сохранять для этого не нужно.
+    async check(field, url, body) {
       this.checking = true;
-      this.qbitResult = { ok: true, text: "проверка…" };
+      this[field] = { ok: true, text: "проверка…" };
       try {
         const roots = [...this.data.meta.tv_roots, ...this.data.meta.movies_roots];
-        this.qbitResult = await api.post("/api/qbit/check", { qbit: this.data.qbit, roots });
+        this[field] = await api.post(url, { ...body, roots });
       } finally {
         this.checking = false;
       }
     },
+    qbitCheck() { return this.check("qbitResult", "/api/qbit/check", { qbit: this.data.qbit }); },
+    tgCheck() { return this.check("tgResult", "/api/telegram/check", { telegram: this.data.telegram }); },
+    tgTest() { return this.check("tgResult", "/api/telegram/test", {}); },
+    kodiCheck() { return this.check("kodiResult", "/api/kodi/check", { kodi: this.data.kodi }); },
     close() { this.visible = false; },
 
     artLabel(code) {
@@ -203,7 +214,8 @@ document.addEventListener("alpine:init", () => {
       this.saving = true;
       try {
         const res = await api.post("/api/settings",
-          { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit });
+          { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit,
+            telegram: { token: this.data.telegram.token }, kodi: this.data.kodi });
         if (res) {
           this.visible = false;
           this.$store.ui.toast("Настройки сохранены");

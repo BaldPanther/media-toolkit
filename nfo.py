@@ -49,6 +49,21 @@ def _serialize(root: ET.Element) -> str:
 _WATCH_TAGS = ("watched", "playcount", "userrating", "lastplayed", "dateadded")
 
 
+def read_tmdb_id(path) -> int | None:
+    """Номер TMDb из .nfo тайтла (`<uniqueid type="tmdb">`), если он там есть.
+
+    Читается регуляркой, а не разбором XML: .nfo от tinyMediaManager бывает с
+    мусором после корня, а номер нужен и из такого.
+    """
+    p = Path(path)
+    try:
+        text = p.read_text("utf-8", errors="replace") if p.is_file() else ""
+    except OSError:
+        return None
+    m = re.search(r'<uniqueid[^>]*\btype="tmdb"[^>]*>\s*(\d+)\s*</uniqueid>', text, re.I)
+    return int(m.group(1)) if m else None
+
+
 def read_watch_state(path) -> dict:
     """Забирает из существующего .nfo то, что принадлежит пользователю, а не TMDb."""
     p = Path(path)

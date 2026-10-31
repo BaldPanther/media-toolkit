@@ -106,6 +106,35 @@ def test_settings_qbit_section_and_check(client, cfg, monkeypatch):
     assert res == {"ok": False, "text": "неверный логин или пароль"}
 
 
+def test_settings_telegram_kodi_and_auto(client, cfg):
+    import kodi
+    import qbit
+    import telegram
+    telegram.save_settings(telegram.Settings(token="old", chat_id=42))
+    client.post("/api/settings", json={"telegram": {"token": "old"},
+                                       "qbit": {"auto": True, "tv_category": " TV "},
+                                       "kodi": {"url": " http://tv:8080 "}})
+    assert telegram.load_settings().chat_id == 42          # тот же бот — чат остаётся
+    q = qbit.load_settings()
+    assert q.auto and q.tv_category == "TV" and q.movies_category == "movies"
+    assert kodi.load_settings().url == "http://tv:8080"
+    got = client.get("/api/settings").get_json()
+    assert got["telegram"] == {"token": "old", "bound": True}
+    # Другой токен — другой бот: привязку чата начинаем заново.
+    client.post("/api/settings", json={"telegram": {"token": "new"}})
+    assert telegram.load_settings().chat_id == 0
+    res = client.post("/api/telegram/test", json={}).get_json()
+    assert res["ok"] is False and "/start" in res["text"]
+
+
+def test_torrents_tab_state_and_actions(client, cfg):
+    t = client.get("/api/state").get_json()["tabs"]["torrents"]
+    assert t["qbit"] is False and t["auto"] is False and t["items"] == []
+    res = client.post("/api/torrents/answer", json={"hash": "нет", "index": 0})
+    assert res.status_code == 400 and res.get_json()["error"]["title"] == "Нет такой раздачи"
+    assert client.post("/api/torrents/check", json={}).get_json()["ok"] is True
+
+
 def test_fs_lists_dirs_and_videos(client, tmp_path):
     root = tmp_path / "lib"
     (root / "Show (2020)").mkdir(parents=True)

@@ -1,4 +1,4 @@
-<!-- Настройки: ключи API, OpenSubtitles, языки, картинки, qBittorrent, корни библиотеки. -->
+<!-- Настройки: ключи API, OpenSubtitles, языки, картинки, qBittorrent, Telegram, Kodi, корни библиотеки. -->
 <div x-data="settings" @open-settings.window="open($event.detail && $event.detail.section)">
   <div class="overlay" x-show="visible" x-transition.opacity.duration.120ms @mousedown.self="close()"
        @keydown.escape.window="visible && !$store.ui.dialogs.length && !$store.browser.visible && close()">
@@ -180,11 +180,78 @@
                 <span class="hint">qBittorrent и программа часто видят медиатеку под разными путями. Пусто — соответствие
                   найдётся само по папкам категорий qBittorrent и корням библиотеки.</span>
               </div>
+              <label class="check">
+                <input type="checkbox" x-model="data.qbit.auto">
+                Раскладывать новые раздачи сами
+              </label>
+              <div class="row" x-show="data.qbit.auto">
+                <span class="small muted">Категории — сериалы:</span>
+                <input class="input mono" style="width: 120px" type="text" x-model="data.qbit.tv_category" spellcheck="false">
+                <span class="small muted">фильмы:</span>
+                <input class="input mono" style="width: 120px" type="text" x-model="data.qbit.movies_category" spellcheck="false">
+              </div>
+              <span class="hint" x-show="data.qbit.auto">Раздачи этих категорий программа сама опознаёт в TMDb и
+                раскладывает через qBittorrent сразу после добавления, ставит им последовательную загрузку и пишет в
+                Telegram. Не уверена, что за тайтл, — спрашивает. Остальные категории не трогает. Что сделано — на
+                вкладке «Торренты».</span>
               <div class="row">
                 <button type="button" class="btn" @click="qbitCheck()" :disabled="checking || !data.qbit.url.trim()">
                   <svg class="icon"><use href="#i-check"/></svg>Проверить подключение</button>
                 <span class="small grow" :class="qbitResult && qbitResult.ok ? 'ok-text' : 'danger-text'"
                       x-text="qbitResult ? qbitResult.text : ''"></span>
+              </div>
+            </div>
+
+            <!-- Telegram -->
+            <div class="stack" x-show="section === 'telegram'">
+              <p class="muted">Бот пишет, что разложено и что докачалось, и спрашивает кнопками, если не уверен, что за
+                сериал. Создать бота: в Telegram откройте @BotFather → /newbot → вставьте сюда токен, который он пришлёт.
+                Потом напишите своему боту /start: он запомнит этот чат и будет слушать только его.</p>
+              <div class="field">
+                <label for="tg-token">Токен бота</label>
+                <input id="tg-token" class="input mono" type="text" x-model="data.telegram.token"
+                       placeholder="1234567890:AA…" spellcheck="false" autocomplete="off">
+              </div>
+              <span class="small" :class="data.telegram.bound ? 'ok-text' : 'faint'"
+                    x-text="data.telegram.bound ? 'Чат привязан.' : 'Чат ещё не привязан: сохраните токен и напишите боту /start.'"></span>
+              <div class="row">
+                <button type="button" class="btn" @click="tgCheck()" :disabled="checking || !data.telegram.token.trim()">
+                  <svg class="icon"><use href="#i-check"/></svg>Проверить бота</button>
+                <button type="button" class="btn" @click="tgTest()" :disabled="checking || !data.telegram.bound">
+                  <svg class="icon"><use href="#i-send"/></svg>Пробное сообщение</button>
+                <span class="small grow" :class="tgResult && tgResult.ok ? 'ok-text' : 'danger-text'"
+                      x-text="tgResult ? tgResult.text : ''"></span>
+              </div>
+            </div>
+
+            <!-- Kodi -->
+            <div class="stack" x-show="section === 'kodi'">
+              <p class="muted">После раскладки программа просит Kodi просканировать папку сериала или фильма — новинка
+                появляется в медиатеке сразу. В Kodi: «Настройки» → «Службы» → «Управление» → «Разрешить удалённое
+                управление по HTTP»; там же порт, логин и пароль. Без адреса программа Kodi не трогает.</p>
+              <div class="field">
+                <label for="kodi-url">Адрес Kodi</label>
+                <input id="kodi-url" class="input mono" type="text" x-model="data.kodi.url"
+                       placeholder="http://192.168.1.20:8080" spellcheck="false" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="kodi-user">Логин</label>
+                <input id="kodi-user" class="input" type="text" x-model="data.kodi.username" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="kodi-pass">Пароль</label>
+                <div class="input-group">
+                  <input id="kodi-pass" class="input" :type="showKodiPass ? 'text' : 'password'" x-model="data.kodi.password" autocomplete="new-password">
+                  <button type="button" class="btn btn-icon" @click="showKodiPass = !showKodiPass" :title="showKodiPass ? 'Скрыть' : 'Показать'">
+                    <svg class="icon"><use :href="showKodiPass ? '#i-eye-off' : '#i-eye'"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="row">
+                <button type="button" class="btn" @click="kodiCheck()" :disabled="checking || !data.kodi.url.trim()">
+                  <svg class="icon"><use href="#i-check"/></svg>Проверить подключение</button>
+                <span class="small grow" :class="kodiResult && kodiResult.ok ? 'ok-text' : 'danger-text'"
+                      x-text="kodiResult ? kodiResult.text : ''"></span>
               </div>
             </div>
 

@@ -1,0 +1,79 @@
+<!-- Вкладка «Торренты»: автоматика qBittorrent — что разложено, что ждёт выбора. -->
+<div x-data="torrentsTab" class="stack">
+  <section class="card">
+    <div class="card-head">
+      <h2>Автоматика</h2>
+      <span class="badge" :class="t.auto ? 'ok' : ''" x-text="t.auto ? 'включена' : 'выключена'"></span>
+      <span class="sub" x-show="t.auto && t.categories">
+        раскладывает раздачи категорий «<span x-text="(t.categories || [])[0]"></span>» и
+        «<span x-text="(t.categories || [])[1]"></span>», остальные не трогает
+      </span>
+    </div>
+    <p class="muted" x-show="!t.qbit">Подключите qBittorrent в «Настройках» → «qBittorrent». Тогда новые раздачи
+      сериалов и фильмов будут раскладываться сами, сразу после добавления.</p>
+    <p class="muted" x-show="t.qbit && !t.auto">В «Настройках» → «qBittorrent» включите «Раскладывать новые раздачи
+      сами».</p>
+    <div class="row small" x-show="t.auto">
+      <span class="muted" x-text="lastCheck()"></span>
+      <span class="danger-text" x-show="t.last_error" x-text="t.last_error"></span>
+    </div>
+    <div class="row small" style="margin-top: 8px">
+      <span class="badge" :class="t.telegram_bound ? 'ok' : (t.telegram ? 'warn' : '')"
+            x-text="t.telegram_bound ? 'Telegram: на связи' : (t.telegram ? 'Telegram: напишите боту /start' : 'Telegram: не настроен')"></span>
+      <span class="badge" :class="t.kodi ? 'ok' : ''"
+            x-text="t.kodi ? 'Kodi: сканирует после раскладки' : 'Kodi: не настроен'"></span>
+    </div>
+    <div class="card-foot">
+      <button type="button" class="btn" @click="checkNow()" :disabled="!t.auto">
+        <svg class="icon"><use href="#i-scan"/></svg>Проверить сейчас
+      </button>
+      <button type="button" class="btn btn-ghost" @click="$dispatch('open-settings', { section: 'qbit' })">qBittorrent…</button>
+      <button type="button" class="btn btn-ghost" @click="$dispatch('open-settings', { section: 'telegram' })">Telegram…</button>
+      <button type="button" class="btn btn-ghost" @click="$dispatch('open-settings', { section: 'kodi' })">Kodi…</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Раздачи</h2><span class="sub">которые видела автоматика, свежие сверху</span>
+    </div>
+    <div class="empty" x-show="!(t.items || []).length">Пока ничего: добавьте раздачу в qBittorrent с категорией
+      сериалов или фильмов.</div>
+    <div class="table-wrap" x-show="(t.items || []).length">
+      <table class="table">
+        <thead>
+          <tr><th>Раздача</th><th>Тайтл</th><th>Состояние</th><th class="num">Скачано</th><th></th></tr>
+        </thead>
+        <tbody>
+          <template x-for="i in t.items || []" :key="i.hash">
+            <tr>
+              <td class="file">
+                <div x-text="i.name"></div>
+                <div class="small faint" x-text="i.kind"></div>
+              </td>
+              <td class="file">
+                <div x-text="i.title || '—'"></div>
+                <div class="small faint mono" x-show="i.root" x-text="i.root"></div>
+              </td>
+              <td>
+                <span class="badge" :class="badge(i.status)" x-text="i.status_label"></span>
+                <div class="small danger-text" style="margin-top: 4px" x-show="i.error" x-text="i.error"></div>
+                <div class="row" style="margin-top: 6px" x-show="i.status === 'ask'">
+                  <template x-for="(c, n) in i.candidates" :key="n">
+                    <button type="button" class="btn btn-sm" @click="answer(i.hash, n)" x-text="c"></button>
+                  </template>
+                  <button type="button" class="btn btn-sm btn-ghost" @click="answer(i.hash, -1)">Не раскладывать</button>
+                </div>
+              </td>
+              <td class="num" x-text="pct(i.progress)"></td>
+              <td>
+                <button type="button" class="btn btn-sm btn-ghost" title="Опознать и разложить заново"
+                        x-show="['error', 'skip', 'done'].includes(i.status)" @click="retry(i.hash)">Заново</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
