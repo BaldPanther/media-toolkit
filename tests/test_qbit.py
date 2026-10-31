@@ -233,6 +233,33 @@ def test_make_dirs_copies_parent_mode(tmp_path):
         assert made.stat().st_mode & 0o777 == 0o777
 
 
+# ------------------------------------------------------------------- вход --
+
+@pytest.mark.parametrize("reply,ok", [(b"Ok.", True), (b"", True), (b"Fails.", False)])
+def test_login_accepts_old_and_new_replies(monkeypatch, reply, ok):
+    # До 5.x успех — «Ok.», в 5.x — пустой ответ 204; отказ — «Fails.».
+    c = qbit.Client("nas:8181", "user", "pass")
+    assert c.base == "http://nas:8181"
+    monkeypatch.setattr(c, "_send", lambda path, data=None, params=None: reply)
+    if ok:
+        c.login()
+    else:
+        with pytest.raises(qbit.QbitError, match="неверный логин"):
+            c.login()
+
+
+def test_login_401_is_wrong_password(monkeypatch):
+    import urllib.error
+    c = qbit.Client("http://nas:8181", "user", "pass")
+
+    def refuse(path, data=None, params=None):
+        raise urllib.error.HTTPError(c.base, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(c, "_send", refuse)
+    with pytest.raises(qbit.QbitError, match="неверный логин"):
+        c.login()
+
+
 # --------------------------------------------------------------- настройки --
 
 def test_settings_roundtrip(tmp_path, monkeypatch):

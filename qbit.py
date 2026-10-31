@@ -131,12 +131,16 @@ class Client:
             raise QbitError(f"qBittorrent: битый ответ на {path}") from e
 
     def login(self) -> None:
+        """Вход. Успех — «Ok.» (до 5.x) или пустой ответ 204 (5.x); отказ —
+        «Fails.» или 401."""
         if not self.username:
             raise QbitError("qBittorrent просит логин — впишите его в «Настройках» → «qBittorrent».")
         try:
             text = self._send("auth/login", {"username": self.username,
                                              "password": self.password})
         except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise QbitError("qBittorrent: неверный логин или пароль.") from e
             if e.code == 403:
                 raise QbitError("qBittorrent временно не пускает: слишком много неудачных "
                                 "входов с этого адреса.") from e
@@ -144,7 +148,7 @@ class Client:
         except (urllib.error.URLError, OSError) as e:
             raise QbitError(f"qBittorrent недоступен ({self.base}): "
                             f"{getattr(e, 'reason', e)}") from e
-        if text.decode("utf-8", "replace").strip() != "Ok.":
+        if text.decode("utf-8", "replace").strip() not in ("Ok.", ""):
             raise QbitError("qBittorrent: неверный логин или пароль.")
 
     def version(self) -> str:
