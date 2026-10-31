@@ -135,6 +135,7 @@ document.addEventListener("alpine:init", () => {
       { id: "qbit", label: "qBittorrent", icon: "i-download" },
       { id: "telegram", label: "Telegram", icon: "i-send" },
       { id: "kodi", label: "Kodi", icon: "i-tv" },
+      { id: "search", label: "Поиск", icon: "i-search" },
       { id: "roots", label: "Корни библиотеки", icon: "i-library" },
     ],
 
@@ -215,7 +216,8 @@ document.addEventListener("alpine:init", () => {
       try {
         const res = await api.post("/api/settings",
           { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit,
-            telegram: { token: this.data.telegram.token }, kodi: this.data.kodi });
+            telegram: { token: this.data.telegram.token }, kodi: this.data.kodi,
+            search: { voices: this.data.search.voices } });
         if (res) {
           this.visible = false;
           this.$store.ui.toast("Настройки сохранены");

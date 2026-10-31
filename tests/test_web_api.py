@@ -244,3 +244,12 @@ def test_server_mode_exits_on_sigterm(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_settings_search_voices(client, cfg):
+    import search
+    got = client.get("/api/settings").get_json()["search"]
+    assert got["voices"] == ["Кубик в Кубе", "TVShows"]
+    assert got["sources"] == ["https://jac.red"] and got["sources_file"].endswith("search_sources.json")
+    client.post("/api/settings", json={"search": {"voices": [" LostFilm ", "", "TVShows"]}})
+    assert search.load_prefs().voices == ["LostFilm", "TVShows"]

@@ -255,6 +255,32 @@
               </div>
             </div>
 
+            <!-- Поиск -->
+            <div class="stack" x-show="section === 'search'">
+              <p class="muted">Вкладка «Торренты» → «Поиск». Качество, HDR и Dolby Vision переключаются прямо там, над
+                списком раздач, и запоминаются.</p>
+              <div class="field">
+                <label for="s-voices">Любимые озвучки — по порядку</label>
+                <input id="s-voices" class="input" type="text" :value="(data.search.voices || []).join(', ')"
+                       @change="data.search.voices = $event.target.value.split(',').map((v) => v.trim()).filter(Boolean)"
+                       placeholder="Кубик в Кубе, TVShows" spellcheck="false">
+                <span class="hint">Через запятую. Раздача с любимой озвучкой поднимается выше при том же качестве; первая
+                  в списке важнее. Сравнивается с озвучками в описании раздачи.</span>
+              </div>
+              <div class="field">
+                <span class="label">Где искать</span>
+                <div class="list">
+                  <template x-for="src in data.search.sources" :key="src">
+                    <div class="list-item"><span class="grow mono" x-text="src"></span></div>
+                  </template>
+                </div>
+                <span class="hint">Список — в файле <span class="mono" x-text="data.search.sources_file"></span>: строка
+                  на источник, <span class="mono">{"type": "jacred", "url": "https://jac.red"}</span> или
+                  <span class="mono">{"type": "torznab", "url": "…/api", "apikey": "…"}</span> для Jackett и
+                  Prowlarr. Перезапускать программу не нужно.</span>
+              </div>
+            </div>
+
             <!-- Корни библиотеки -->
             <div class="stack" x-show="section === 'roots'">
               <p class="muted">По корням программа сама понимает, фильм перед ней или сериал, когда тип стоит

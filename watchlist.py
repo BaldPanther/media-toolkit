@@ -264,12 +264,13 @@ class Watcher:
         return rows
 
     def _event(self, w: Watch, key: str, text: str, buttons=None) -> None:
-        if key in w.notified:
+        """Сообщить о событии один раз. Не дошло (бот не настроен или чат не
+        привязан) — не помечаем: скажем при следующей проверке."""
+        if key in w.notified or self.bot is None:
             return
-        w.notified.append(key)
-        self.log(f"Слежение: {w.title} — {key}")
-        if self.bot is not None:
-            self.bot.notify(text, buttons)
+        if self.bot.notify(text, buttons):
+            w.notified.append(key)
+            self.log(f"Слежение: {w.title} — сообщено в Telegram ({key})")
 
     # ------------------------------------------------------------ качать --
     def download(self, watch_id: str, hash_prefix: str) -> str:

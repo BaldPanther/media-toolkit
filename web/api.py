@@ -13,7 +13,9 @@ import edl
 import kodi
 import library
 import metaconf
+import paths
 import qbit
+import search
 import subs
 import telegram
 from web import replies
@@ -155,6 +157,10 @@ def _settings_dict() -> dict:
                  "movies_category": qb.movies_category},
         "telegram": {"token": tg.token, "bound": tg.configured() and bool(tg.chat_id)},
         "kodi": {"url": kd.url, "username": kd.username, "password": kd.password},
+        "search": {"voices": search.load_prefs().voices,
+                   "sources": [s.get("url", "") + (f" ({s['type']})" if s.get("type") != "jacred" else "")
+                               for s in search.load_sources()],
+                   "sources_file": str(paths.settings_path("search_sources.json"))},
         "choices": {
             "languages": metaconf.LANGUAGES,
             "name_modes": {m: metaconf.NAME_LABELS[m] for m in metaconf.NAME_MODES},
@@ -311,6 +317,11 @@ def save_settings():
     kodi_in = data.get("kodi")
     if isinstance(kodi_in, dict):
         kodi.save_settings(_kodi_from(kodi_in, kodi.load_settings()))
+    search_in = data.get("search")
+    if isinstance(search_in, dict) and isinstance(search_in.get("voices"), list):
+        prefs = search.load_prefs()
+        prefs.voices = [v for v in _str_list(search_in["voices"]) if v]
+        search.save_prefs(prefs)
     st.log.add("Настройки сохранены.")
     for tab in st.tabs.values():
         hook = getattr(tab, "on_settings_changed", None)

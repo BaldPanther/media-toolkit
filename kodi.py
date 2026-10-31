@@ -123,8 +123,8 @@ class PathMap:
 
 
 def detect_map(sources, local_roots) -> PathMap | None:
-    """По общему хвосту: `smb://nas/nas-1/media/tv/` и `/media/disk1/nas-1/media/tv`
-    дают `/media/disk1/nas-1` ↔ `smb://nas/nas-1/`."""
+    """По общему хвосту: `smb://nas/share/media/tv/` и `/media/disk1/share/media/tv`
+    дают `/media/disk1/share` ↔ `smb://nas/share/`."""
     best, best_len = None, 0
     for source in sources:
         src = _segments(source.split("://", 1)[-1])
