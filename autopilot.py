@@ -151,6 +151,7 @@ class Autopilot:
         self._wake = threading.Event()
         self._answers: list[tuple[str, int]] = []     # (hash, номер кандидата | -1)
         self._thread: threading.Thread | None = None
+        self._kodi_off = False         # о выключенном Kodi уже сказали
         self.load()
 
     # ------------------------------------------------------------ состояние --
@@ -376,8 +377,16 @@ class Autopilot:
             return
         try:
             target = kodi.scan(root, roots)
+        except kodi.KodiOffline:
+            # Приставка выключена — дело обычное: сказать раз и молчать, пока не ответит.
+            if not self._kodi_off:
+                self.log("Kodi не отвечает (приставка выключена?) — сканирование пропускаю, "
+                         "пока не появится")
+            self._kodi_off = True
+            return
         except kodi.KodiError as e:
             self.log(f"⚠ {e}")
             return
+        self._kodi_off = False
         if target:
             self.log(f"Kodi: сканирование — {target}")

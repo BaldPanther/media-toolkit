@@ -30,6 +30,10 @@ class KodiError(RuntimeError):
     """Kodi недоступен или отказал."""
 
 
+class KodiOffline(KodiError):
+    """Kodi не отвечает — обычно просто выключена приставка."""
+
+
 @dataclass
 class Settings:
     url: str = ""              # http://192.168.1.20:8080
@@ -82,7 +86,7 @@ class Client:
                 raise KodiError("Kodi: неверный логин или пароль.") from e
             raise KodiError(f"Kodi ответил HTTP {e.code}") from e
         except (urllib.error.URLError, OSError) as e:
-            raise KodiError(f"Kodi недоступен ({self.base}): {getattr(e, 'reason', e)}") from e
+            raise KodiOffline(f"Kodi недоступен ({self.base}): {getattr(e, 'reason', e)}") from e
         except ValueError as e:
             raise KodiError("Kodi: битый ответ") from e
         if "error" in data:

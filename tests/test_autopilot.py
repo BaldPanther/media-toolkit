@@ -210,6 +210,30 @@ def test_finished_download_is_reported_once_and_kodi_scans(env, monkeypatch):
     assert len(scanned) == 2            # после раскладки и после докачки
 
 
+def test_kodi_offline_is_said_once(env, monkeypatch):
+    tv, fake, _ = env
+    _add(tv, fake)
+    state = {"off": True}
+
+    def scan(path, roots, settings=None):
+        if state["off"]:
+            raise kodi.KodiOffline("Kodi недоступен")
+        return "smb://nas/tv/"
+
+    monkeypatch.setattr(kodi, "scan", scan)
+    logged = []
+    ap = autopilot.Autopilot(log=logged.append)
+    ap.tick()                           # после раскладки
+    fake.progress = 1.0
+    ap.tick()                           # после докачки
+    assert sum("Kodi не отвечает" in t for t in logged) == 1
+    assert not any(t.startswith("⚠") for t in logged)
+    state["off"] = False
+    ap.retry("h1")
+    ap.tick()
+    assert any("Kodi: сканирование" in t for t in logged)
+
+
 def test_missing_tmdb_key_is_reported(env):
     metaconf.save_settings(metaconf.Settings(tmdb_key=""))
     with pytest.raises(qbit.QbitError, match="TMDb"):
