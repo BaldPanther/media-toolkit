@@ -213,9 +213,17 @@ class Client:
                 "firstLastPiecePrio": str(sequential).lower()}
         if category:
             data["category"] = category
+        # До 5.x — «Ok.» / «Fails.», в 5.x — JSON со счётчиками.
         text = self._call("torrents/add", data).decode("utf-8", "replace").strip()
-        if text and text != "Ok.":
-            raise QbitError(f"qBittorrent не добавил раздачу: {text}")
+        if not text or text == "Ok.":
+            return
+        try:
+            result = json.loads(text)
+        except ValueError:
+            result = None
+        if isinstance(result, dict) and not result.get("failure_count"):
+            return
+        raise QbitError("qBittorrent не добавил раздачу" + ("" if isinstance(result, dict) else f": {text}"))
 
     def set_file_priority(self, torrent_hash: str, ids, priority: int) -> None:
         """Приоритет файлов раздачи по их номерам; 0 — не загружать."""

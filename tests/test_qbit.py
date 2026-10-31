@@ -260,6 +260,22 @@ def test_login_accepts_old_and_new_replies(monkeypatch, reply, ok):
             c.login()
 
 
+@pytest.mark.parametrize("reply,ok", [
+    (b"Ok.", True), (b"", True), (b"Fails.", False),
+    (b'{"added_torrent_ids":["b2e2"],"failure_count":0,"pending_count":0,"success_count":1}', True),
+    (b'{"added_torrent_ids":[],"failure_count":1,"pending_count":0,"success_count":0}', False),
+])
+def test_add_accepts_old_and_new_replies(monkeypatch, reply, ok):
+    # До 5.x — «Ok.» / «Fails.», в 5.x — JSON со счётчиками.
+    c = qbit.Client("nas:8181")
+    monkeypatch.setattr(c, "_send", lambda path, data=None, params=None: reply)
+    if ok:
+        c.add("magnet:?xt=urn:btih:" + "a" * 40, category="tv")
+    else:
+        with pytest.raises(qbit.QbitError, match="не добавил"):
+            c.add("magnet:?xt=urn:btih:" + "a" * 40, category="tv")
+
+
 def test_login_401_is_wrong_password(monkeypatch):
     import urllib.error
     c = qbit.Client("http://nas:8181", "user", "pass")
