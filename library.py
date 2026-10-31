@@ -309,16 +309,18 @@ def season_of_dir(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def find_sidecars(video: Path) -> list[Path]:
+def find_sidecars(video: Path, siblings=None) -> list[Path]:
     """Файлы-спутники рядом с видео: те же имя+точка и известное расширение.
 
     Ловит и `Show - S01E01.ru.srt`, и `Show - S01E01-thumb.jpg` — у первого между
     именем и расширением вклинивается языковой код, у второго дефис-суффикс.
+    `siblings` — уже известные файлы той же папки; без них папка читается с диска.
     """
     stem = video.stem
     out = []
-    for p in sorted(video.parent.iterdir()):
-        if p == video or not p.is_file():
+    candidates = sorted(siblings) if siblings is not None else sorted(video.parent.iterdir())
+    for p in candidates:
+        if p == video or (siblings is None and not p.is_file()):
             continue
         name = p.name
         if not name.startswith(stem):
@@ -339,6 +341,17 @@ class Scan:
     junk_files: list[Path] = field(default_factory=list)
     junk_dirs: list[Path] = field(default_factory=list)
     season_dirs: dict[Path, int] = field(default_factory=dict)
+    sidecars: dict[Path, list[Path]] = field(default_factory=dict)
+    # Размеры файлов, которых на диске может ещё не быть (см. `scan_folder`).
+    sizes: dict[Path, int] = field(default_factory=dict)
+
+    def size_of(self, path: Path) -> int:
+        if path in self.sizes:
+            return self.sizes[path]
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
 
     def season_of(self, video: Path) -> int | None:
         season, numbers = parse_episodes(video)
@@ -371,32 +384,72 @@ class Scan:
         return sizes
 
 
-def scan_folder(folder) -> Scan:
+def _list_tree(root: Path, extra: dict[Path, int], sizes: dict[Path, int]):
+    """Файлы и папки под `root`: с диска плюс `extra`. → (файлы, папки), по порядку.
+
+    Один и тот же файл с диска и из `extra` может прийти в разной юникод-форме
+    (SMB отдаёт NFD, API — NFC), поэтому сводятся они по `norm`, и остаётся
+    путь с диска. Пути из `extra` пересаживаются на `root` как он есть, чтобы
+    дальше работал `relative_to`.
+    """
+    files: dict[str, Path] = {}
+    dirs: dict[str, Path] = {}
+    if root.is_dir():
+        for path in root.rglob("*"):
+            (dirs if path.is_dir() else files)[norm(path)] = path
+    root_key = norm(root)
+    for path, size in extra.items():
+        base = next((p for p in path.parents if norm(p) == root_key), None)
+        if base is None:
+            continue
+        rel = path.parts[len(base.parts):]
+        key = norm(root.joinpath(*rel))
+        files.setdefault(key, root.joinpath(*rel))
+        sizes[files[key]] = size
+        # Недокачанный файл qBittorrent может держать как «Серия.mkv.!qB».
+        files.pop(key + ".!qB", None)
+        for n in range(1, len(rel)):
+            d = root.joinpath(*rel[:n])
+            dirs.setdefault(norm(d), d)
+    return sorted(files.values()), sorted(dirs.values())
+
+
+def scan_folder(folder, extra=None) -> Scan:
     """Обходит папку тайтла: видео, спутники, артефакты медиатеки, мусор.
 
     Спутники в результат не попадают отдельной строкой — они привязаны к своему
-    видео и переезжают вместе с ним (`find_sidecars`).
+    видео и переезжают вместе с ним (`Scan.sidecars`).
+
+    `extra` — {путь: размер} файлов, которых на диске может ещё не быть: раздача
+    qBittorrent знает весь свой список сразу, а серии создаёт по мере загрузки.
     """
     root = Path(folder)
     scan = Scan(root=root)
-    if root.is_file():
+    extra = extra or {}
+    if root.is_file() or root in extra:
         scan.videos = [root] if is_video(root) else []
         scan.root = root.parent
+        if root in extra:
+            scan.sizes[root] = extra[root]
+        if scan.videos and root.parent.is_dir():
+            scan.sidecars[root] = find_sidecars(root)
         return scan
 
+    files, dirs = _list_tree(root, extra, scan.sizes)
+    by_dir: dict[Path, list[Path]] = {}
+    for path in files:
+        by_dir.setdefault(path.parent, []).append(path)
     sidecars: set[Path] = set()
-    for path in sorted(root.rglob("*")):
-        if path.is_dir():
-            continue
+    for path in files:
         if is_video(path):
             scan.videos.append(path)
-            sidecars.update(find_sidecars(path))
-    for path in sorted(root.rglob("*")):
-        if path.is_dir():
-            s = season_of_dir(path.name)
-            if s is not None:
-                scan.season_dirs[path] = s
-            continue
+            scan.sidecars[path] = find_sidecars(path, by_dir[path.parent])
+            sidecars.update(scan.sidecars[path])
+    for path in dirs:
+        s = season_of_dir(path.name)
+        if s is not None:
+            scan.season_dirs[path] = s
+    for path in files:
         if path in sidecars or path in scan.videos:
             continue
         if is_art_file(path):
@@ -407,9 +460,9 @@ def scan_folder(folder) -> Scan:
             continue                     # .DS_Store и прочая служебка — не наше дело
         else:
             scan.junk_files.append(path)
-    for path in sorted(root.rglob("*")):
-        if path.is_dir() and path.name not in _ART_DIRS and path not in scan.season_dirs:
-            has_video = any(is_video(p) for p in path.rglob("*") if p.is_file())
+    for path in dirs:
+        if path.name not in _ART_DIRS and path not in scan.season_dirs:
+            has_video = any(is_video(p) for p in files if path in p.parents)
             if not has_video:
                 scan.junk_dirs.append(path)
     return scan
@@ -621,7 +674,7 @@ def _row_for(src: Path, dst: Path, what: str) -> Row:
     return Row(src, dst, A_RENAME, status, what)
 
 
-def _add_with_sidecars(rows: list[Row], video: Path, dst: Path,
+def _add_with_sidecars(rows: list[Row], video: Path, dst: Path, sidecars: list[Path],
                        movie_extras: Path | None = None) -> None:
     """Видео и его спутники: `.nfo`, `.edl`, субтитры, превью.
 
@@ -636,7 +689,7 @@ def _add_with_sidecars(rows: list[Row], video: Path, dst: Path,
     поэтому для сериала правило не включается.
     """
     rows.append(_row_for(video, dst, "video"))
-    for side in find_sidecars(video):
+    for side in sidecars:
         rest = side.name[len(video.stem):].lower()
         if movie_extras is not None and (rest == ".nfo" or rest.endswith(SIDECAR_SUFFIXES)):
             rows.append(Row(side, movie_extras / side.name, A_JUNK, S_JUNK, "junk",
@@ -703,10 +756,11 @@ def _show_root_for(folder: Path, target_name: str) -> Path:
     return base if base.name == target_name else base.parent / target_name
 
 
-def build_tv_plan(folder, info, settings, overrides=None) -> Plan:
-    """План для сериала. `overrides` — ручные (season, episode) по путям видео."""
+def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
+    """План для сериала. `overrides` — ручные (season, episode) по путям видео,
+    `extra` — файлы раздачи, которых на диске может ещё не быть (`scan_folder`)."""
     folder = Path(folder)
-    scan = scan_folder(folder)
+    scan = scan_folder(folder, extra)
     overrides = overrides or {}
     show = info.folder_title
     target_name = title_with_year(show, info.year)
@@ -738,7 +792,7 @@ def build_tv_plan(folder, info, settings, overrides=None) -> Plan:
                     else "серии нет в TMDb — имя без названия")
         dst = show_root / season_dir_name(season) / episode_file_name(
             show, season, numbers, title, video.suffix.lower())
-        _add_with_sidecars(plan.rows, video, dst)
+        _add_with_sidecars(plan.rows, video, dst, scan.sidecars.get(video, []))
         if note:
             plan.rows[-1].note = note
 
@@ -749,10 +803,10 @@ def build_tv_plan(folder, info, settings, overrides=None) -> Plan:
     return plan
 
 
-def build_movie_plan(path, info, settings, overrides=None) -> Plan:
+def build_movie_plan(path, info, settings, overrides=None, extra=None) -> Plan:
     """План для фильма. Путь может быть как папкой, так и одиночным файлом."""
     path = Path(path)
-    scan = scan_folder(path)
+    scan = scan_folder(path, extra)
     # И для одиночного файла, и для папки раздачи целевая папка фильма создаётся
     # рядом: `…/movies/Deadpool.2024.WEB-DL` и `…/movies/Deadpool.2024.mkv` дают
     # один и тот же `…/movies/Deadpool & Wolverine (2024)`.
@@ -770,13 +824,12 @@ def build_movie_plan(path, info, settings, overrides=None) -> Plan:
                                  note="укажите папку одного фильма"))
         return plan
 
-    videos = sorted(scan.videos, key=lambda p: p.stat().st_size if p.exists() else 0,
-                    reverse=True)
+    videos = sorted(scan.videos, key=scan.size_of, reverse=True)
     for i, video in enumerate(videos):
         if i == 0:
             dst = movie_root / movie_file_name(info.folder_title, info.year,
                                                video.suffix.lower())
-            _add_with_sidecars(plan.rows, video, dst,
+            _add_with_sidecars(plan.rows, video, dst, scan.sidecars.get(video, []),
                                movie_extras=movie_root / settings.extras_folder)
         else:
             # Второй видеофайл в папке фильма — трейлер, сэмпл или «бонус».
@@ -790,10 +843,10 @@ def build_movie_plan(path, info, settings, overrides=None) -> Plan:
     return plan
 
 
-def build_plan(path, kind: str, info, settings, overrides=None) -> Plan:
+def build_plan(path, kind: str, info, settings, overrides=None, extra=None) -> Plan:
     if kind == MOVIE:
-        return build_movie_plan(path, info, settings, overrides)
-    return build_tv_plan(path, info, settings, overrides)
+        return build_movie_plan(path, info, settings, overrides, extra)
+    return build_tv_plan(path, info, settings, overrides, extra)
 
 
 def _mark_conflicts(plan: Plan) -> None:
@@ -896,13 +949,24 @@ class ApplyResult:
     disposal: str = ""       # DISPOSE_* — только у строк мусора
 
 
+def _torrent_move(files, src: Path, dst: Path) -> None:
+    # Проверка — наша: libtorrent переименовывает поверх существующего файла молча.
+    if dst.exists() and not _same_name_ci(src, dst):
+        raise FileExistsError(f"уже существует: {dst}")
+    files.rename(src, dst)
+
+
 def apply_plan(plan: Plan, delete_junk: bool = False,
-               stop=None, progress=None) -> list[ApplyResult]:
+               stop=None, progress=None, files=None) -> list[ApplyResult]:
     """Применяет план. Порядок: сначала файлы по местам, потом уборка пустых папок.
 
     Каждый файл едет со своего текущего места сразу на конечное — так строки не
     зависят друг от друга и прерывание на середине оставляет корректное состояние.
     Циклы имён (E01→E02, E02→E01) разводятся временными именами.
+
+    `files` — раздачи qBittorrent (`qbit.TorrentFiles`). Их файлы переименовывает
+    сам qBittorrent, чтобы загрузка продолжилась, а удалить их нельзя — он скачал
+    бы их заново, поэтому мусор из раздачи всегда едет в Extras.
     """
     results: list[ApplyResult] = []
     todo = [r for r in plan.rows if r.changes and (r.what != "junk" or r.selected)]
@@ -910,14 +974,20 @@ def apply_plan(plan: Plan, delete_junk: bool = False,
     staged: list[tuple[Path, Row]] = []
     trash = _trash_func() if delete_junk else None
 
+    def mover(path: Path):
+        if files is not None and files.owns(path):
+            return lambda src, dst: _torrent_move(files, src, dst)
+        return _move
+
     total = len(todo)
     for i, row in enumerate(todo, 1):
         if stop and stop():
             break
         if progress:
             progress(i, total, row.src)
+        owned = files is not None and files.owns(row.src)
         try:
-            if row.action == A_JUNK and delete_junk:
+            if row.action == A_JUNK and delete_junk and not owned:
                 if trash is None:
                     raise RuntimeError("нет пакета send2trash — удаление недоступно")
                 try:
@@ -934,20 +1004,30 @@ def apply_plan(plan: Plan, delete_junk: bool = False,
             if row.dst in sources:
                 # Цель занята файлом, который сам ещё поедет: паркуем во временное имя.
                 tmp = row.src.with_name(f".stage-{os.getpid()}-{row.src.name}")
-                row.src.rename(tmp)
+                if owned:
+                    files.rename(row.src, tmp)
+                else:
+                    row.src.rename(tmp)
                 staged.append((tmp, row))
                 continue
-            _move(row.src, row.dst)
+            mover(row.src)(row.src, row.dst)
             results.append(ApplyResult(row, True))
         except (OSError, RuntimeError) as e:
             results.append(ApplyResult(row, False, str(e)))
 
     for tmp, row in staged:
         try:
-            _move(tmp, row.dst)
+            mover(tmp)(tmp, row.dst)
             results.append(ApplyResult(row, True))
-        except OSError as e:
+        except (OSError, RuntimeError) as e:
             results.append(ApplyResult(row, False, str(e)))
+
+    if files is not None:
+        # Переезд у qBittorrent асинхронный: пустые папки убирать только после него.
+        late = {norm(p) for p in files.wait(stop=stop)}
+        for r in results:
+            if r.ok and r.row.dst is not None and norm(r.row.dst) in late:
+                r.ok, r.error = False, "qBittorrent не успел переложить файл — проверьте раздачу"
 
     _cleanup_empty_dirs(plan)
     return results

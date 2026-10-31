@@ -12,6 +12,7 @@ import core
 import edl
 import library
 import metaconf
+import qbit
 import subs
 from web import replies
 from web.replies import UserError
@@ -133,6 +134,7 @@ def set_path():
 def _settings_dict() -> dict:
     meta = metaconf.load_settings()
     sub = subs.load_settings()
+    qb = qbit.load_settings()
     return {
         "meta": {
             "tmdb_key": meta.tmdb_key, "fanart_key": meta.fanart_key,
@@ -143,6 +145,8 @@ def _settings_dict() -> dict:
         },
         "subs": {"username": sub.username, "password": sub.password,
                  "apikey": sub.apikey, "use_fallback": sub.use_fallback},
+        "qbit": {"url": qb.url, "username": qb.username, "password": qb.password,
+                 "remote_root": qb.remote_root, "local_root": qb.local_root},
         "choices": {
             "languages": metaconf.LANGUAGES,
             "name_modes": {m: metaconf.NAME_LABELS[m] for m in metaconf.NAME_MODES},
@@ -164,9 +168,35 @@ def _str_list(value) -> list[str]:
     return out
 
 
+def _qbit_from(data: dict, old: qbit.Settings) -> qbit.Settings:
+    """Настройки qBittorrent из формы; чего в ней нет — как было."""
+    def text(key: str) -> str:
+        value = str(data.get(key, getattr(old, key)) or "")
+        return value if key == "password" else value.strip()
+    return qbit.Settings(url=text("url"), username=text("username"),
+                         password=text("password"), remote_root=text("remote_root"),
+                         local_root=text("local_root"))
+
+
 @bp.get("/api/settings")
 def get_settings():
     return jsonify(_settings_dict())
+
+
+@bp.post("/api/qbit/check")
+def qbit_check():
+    """«Проверить подключение» — по тому, что сейчас в форме, ещё до сохранения."""
+    data = replies.body()
+    s = _qbit_from(data.get("qbit") or {}, qbit.load_settings())
+    if not s.configured():
+        raise UserError("Нет адреса", "Впишите адрес веб-интерфейса qBittorrent.")
+    meta = metaconf.load_settings()
+    roots = _str_list(data["roots"]) if "roots" in data else meta.tv_roots + meta.movies_roots
+    try:
+        text = qbit.check(s, [r for r in roots if r])
+    except qbit.QbitError as e:
+        return jsonify({"ok": False, "text": str(e)})
+    return jsonify({"ok": True, "text": text})
 
 
 @bp.post("/api/settings")
@@ -205,6 +235,9 @@ def save_settings():
             apikey=str(subs_in.get("apikey", old.apikey) or "").strip(),
             use_fallback=bool(subs_in.get("use_fallback", old.use_fallback)),
         ))
+    qbit_in = data.get("qbit")
+    if isinstance(qbit_in, dict):
+        qbit.save_settings(_qbit_from(qbit_in, qbit.load_settings()))
     st.log.add("Настройки сохранены.")
     for tab in st.tabs.values():
         hook = getattr(tab, "on_settings_changed", None)

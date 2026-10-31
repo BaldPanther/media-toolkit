@@ -16,6 +16,7 @@ import library
 import metaconf
 import metadata
 import nfo
+import qbit
 from web import replies
 from web.replies import Info, UserError
 
@@ -91,6 +92,9 @@ class LibraryTab:
         self.hit: metadata.SearchHit | None = None
         self.info: metadata.MediaInfo | None = None
         self.plan: library.Plan | None = None
+        # Раздачи qBittorrent в папке тайтла: их файлы переименовывает он сам.
+        self.torrents: qbit.TorrentFiles | None = None
+        self.torrent_error = ""        # qBittorrent настроен, но не ответил
         self.chosen: dict[tuple[str, int | None], metadata.ArtCandidate] = {}
         self.overrides: dict[Path, tuple[int, int]] = {}
         self.art_lang = "settings"
@@ -150,6 +154,8 @@ class LibraryTab:
         self.hit = None
         self.info = None
         self.plan = None
+        self.torrents = None
+        self.torrent_error = ""
         self.chosen.clear()
         self.overrides.clear()
         self.season = None
@@ -252,13 +258,47 @@ class LibraryTab:
         return metadata.rank_art(metadata.art_of(self.info.art, kind, season),
                                  self.art_languages())
 
+    # ------------------------------------------------------- qBittorrent --
+    def find_torrents(self, folder: Path, quiet: bool = False) -> None:
+        """Раздачи qBittorrent в папке тайтла. Зовётся из фоновой операции: это сеть."""
+        self.torrents, self.torrent_error = None, ""
+        roots = self.settings.tv_roots + self.settings.movies_roots
+        try:
+            self.torrents = qbit.torrents_in(folder, qbit.load_settings(), roots)
+        except qbit.QbitError as e:
+            self.torrent_error = str(e)
+            self.st.log.add(f"⚠ {e}")
+            return
+        if self.torrents is not None and not quiet:
+            self.st.log.add(f"Раздача qBittorrent: {self.torrents.describe()} — её файлы "
+                            "переименует qBittorrent, загрузка продолжится.")
+
+    def owned(self, path) -> bool:
+        return self.torrents is not None and self.torrents.owns(path)
+
+    def _mark_torrent_rows(self) -> None:
+        """Подписать строки, которые переименует qBittorrent."""
+        for row in self.plan.rows:
+            if not row.changes or not self.owned(row.src):
+                continue
+            if row.what == "junk":
+                note = "из раздачи — только в Extras"
+            elif row.src.exists():
+                note = "через qBittorrent"
+            else:
+                note = "ещё не скачан — переименует qBittorrent"
+            row.note = f"{row.note} · {note}" if row.note else note
+
     # --------------------------------------------------------------- план --
     def build_plan(self, quiet: bool = False) -> None:
         folder = self.folder()
         if folder is None or self.info is None:
             return
         self.plan = library.build_plan(folder, self.info.kind, self.info,
-                                       self.settings, self.overrides)
+                                       self.settings, self.overrides,
+                                       extra=self.torrents.extra() if self.torrents else None)
+        if self.torrents is not None:
+            self._mark_torrent_rows()
         changed = len(self.plan.changed())
         conflicts = len(self.plan.conflicts())
         msg = f"В плане изменений: {changed}"
@@ -341,8 +381,9 @@ class LibraryTab:
                 and library.send_to_trash_available())
 
     def _dst_text(self, row: library.Row) -> str:
-        """Что показать в «Станет». У мусора при галке «удалять» — «удалить»."""
-        if row.what == "junk" and row.selected and self.delete_junk():
+        """Что показать в «Станет». У мусора при галке «удалять» — «удалить»,
+        кроме файлов раздачи: удалённый qBittorrent скачал бы заново."""
+        if row.what == "junk" and row.selected and self.delete_junk() and not self.owned(row.src):
             return "удалить"
         return _rel(row.dst, self.plan.root.parent)
 
@@ -469,7 +510,11 @@ def _start_fetch(t: LibraryTab, hit: metadata.SearchHit, job=None):
     t.st.log.add(f"Выбран тайтл: {hit.label()} (TMDb {hit.tmdb_id})")
 
     def fetch(job):
-        scan = library.scan_folder(folder) if hit.kind == library.TV else None
+        if qbit.load_settings().configured():
+            job.progress(0, 0, "раздачи qBittorrent…")
+        t.find_torrents(folder)
+        extra = t.torrents.extra() if t.torrents else None
+        scan = library.scan_folder(folder, extra) if hit.kind == library.TV else None
         seasons = scan.seasons() if scan else []
         # Размеры сезонов нужны, чтобы подобрать верную разбивку в episode
         # groups, когда обычные сезоны TMDb с диском не сошлись (аниме).
@@ -768,17 +813,27 @@ def apply():
     if t.is_collection():
         raise UserError("Папка-сборник", t.plan_status)
     changed = t.plan.changed()
-    junk = [r for r in changed if r.what == "junk" and r.selected]
     delete = t.delete_junk()
+    # Мусор из раздачи не удаляется даже с галкой — он уедет в Extras и посчитан
+    # среди переименованных.
+    junk = [r for r in changed if r.what == "junk" and r.selected
+            and not (delete and t.owned(r.src))]
+    via = sum(1 for r in changed if t.owned(r.src))
     action = ("удалены — в Корзину, а если у тома её нет, то насовсем"
               if delete else "перенесены в Extras")
     text = (f"Файлов будет переименовано: {len(changed) - len(junk)}\n"
-            f"Посторонних файлов ({action}): {len(junk)}\n"
+            + (f"Из них через qBittorrent: {via} — раздача продолжит качаться\n" if via else "")
+            + f"Посторонних файлов ({action}): {len(junk)}\n"
             f"Папка тайтла: {t.plan.root}\n\n"
             "Плюс будут записаны .nfo и скачаны картинки.")
     if t.plan.conflicts():
         text = f"⚠ Конфликтных строк: {len(t.plan.conflicts())} — они будут пропущены.\n\n" + text
     replies.confirm("apply", "Применить план?", text, yes="Применить")
+    if t.torrent_error:
+        replies.confirm("qbit", "qBittorrent не ответил",
+                        f"{t.torrent_error}\n\nФайлы будут переименованы прямо на диске. Если "
+                        "это раздача, которая ещё качается или раздаётся, qBittorrent потеряет "
+                        "её файлы.", yes="Переименовать на диске", danger=True)
     policy = t.settings.existing_policy
     if policy == metaconf.POLICY_ASK:
         policy = replies.choose("policy", "Существующие файлы",
@@ -792,7 +847,11 @@ def apply():
         stop = job.cancelled
         progress = lambda i, total, item: job.progress(i, total, f"{i}/{total}: {Path(str(item)).name}")
         preserve = _title_watch_state(t)
-        results = library.apply_plan(plan, delete_junk=delete, stop=stop, progress=progress)
+        torrents = t.torrents
+        if torrents is not None:
+            job.progress(0, 0, "переименование через qBittorrent…")
+        results = library.apply_plan(plan, delete_junk=delete, stop=stop, progress=progress,
+                                     files=torrents)
         failed = [r for r in results if not r.ok]
         for r in failed:
             st.log.add(f"✗ {r.row.src}: {r.error}")
@@ -800,6 +859,18 @@ def apply():
         for r in results:
             if r.disposal == library.DISPOSE_DELETE:
                 st.log.add(f"Удалено насовсем: {r.row.src}")
+        via = (sum(1 for r in results if r.ok and torrents.owns(r.row.dst))
+               if torrents is not None else 0)
+        if torrents is not None:
+            # Папки под .nfo и картинки — с правами родителя: созданные от root,
+            # они не пустили бы qBittorrent положить туда ещё не скачанные серии.
+            dirs = {plan.root} | {r.dst.parent for r in plan.rows if r.what == "video"
+                                  and r.dst is not None and r.action != library.A_SKIP}
+            for d in sorted(dirs):
+                try:
+                    qbit.make_dirs(d)
+                except OSError as e:
+                    st.log.add(f"✗ {d}: {e}")
         written = art_done = art_skipped = 0
         if not stop():
             job.progress(0, 0, "запись .nfo…")
@@ -817,6 +888,8 @@ def apply():
             written += _write_title_nfo(t, policy, art_urls, season_urls, preserve)
         disposed = [r for r in results if r.disposal]
         parts = [f"переименовано {len(results) - len(failed) - len(disposed)}"]
+        if via:
+            parts.append(f"из них через qBittorrent {via}")
         trashed = sum(1 for r in results if r.disposal == library.DISPOSE_TRASH)
         deleted = sum(1 for r in results if r.disposal == library.DISPOSE_DELETE)
         if trashed:
@@ -837,6 +910,9 @@ def apply():
         # Путь в общем поле теперь другой — иначе вкладки «Дорожки» и «EDL»
         # остались бы со старым именем папки. Меняем его сами, без сброса
         # тайтла: итог прогона должен остаться на экране.
+        if torrents is not None:
+            # Пути файлов раздачи сменились — план после прогона строится по новым.
+            t.find_torrents(plan.root, quiet=True)
         if plan.root.exists():
             t._last_path = str(plan.root)
             st.set_path(str(plan.root))

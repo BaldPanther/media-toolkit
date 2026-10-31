@@ -1,4 +1,4 @@
-<!-- Настройки: ключи API, OpenSubtitles, языки, картинки, корни библиотеки. -->
+<!-- Настройки: ключи API, OpenSubtitles, языки, картинки, qBittorrent, корни библиотеки. -->
 <div x-data="settings" @open-settings.window="open($event.detail && $event.detail.section)">
   <div class="overlay" x-show="visible" x-transition.opacity.duration.120ms @mousedown.self="close()"
        @keydown.escape.window="visible && !$store.ui.dialogs.length && !$store.browser.visible && close()">
@@ -141,6 +141,50 @@
                   </template>
                 </select>
                 <span class="hint">На скорость программы не влияет — файл скачивается один раз.</span>
+              </div>
+            </div>
+
+            <!-- qBittorrent -->
+            <div class="stack" x-show="section === 'qbit'">
+              <p class="muted">Если папка на вкладке «Медиатека» — раздача qBittorrent, её файлы переименует сам
+                qBittorrent: загрузка продолжится, и первые серии можно смотреть, не дожидаясь остальных. Без адреса
+                всё переименовывается прямо на диске.</p>
+              <div class="field">
+                <label for="qb-url">Адрес веб-интерфейса</label>
+                <input id="qb-url" class="input mono" type="text" x-model="data.qbit.url"
+                       placeholder="http://192.168.1.10:8080" spellcheck="false" autocomplete="off">
+              </div>
+              <div class="field">
+                <label for="qb-user">Логин</label>
+                <input id="qb-user" class="input" type="text" x-model="data.qbit.username" autocomplete="off" spellcheck="false">
+                <span class="hint">Можно оставить пустым, если qBittorrent пускает этот адрес без входа.</span>
+              </div>
+              <div class="field">
+                <label for="qb-pass">Пароль</label>
+                <div class="input-group">
+                  <input id="qb-pass" class="input" :type="showQbitPass ? 'text' : 'password'" x-model="data.qbit.password" autocomplete="new-password">
+                  <button type="button" class="btn btn-icon" @click="showQbitPass = !showQbitPass" :title="showQbitPass ? 'Скрыть' : 'Показать'">
+                    <svg class="icon"><use :href="showQbitPass ? '#i-eye-off' : '#i-eye'"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="field">
+                <span class="label">Соответствие путей</span>
+                <div class="row nowrap">
+                  <input class="input mono grow" type="text" x-model="data.qbit.remote_root"
+                         placeholder="у qBittorrent: /data" spellcheck="false" autocomplete="off">
+                  <span class="faint">↔</span>
+                  <input class="input mono grow" type="text" x-model="data.qbit.local_root"
+                         placeholder="здесь: /media/nas" spellcheck="false" autocomplete="off">
+                </div>
+                <span class="hint">qBittorrent и программа часто видят медиатеку под разными путями. Пусто — соответствие
+                  найдётся само по папкам категорий qBittorrent и корням библиотеки.</span>
+              </div>
+              <div class="row">
+                <button type="button" class="btn" @click="qbitCheck()" :disabled="checking || !data.qbit.url.trim()">
+                  <svg class="icon"><use href="#i-check"/></svg>Проверить подключение</button>
+                <span class="small grow" :class="qbitResult && qbitResult.ok ? 'ok-text' : 'danger-text'"
+                      x-text="qbitResult ? qbitResult.text : ''"></span>
               </div>
             </div>
 

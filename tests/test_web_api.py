@@ -78,6 +78,34 @@ def test_settings_subs_section(client, cfg):
     assert not (cfg / "meta_settings.json").exists()
 
 
+def test_settings_qbit_section_and_check(client, cfg, monkeypatch):
+    import qbit
+    qbit.save_settings(qbit.Settings(url="http://old", password="secret"))
+    client.post("/api/settings", json={"qbit": {"url": " http://nas:8181 ", "username": "cat"}})
+    s = qbit.load_settings()
+    assert (s.url, s.username, s.password) == ("http://nas:8181", "cat", "secret")
+    assert client.get("/api/settings").get_json()["qbit"]["url"] == "http://nas:8181"
+
+    seen = {}
+
+    def fake_check(settings, roots):
+        seen.update(url=settings.url, roots=roots)
+        return "qBittorrent v5.3.0"
+
+    monkeypatch.setattr(qbit, "check", fake_check)
+    res = client.post("/api/qbit/check", json={"qbit": {"url": "http://form"},
+                                               "roots": ["/tv", ""]}).get_json()
+    assert res == {"ok": True, "text": "qBittorrent v5.3.0"}
+    assert seen == {"url": "http://form", "roots": ["/tv"]}     # из формы, не сохранённое
+
+    def failing(settings, roots):
+        raise qbit.QbitError("неверный логин или пароль")
+
+    monkeypatch.setattr(qbit, "check", failing)
+    res = client.post("/api/qbit/check", json={"qbit": {}}).get_json()
+    assert res == {"ok": False, "text": "неверный логин или пароль"}
+
+
 def test_fs_lists_dirs_and_videos(client, tmp_path):
     root = tmp_path / "lib"
     (root / "Show (2020)").mkdir(parents=True)

@@ -134,6 +134,62 @@ def test_apply_renames_writes_nfo_and_switches_path(env, monkeypatch):
     assert "переименовано 2" in st.jobs.last.summary
 
 
+def _qbit_torrent(monkeypatch, raw):
+    """Папка `raw` — раздача qBittorrent; вторая серия ещё не скачана."""
+    import qbit
+    from test_qbit import FakeClient
+    fake = FakeClient(raw.parent)
+    fake.add("h", {f"{raw.name}/{p.name}": 1 for p in sorted(raw.iterdir())})
+    (raw / "Archer.S01E02.1080p.BluRay-GRP.mkv").unlink()
+    monkeypatch.setattr(qbit, "load_settings", lambda: qbit.Settings(url="http://q"))
+    monkeypatch.setattr(qbit, "connect", lambda settings: fake)
+    return fake
+
+
+def test_torrent_folder_is_renamed_through_qbit(env, monkeypatch):
+    st, c, raw, _ = env
+    import core
+    monkeypatch.setattr(core, "scan_folder", lambda folder, recursive, **kw: [])
+    fake = _qbit_torrent(monkeypatch, raw)
+    c.post("/api/path", json={"path": str(raw)})
+    c.post("/api/library/find", json={})
+    assert st.jobs.wait()
+    statuses = [r["status"] for r in _tab(c)["rows"] if r["i"] is not None]
+    assert any("ещё не скачан — переименует qBittorrent" in s for s in statuses)
+    assert any(s.endswith("через qBittorrent") for s in statuses)
+    ask = c.post("/api/library/apply", json={}).get_json()
+    assert "Из них через qBittorrent: 3" in ask["ask"]["text"]
+    c.post("/api/library/apply", json={"answers": {"apply": True}})
+    assert st.jobs.wait()
+    assert st.jobs.last.status == "done", st.jobs.last.error
+    assert sorted(new for _, new in fake.renamed) == [
+        "Archer (2009)/Extras/RARBG.txt",
+        "Archer (2009)/Season 01/Archer - S01E01 - Mole Hunt.mkv",
+        "Archer (2009)/Season 01/Archer - S01E02 - Training Day.mkv"]
+    root = raw.parent / "Archer (2009)"
+    # .nfo недокачанной серии уже лежит там, куда qBittorrent её докачает.
+    assert (root / "Season 01" / "Archer - S01E02 - Training Day.nfo").exists()
+    assert "из них через qBittorrent 3" in st.jobs.last.summary
+    # После прогона план строится по новым именам раздачи: менять нечего.
+    assert "В плане изменений: 0" in _tab(c)["plan_status"]
+
+
+def test_unreachable_qbit_asks_before_renaming_on_disk(env, monkeypatch):
+    st, c, raw, _ = env
+    import qbit
+
+    def down(*a, **kw):
+        raise qbit.QbitError("qBittorrent недоступен (http://q): timed out")
+
+    monkeypatch.setattr(qbit, "torrents_in", down)
+    c.post("/api/path", json={"path": str(raw)})
+    c.post("/api/library/find", json={})
+    assert st.jobs.wait()
+    res = c.post("/api/library/apply", json={"answers": {"apply": True}}).get_json()
+    assert res["ask"]["id"] == "qbit"
+    assert "timed out" in res["ask"]["text"]
+
+
 def test_policy_ask_asks_second_question(env, monkeypatch):
     st, c, raw, _ = env
     import core

@@ -119,12 +119,16 @@ document.addEventListener("alpine:init", () => {
     data: null,
     saving: false,
     showPass: false,
+    showQbitPass: false,
+    checking: false,
+    qbitResult: null,
     artPick: "",
     sections: [
       { id: "keys", label: "Ключи API", icon: "i-key" },
       { id: "subs", label: "OpenSubtitles", icon: "i-subtitles" },
       { id: "lang", label: "Языки и имена", icon: "i-globe" },
       { id: "art", label: "Картинки", icon: "i-image" },
+      { id: "qbit", label: "qBittorrent", icon: "i-download" },
       { id: "roots", label: "Корни библиотеки", icon: "i-library" },
     ],
 
@@ -134,8 +138,22 @@ document.addEventListener("alpine:init", () => {
       this.data = data;
       this.section = section || "keys";
       this.showPass = false;
+      this.showQbitPass = false;
+      this.qbitResult = null;
       this.artPick = "";
       this.visible = true;
+    },
+
+    // Проверка по тому, что сейчас в форме: сохранять для этого не нужно.
+    async qbitCheck() {
+      this.checking = true;
+      this.qbitResult = { ok: true, text: "проверка…" };
+      try {
+        const roots = [...this.data.meta.tv_roots, ...this.data.meta.movies_roots];
+        this.qbitResult = await api.post("/api/qbit/check", { qbit: this.data.qbit, roots });
+      } finally {
+        this.checking = false;
+      }
     },
     close() { this.visible = false; },
 
@@ -184,7 +202,8 @@ document.addEventListener("alpine:init", () => {
     async save() {
       this.saving = true;
       try {
-        const res = await api.post("/api/settings", { meta: this.data.meta, subs: this.data.subs });
+        const res = await api.post("/api/settings",
+          { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit });
         if (res) {
           this.visible = false;
           this.$store.ui.toast("Настройки сохранены");
