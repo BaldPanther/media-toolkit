@@ -22,7 +22,15 @@ class FakeBot:
 
 class FakeAutopilot:
     def __init__(self):
-        self.expected = []
+        self.expected, self.added = [], []
+
+    def add(self, magnet, h, kind, tmdb_id, name, wanted=(), pages=()):
+        self.added.append((magnet, list(pages)))
+        self.expect(h, kind, tmdb_id, name, wanted)
+        return "Скачиваю"
+
+    def replaced_by(self, pages, h):
+        return None
 
     def expect(self, h, kind, tmdb_id, name, wanted=()):
         self.expected.append((h, kind, tmdb_id, list(wanted)))
@@ -140,20 +148,13 @@ def test_movie_waits_for_good_quality(env):
 
 def test_download_button_adds_and_hands_to_autopilot(env, monkeypatch):
     state, w, bot, ap = env
-    added = []
-
-    class FakeQ:
-        def add(self, url, category=""):
-            added.append((url, category))
-
     qbit.save_settings(qbit.Settings(url="http://q"))
-    monkeypatch.setattr(qbit, "connect", lambda s: FakeQ())
     state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
     state["releases"] = [_rel("g", [1, 10, 10], seasons=(1, 2))]
     item = w.add(library.TV, 5, "x")
     w.tick(now=10 ** 9)
     assert bot.handlers["wl"](f"{item.id}:{'g' * 12}") == "Скачиваю."
-    assert added == [("magnet:?xt=urn:btih:" + "g" * 40, "tv")]
+    assert ap.added == [("magnet:?xt=urn:btih:" + "g" * 40, ["http://rutor.info/t/g"])]
     assert ap.expected == [("g" * 40, library.TV, 5, [2])]    # из сборника — только сезон 2
     assert "устарело" in bot.handlers["wl"](f"{item.id}:zzz")
 

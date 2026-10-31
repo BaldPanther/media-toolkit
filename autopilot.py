@@ -13,16 +13,23 @@
 
 В Telegram автоматика не пишет: туда — только слежение (`watchlist.py`).
 
-Торренты программа не удаляет и не останавливает. Что уже сделано — в
-`autopilot_state.json`, чтобы перезапуск не начинал всё заново.
+Торренты программа не удаляет и не останавливает. Одно исключение —
+обновляемая раздача: на трекере добавили серии, у раздачи новый хеш. Новая
+версия получает имена уже скачанных файлов, qBittorrent их перепроверяет и
+докачивает только новое, а старая версия убирается из qBittorrent — файлы
+остаются на месте (`Autopilot._update`).
+
+Что уже сделано — в `autopilot_state.json`, чтобы перезапуск не начинал всё заново.
 """
 from __future__ import annotations
 
 import re
+import shutil
 import threading
 import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 import arrange
 import kodi
@@ -59,6 +66,10 @@ class Item:
     seq_set: bool = False          # галки последовательной загрузки уже ставили
     done_notified: bool = False    # докачку уже отметили (журнал, скан Kodi)
     seen: float = 0.0              # когда последний раз была в qBittorrent
+    pages: list = field(default_factory=list)    # страницы раздачи на трекерах (из поиска)
+    replaces: str = ""             # хеш старой версии, которую эта обновляет
+    update_step: str = ""          # шаг обновления: "" → «rename» → «check»
+    update_since: float = 0.0      # когда запущена перепроверка
 
 
 # --------------------------------------------------------------------------- #
@@ -136,6 +147,42 @@ def is_video_torrent(torrent: qbit.Torrent) -> bool:
     return biggest is not None and library.is_video(torrent.local(biggest.rel))
 
 
+def free_space(kind: str) -> int:
+    """Свободно на диске медиатеки этого вида, байт; 0 — не узнать."""
+    meta = metaconf.load_settings()
+    for root in meta.tv_roots if kind == library.TV else meta.movies_roots:
+        try:
+            return shutil.disk_usage(root).free
+        except OSError:
+            continue
+    return 0
+
+
+def gb(n: int) -> str:
+    return f"{n / 1024 ** 3:.1f} ГБ"
+
+
+def update_map(new: qbit.Torrent, old: qbit.Torrent) -> list[tuple[str, str]]:
+    """Файлы новой версии обновляемой раздачи → пути тех же файлов у старой.
+
+    Тот же файл — тот же размер и расширение; при одинаковых размерах решает номер
+    серии. Старая версия уже разложена, так что её пути — имена в медиатеке.
+    """
+    by_key: dict[tuple, list[str]] = {}
+    for f in old.files:
+        by_key.setdefault((f.size, Path(f.rel).suffix.lower()), []).append(f.rel)
+    out, used = [], set()
+    for f in new.files:
+        cands = [r for r in by_key.get((f.size, Path(f.rel).suffix.lower()), []) if r not in used]
+        if len(cands) > 1:
+            episode = library.parse_episodes(Path(f.rel))
+            cands = [r for r in cands if library.parse_episodes(Path(r)) == episode]
+        if len(cands) == 1 and f.size:
+            used.add(cands[0])
+            out.append((f.rel, cands[0]))
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Автоматика
 # --------------------------------------------------------------------------- #
@@ -210,14 +257,44 @@ class Autopilot:
         self._wake.set()
 
     def expect(self, torrent_hash: str, kind: str, tmdb_id: int, name: str,
-               wanted=()) -> None:
+               wanted=(), pages=(), replaces: str = "") -> None:
         """Раздача добавлена из поиска: тайтл уже известен, опознавать не надо.
-        `wanted` — какие сезоны нужны из сборника; файлам остальных — «не загружать»."""
+        `wanted` — какие сезоны нужны из сборника; файлам остальных — «не загружать».
+        `pages` — её страницы на трекерах: по ним узнаётся следующая версия."""
         with self._lock:
             self.items[torrent_hash] = Item(torrent_hash, name, kind, tmdb_id=tmdb_id,
-                                            wanted=sorted(set(wanted)), seen=time.time())
+                                            wanted=sorted(set(wanted)),
+                                            pages=[p for p in pages if p], replaces=replaces,
+                                            seen=time.time())
         self.save()
         self._wake.set()
+
+    def replaced_by(self, pages, new_hash: str) -> Item | None:
+        """Раздача с той же страницы трекера, что ещё в qBittorrent, — старая версия."""
+        pages = {p for p in pages if p}
+        if not pages:
+            return None
+        with self._lock:
+            return next((i for i in self.items.values()
+                         if i.hash != new_hash and set(i.pages) & pages and not i.replaces
+                         and i.status != SKIP and i.seen >= self.last_check - 1), None)
+
+    def add(self, magnet: str, torrent_hash: str, kind: str, tmdb_id: int, name: str,
+            wanted=(), pages=()) -> str:
+        """Раздачу — в qBittorrent с категорией сериалов или фильмов, дальше её ведёт
+        автоматика. Новая версия уже скачиваемой раздачи — обновление. → что сказать."""
+        qs = qbit.load_settings()
+        if not qs.configured():
+            raise qbit.QbitError("qBittorrent не подключён")
+        category = qs.tv_category if kind == library.TV else qs.movies_category
+        old = self.replaced_by(pages, torrent_hash) if qs.auto else None
+        qbit.connect(qs).add(magnet, category=category, stop_on_metadata=old is not None)
+        self.expect(torrent_hash, kind, tmdb_id, name, wanted, pages,
+                    replaces=old.hash if old is not None else "")
+        if old is None:
+            return "Скачиваю"
+        self.log(f"Автоматика: «{name}» — новая версия «{old.name}», обновляю")
+        return "Новая версия вашей раздачи — докачаю только новые серии"
 
     def retry(self, torrent_hash: str) -> None:
         with self._lock:
@@ -240,7 +317,9 @@ class Autopilot:
         now = time.time()
         with self._lock:
             answers, self._answers = self._answers, []
-        for item_info in client.torrents():
+        infos = client.torrents()
+        by_hash = {str(i.get("hash", "")): i for i in infos}
+        for item_info in infos:
             kind = qs.kind_of(str(item_info.get("category", "")))
             if kind is None:
                 continue
@@ -261,6 +340,9 @@ class Autopilot:
             if not item.seq_set:
                 self._sequential(client, item_info)
                 item.seq_set = True
+            if item.replaces:
+                self._update(item, item_info, torrent, client, pmap, by_hash, now)
+                continue
             for h_answer, index in answers:
                 if h_answer == h and item.status == ASK:
                     self._apply_answer(item, index, torrent, client, meta, roots)
@@ -276,6 +358,50 @@ class Autopilot:
         self.last_check = now
         self.save()
         self.on_change()
+
+    def _update(self, item: Item, info: dict, torrent, client, pmap, by_hash, now) -> None:
+        """Обновление раздачи — по шагам, раз в проверку: qBittorrent делает всё не
+        сразу. Список файлов есть → переименовать их в уже скачанные → перепроверить →
+        старую версию убрать (файлы остаются) и запустить новую. Дальше — обычная
+        раскладка: старые серии уже на местах, новые переименуются."""
+        old_info = by_hash.get(item.replaces)
+        if item.update_step == "":
+            old = qbit.torrent_of(old_info, client, pmap) if old_info else None
+            # Папка тайтла, где лежит старая версия, — «Show (2026)».
+            tops = {f.rel.split("/")[0] for f in old.files if "/" in f.rel} if old else set()
+            top = next(iter(tops)) if len(tops) == 1 and all("/" in f.rel for f in old.files) else ""
+            same_place = bool(top) and old.save_path == torrent.save_path
+            pairs = update_map(torrent, old) if same_place else []
+            if not pairs:
+                self.log(f"Автоматика: «{item.name}» — со старой версией общих файлов нет, "
+                         f"качаю целиком")
+                item.replaces = ""
+                client.start(item.hash)
+                return
+            # Новые серии — тоже в папку тайтла: у раздачи одна общая папка, и
+            # раскладка дальше смотрит только её.
+            matched = {new_rel for new_rel, _ in pairs}
+            moves = pairs + [(f.rel, f"{top}/{f.rel}") for f in torrent.files if f.rel not in matched]
+            for new_rel, target in moves:
+                if new_rel != target:
+                    client.rename_file(item.hash, new_rel, target)
+            self.log(f"Автоматика: «{item.name}» — уже скачано файлов: {len(pairs)}, сверяю")
+            item.update_step = "rename"
+        elif item.update_step == "rename":
+            client.recheck(item.hash)
+            item.update_step, item.update_since = "check", now
+        elif item.update_step == "check":
+            state = str(info.get("state", ""))
+            if state.startswith("checking") or state in ("queuedForChecking", "moving"):
+                return
+            if item.progress <= 0 and now - item.update_since < 120:
+                return                      # перепроверка ещё не началась
+            if old_info is not None:
+                client.remove_keep_files(item.replaces)
+            client.start(item.hash)
+            self.log(f"Автоматика: «{item.name}» — обновлено: уже было {item.progress:.0%}, "
+                     f"старая версия убрана из qBittorrent (файлы на месте), докачиваю новое")
+            item.replaces, item.update_step = "", ""
 
     def _sequential(self, client: qbit.Client, info: dict) -> None:
         if not info.get("seq_dl"):
@@ -309,6 +435,11 @@ class Autopilot:
     def _arrange(self, item: Item, tmdb_id: int, torrent, client, meta, roots) -> None:
         files = qbit.TorrentFiles(client, [torrent])
         folder = torrent.content_path
+        if folder == torrent.save_path:
+            # Файлы раздачи лежат прямо в папке категории — «папка раздачи» тогда вся
+            # медиатека, а раскладывать её целиком нельзя.
+            self._fail(item, "у раздачи нет своей папки — разложите на вкладке «Медиатека»")
+            return
         try:
             skipped = self._skip_unwanted(item, torrent, client)
             extra = {p: s for p, s in files.extra().items() if p not in skipped}

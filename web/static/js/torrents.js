@@ -5,6 +5,7 @@ document.addEventListener("alpine:init", () => {
   Alpine.data("torrentsTab", () => ({
     view: "search",
     q: "",
+    linkKind: "tv",       // вставлена ссылка: куда её положить
     showAll: false,
     choosing: false,      // снова показать карточки TMDb, когда тайтл уже выбран
     sorts: [["best", "Лучшие"], ["seeds", "По сидам"], ["size", "По размеру"]],
@@ -22,6 +23,7 @@ document.addEventListener("alpine:init", () => {
         if (this.sorts.some((o) => o[0] === by)) { this.sortBy = by; this.sortDesc = dir !== "asc"; }
       } catch (e) { /* без хранилища */ }
       this.$watch("s.query", (v) => { if (v && !this.q) this.q = v; });
+      this.$watch("q", () => { if (this.isLink) this.linkKind = this.guessKind(); });
     },
     setView(v) {
       this.view = v;
@@ -30,8 +32,26 @@ document.addEventListener("alpine:init", () => {
     asking() { return (this.t.items || []).filter((i) => i.status === "ask").length; },
 
     // ------------------------------------------------------------ поиск --
+    // magnet, хеш из 40 знаков или ссылка на .torrent — не поиск, а сразу в qBittorrent.
+    get isLink() {
+      const v = this.q.trim();
+      return /^(magnet:|https?:\/\/)/i.test(v) || /^[0-9a-f]{40}$/i.test(v);
+    },
+    guessKind() {
+      let name = this.q;
+      try { name = decodeURIComponent((this.q.match(/[?&]dn=([^&]*)/) || [])[1] || this.q); } catch (e) { /* как есть */ }
+      return /\bs\d{1,2}(e\d{1,3})?\b|сезон|сери[ияй]|season/i.test(name.replace(/[._+]/g, " ")) ? "tv" : "movie";
+    },
+    async addLink() {
+      const res = await api.post("/api/torrents/add-link", { url: this.q.trim(), kind: this.linkKind });
+      if (res && res.ok) {
+        this.$store.ui.toast(res.text || "Добавлено в qBittorrent");
+        this.q = "";
+      }
+    },
     async find() {
       if (!this.q.trim()) return;
+      if (this.isLink) return this.addLink();
       this.showAll = false;
       const res = await api.post("/api/torrents/search", { query: this.q });
       if (!res) return;
@@ -60,7 +80,8 @@ document.addEventListener("alpine:init", () => {
       return list.sort((a, b) => dir * (a[this.sortBy] - b[this.sortBy]));
     },
     async opt(changes) {
-      await api.post("/api/torrents/search/options", changes);
+      const res = await api.post("/api/torrents/search/options", changes);
+      if (res && res.job) await this.$store.app.waitJob(res.job);
       await this.$store.app.loadState();
     },
     toggleSeason(n) {
@@ -79,7 +100,10 @@ document.addEventListener("alpine:init", () => {
     },
     async download(r) {
       const res = await api.post("/api/torrents/search/download", { hash: r.hash });
-      if (res && res.ok) this.$store.ui.toast("Добавлено в qBittorrent — разложу сам");
+      if (res && res.ok) {
+        this.$store.ui.toast(res.text === "Скачиваю" || !res.text ? "Добавлено в qBittorrent — разложу сам" : res.text);
+        await this.$store.app.loadState();
+      }
     },
     qualityLabel(q) { return q >= 2160 ? "4K" : q > 480 ? `${q}p` : q ? "SD" : "?"; },
     episodes(r) {

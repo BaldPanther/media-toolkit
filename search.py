@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import base64
 import html
 import re
 import urllib.parse
@@ -53,7 +54,7 @@ class Prefs:
     hdr: bool = False                   # экран показывает HDR; нет — HDR-раздачи скрыты
     dv: bool = False                    # экран показывает Dolby Vision; нет — DV-раздачи скрыты
     voices: list[str] = field(default_factory=lambda: ["Кубик в Кубе", "TVShows"])
-    english: bool = True                # показывать английские раздачи (Knaben)
+    english: bool = False               # искать и показывать английские раздачи (Knaben)
 
 
 def load_prefs() -> Prefs:
@@ -227,8 +228,12 @@ _RUS_TAG = re.compile(r"\brus\b", re.I)
 
 
 def infohash(magnet: str) -> str:
+    """Хеш из magnet — всегда 40 hex-знаков, как у qBittorrent (бывает и base32)."""
     m = _BTIH.search(magnet or "")
-    return m.group(1).lower() if m else ""
+    if not m:
+        return ""
+    h = m.group(1)
+    return base64.b32decode(h.upper()).hex() if len(h) == 32 else h.lower()
 
 
 def parse_title(text: str) -> dict:
@@ -431,13 +436,12 @@ def group(items: list[Release]) -> list[Release]:
 def find(title: Title, sources=None, log=None) -> list[Release]:
     """Все раздачи со всех источников, склеенные. Источник, который не ответил, — в журнал.
 
-    Без явного списка — источники из файла и Knaben. Английские раздачи ищутся
-    всегда, а показываются по галке: переключить её можно без нового поиска.
-    Источники опрашиваются разом — общее ожидание по самому медленному.
+    Без явного списка — источники из файла и, если стоит галка «и английские»,
+    Knaben. Источники опрашиваются разом — общее ожидание по самому медленному.
     """
     log = log or (lambda text: None)
     if sources is None:
-        sources = load_sources() + [KNABEN]
+        sources = load_sources() + ([KNABEN] if load_prefs().english else [])
     readers = {"jacred": _jacred, "torznab": _torznab, "knaben": _knaben}
 
     def read(source: dict) -> list[Release]:

@@ -204,15 +204,21 @@ class Client:
         """«Сначала первые и последние части» — тоже переключатель (`f_l_piece_prio`)."""
         self._call("torrents/toggleFirstLastPiecePrio", {"hashes": torrent_hash})
 
-    def add(self, url: str, category: str = "", sequential: bool = True) -> None:
+    def add(self, url: str, category: str = "", sequential: bool = True,
+            stop_on_metadata: bool = False) -> None:
         """Добавить раздачу по magnet- или http-ссылке на .torrent.
 
         Папка — по категории (у категорий tv/movies это корни медиатеки).
+        `stop_on_metadata` — получить список файлов и остановиться (4.5+): так
+        новая версия обновляемой раздачи ничего не качает, пока её файлы не
+        переименованы в уже скачанные.
         """
         data = {"urls": url, "sequentialDownload": str(sequential).lower(),
                 "firstLastPiecePrio": str(sequential).lower()}
         if category:
             data["category"] = category
+        if stop_on_metadata:
+            data["stopCondition"] = "MetadataReceived"
         # До 5.x — «Ok.» / «Fails.», в 5.x — JSON со счётчиками.
         text = self._call("torrents/add", data).decode("utf-8", "replace").strip()
         if not text or text == "Ok.":
@@ -224,6 +230,23 @@ class Client:
         if isinstance(result, dict) and not result.get("failure_count"):
             return
         raise QbitError("qBittorrent не добавил раздачу" + ("" if isinstance(result, dict) else f": {text}"))
+
+    def recheck(self, torrent_hash: str) -> None:
+        self._call("torrents/recheck", {"hashes": torrent_hash})
+
+    def start(self, torrent_hash: str) -> None:
+        """Запустить раздачу: в 5.x — `start`, раньше — `resume`."""
+        try:
+            self._call("torrents/start", {"hashes": torrent_hash})
+        except QbitError as e:
+            if "HTTP 404" not in str(e):
+                raise
+            self._call("torrents/resume", {"hashes": torrent_hash})
+
+    def remove_keep_files(self, torrent_hash: str) -> None:
+        """Убрать раздачу из qBittorrent, файлы остаются. Только для старой версии
+        обновлённой раздачи: её файлы уже раздаёт новая."""
+        self._call("torrents/delete", {"hashes": torrent_hash, "deleteFiles": "false"})
 
     def set_file_priority(self, torrent_hash: str, ids, priority: int) -> None:
         """Приоритет файлов раздачи по их номерам; 0 — не загружать."""

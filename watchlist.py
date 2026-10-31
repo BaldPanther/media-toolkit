@@ -23,6 +23,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 
+import autopilot
 import library
 import metaconf
 import paths
@@ -255,7 +256,8 @@ class Watcher:
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,
-                    "page": r.trackers[0][1] if r.trackers else ""}
+                    "page": r.trackers[0][1] if r.trackers else "", "size": r.size,
+                    "pages": [tr[1] for tr in r.trackers if tr[1]]}
                    for r in ranked[:OFFER]]
         w.offer_season = seasons[0] if seasons else 0
         return bool(w.offer)
@@ -284,20 +286,22 @@ class Watcher:
             offer = next((o for o in (w.offer if w else []) if o["hash"].startswith(hash_prefix)), None)
         if w is None or offer is None:
             return "Предложение устарело — проверьте заново."
-        qs = qbit.load_settings()
-        if not qs.configured():
+        if not qbit.load_settings().configured() or self.autopilot is None:
             return "qBittorrent не подключён."
-        category = qs.tv_category if w.kind == library.TV else qs.movies_category
-        try:
-            qbit.connect(qs).add(offer["magnet"], category=category)
-        except qbit.QbitError as e:
-            return f"qBittorrent не взял раздачу: {e}"
         wanted = ([w.offer_season] if w.offer_season and offer["seasons"]
                   and set(offer["seasons"]) - {w.offer_season} else [])
-        if self.autopilot is not None:
-            self.autopilot.expect(offer["hash"], w.kind, w.tmdb_id, offer["title"], wanted)
+        pages = offer.get("pages") or [offer.get("page", "")]
+        free, size = autopilot.free_space(w.kind), int(offer.get("size") or 0)
+        if free and size > free and self.autopilot.replaced_by(pages, offer["hash"]) is None:
+            return (f"Не хватит места: раздача {autopilot.gb(size)}, свободно "
+                    f"{autopilot.gb(free)}. Освободите место и нажмите ещё раз.")
+        try:
+            said = self.autopilot.add(offer["magnet"], offer["hash"], w.kind, w.tmdb_id,
+                                      offer["title"], wanted, pages)
+        except qbit.QbitError as e:
+            return f"qBittorrent не взял раздачу: {e}"
         self.log(f"Слежение: в qBittorrent добавлено — {w.title}: {offer['title']}")
-        return "Скачиваю."
+        return said + "."
 
     def _on_button(self, args: str) -> str:
         watch_id, _, prefix = args.partition(":")

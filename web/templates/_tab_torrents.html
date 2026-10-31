@@ -17,9 +17,16 @@
     </div>
     <div class="row nowrap">
       <input class="input grow" type="text" x-model="q" @keydown.enter.prevent="find()"
-             placeholder="Фильм или сериал — например, Тёмная материя" spellcheck="false" :disabled="busy">
+             placeholder="Фильм или сериал — например, Тёмная материя — или magnet-ссылка"
+             spellcheck="false" :disabled="busy">
+      <div class="seg" x-show="isLink" title="Куда положить: категория qBittorrent и папка медиатеки">
+        <button type="button" :class="{ on: linkKind === 'tv' }" @click="linkKind = 'tv'">сериал</button>
+        <button type="button" :class="{ on: linkKind === 'movie' }" @click="linkKind = 'movie'">фильм</button>
+      </div>
       <button type="button" class="btn btn-primary" @click="find()" :disabled="busy || !q.trim()">
-        <svg class="icon"><use href="#i-search"/></svg>Найти
+        <svg class="icon" x-show="!isLink"><use href="#i-search"/></svg>
+        <svg class="icon" x-show="isLink"><use href="#i-download"/></svg>
+        <span x-text="isLink ? 'В qBittorrent' : 'Найти'"></span>
       </button>
     </div>
 
@@ -56,6 +63,7 @@
   <section class="card" x-show="view === 'search' && s.title">
     <div class="card-head">
       <h2>Раздачи</h2><span class="sub" x-text="s.status"></span>
+      <span class="sub" x-show="s.free" x-text="'· свободно на диске: ' + size(s.free)"></span>
     </div>
     <div class="stack">
       <div class="row" x-show="s.seasons && s.seasons.length">
@@ -129,6 +137,11 @@
                 <div><span x-show="r.recommended" title="Рекомендую">⭐ </span><span x-text="r.title"></span></div>
                 <div class="small muted" x-show="r.recommended" x-text="'Рекомендую: ' + r.why"></div>
                 <div class="row small" style="margin-top: 4px; gap: 6px">
+                  <span class="badge ok plain" x-show="r.in_qbit">уже в qBittorrent</span>
+                  <span class="badge accent plain" x-show="r.update"
+                        title="Та же страница трекера, что у раздачи в qBittorrent: докачаются только новые серии">новая версия вашей раздачи</span>
+                  <span class="badge plain" x-show="r.in_library">уже в медиатеке</span>
+                  <span class="badge danger plain" x-show="s.free && r.size > s.free">не хватит места</span>
                   <template x-for="n in r.notes" :key="n"><span class="badge warn plain" x-text="n"></span></template>
                   <template x-for="tr in r.trackers" :key="tr[0] + tr[1]">
                     <a class="faint" :href="tr[1]" target="_blank" rel="noopener" x-text="tr[0]" title="Страница раздачи"></a>
@@ -147,9 +160,11 @@
               <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
                   x-text="r.seeds"></td>
               <td>
-                <button type="button" class="btn btn-sm" :class="{ 'btn-primary': r.recommended }"
-                        @click="download(r)" :disabled="!t.qbit">
-                  <svg class="icon"><use href="#i-download"/></svg>Скачать</button>
+                <button type="button" class="btn btn-sm" :class="{ 'btn-primary': (r.recommended || r.update) && !r.in_qbit }"
+                        @click="download(r)" :disabled="!t.qbit || r.in_qbit">
+                  <svg class="icon" x-show="!r.in_qbit"><use href="#i-download"/></svg>
+                  <svg class="icon" x-show="r.in_qbit"><use href="#i-check"/></svg>
+                  <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить' : 'Скачать')"></span></button>
               </td>
             </tr>
           </template>

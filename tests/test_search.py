@@ -179,8 +179,11 @@ def web(tmp_path, monkeypatch):
     added = []
 
     class FakeQ:
-        def add(self, url, category=""):
+        def add(self, url, category="", stop_on_metadata=False):
             added.append((url, category))
+
+        def torrents(self):
+            return []
 
     monkeypatch.setattr(qbit, "connect", lambda s: FakeQ())
     st = AppState("desktop")
@@ -308,3 +311,37 @@ def test_episodes_text_for_partial_releases():
     assert search._episodes_text(mk([9, 9, 9])) == "серия 9 из 9"
     assert search._episodes_text(mk([6, 9, 9])) == "серии 6–9 из 9"
     assert search._episodes_text(mk([7, 7, 0])) == "серия 7"
+
+
+def test_paste_magnet_goes_to_qbit_with_chosen_category(web):
+    st, c, added = web
+    magnet = "magnet:?xt=urn:btih:" + "c" * 40 + "&dn=Some.Movie.2024.2160p"
+    res = c.post("/api/torrents/add-link", json={"url": magnet, "kind": "movie"}).get_json()
+    assert res["ok"] and added == [(magnet, "movies")]
+    item = st.tabs["torrents"].autopilot.items["c" * 40]
+    assert item.kind == library.MOVIE and item.name == "Some.Movie.2024.2160p"
+    bad = c.post("/api/torrents/add-link", json={"url": "Тёмная материя"})
+    assert bad.status_code >= 400 or not bad.get_json().get("ok")
+
+
+def test_release_marks_and_free_space_warning(web, monkeypatch):
+    import autopilot
+    st, c, added = web
+    c.post("/api/torrents/search", json={"query": "Тёмная материя"})
+    assert st.jobs.wait()
+    c.post("/api/torrents/search/options", json={"quality": 1080})
+    monkeypatch.setattr(autopilot, "free_space", lambda kind: 10 ** 12)
+    s = _search(c)
+    assert s["free"] == 10 ** 12 and not any(r["in_qbit"] or r["update"] for r in s["releases"])
+    # Места мало — сначала вопрос, с «да» — качает.
+    monkeypatch.setattr(autopilot, "free_space", lambda kind: 1000)
+    h = s["releases"][0]["hash"]
+    ask = c.post("/api/torrents/search/download", json={"hash": h}).get_json()
+    assert ask["ask"]["id"] == "space" and added == []
+    ok = c.post("/api/torrents/search/download", json={"hash": h, "answers": {"space": True}}).get_json()
+    assert ok["ok"] and len(added) == 1
+    assert next(r for r in _search(c)["releases"] if r["hash"] == h)["in_qbit"]
+    # Тот же сезон уже в медиатеке — пометка.
+    tab = st.tabs["torrents"]
+    tab.have = {1: 9}
+    assert all(r["in_library"] for r in _search(c)["releases"] if r["seasons"] == [1])

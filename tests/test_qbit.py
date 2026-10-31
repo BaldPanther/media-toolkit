@@ -24,6 +24,8 @@ class FakeClient:
         self.lag = 0              # сколько опросов `files` отдавать старые имена
         self.toggled: list[tuple[str, str]] = []
         self.progress = 0.25
+        self.states: dict[str, str] = {}
+        self.events: list[tuple[str, str]] = []
 
     def add(self, h: str, files: dict[str, int]) -> None:
         self.names[h] = list(files)
@@ -36,8 +38,20 @@ class FakeClient:
             content = f"{self.remote_save}/{root}" if "/" in names[0] else f"{self.remote_save}/{names[0]}"
             out.append({"hash": h, "name": root, "category": self.category,
                         "progress": self.progress, "seq_dl": False, "f_l_piece_prio": False,
-                        "save_path": self.remote_save, "content_path": content})
+                        "save_path": self.remote_save, "content_path": content,
+                        "state": self.states.get(h, "stoppedDL")})
         return out
+
+    def recheck(self, h):
+        self.events.append(("recheck", h))
+        self.states[h] = "checkingDL"
+
+    def start(self, h):
+        self.events.append(("start", h))
+
+    def remove_keep_files(self, h):
+        self.events.append(("remove", h))
+        del self.names[h], self.sizes[h]
 
     def files(self, h):
         if self.lag:

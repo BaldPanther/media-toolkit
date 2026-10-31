@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import collections
+import re
 import time
+import urllib.parse
 
 from flask import Blueprint, current_app, jsonify
 
@@ -43,6 +45,8 @@ class TorrentsTab:
         self.seasons: list[int] = []
         self.releases: list[search.Release] = []
         self.any_year = False
+        self.with_english = False      # Knaben уже спрошен для этого тайтла
+        self.in_qbit: set[str] = set() # хеши раздач в qBittorrent на момент поиска
         self.voice = ""
         self.search_status = ""
 
@@ -75,6 +79,35 @@ class TorrentsTab:
                and (not self.voice or search.has_voice(r, self.voice))]
         return search.rank(fit, self.title, prefs, self.seasons) if fit else []
 
+    def refresh_in_qbit(self) -> None:
+        qs = qbit.load_settings()
+        if not qs.configured():
+            self.in_qbit = set()
+            return
+        try:
+            self.in_qbit = {str(i.get("hash", "")) for i in qbit.connect(qs).torrents()}
+        except qbit.QbitError:
+            pass
+
+    def owned(self, rel: search.Release) -> bool:
+        """Всё, что в раздаче (или выбранные сезоны), уже лежит в медиатеке целиком."""
+        if self.title is None:
+            return False
+        if self.title.kind == library.MOVIE:
+            return bool(self.library_dir)
+        numbers = rel.seasons or self.seasons
+        seasons = [self.title.season(n) for n in numbers]
+        return bool(numbers) and all(s is not None and s.episodes
+                                     and self.have.get(s.number, 0) >= s.episodes for s in seasons)
+
+    def release_dict(self, rel: search.Release, in_qbit: set[str]) -> dict:
+        d = rel.to_dict()
+        d["in_qbit"] = rel.hash in in_qbit
+        d["update"] = (not d["in_qbit"]
+                       and self.autopilot.replaced_by(pages_of(rel), rel.hash) is not None)
+        d["in_library"] = self.owned(rel)
+        return d
+
     def search_dict(self) -> dict:
         title = self.title
         prefs = search.load_prefs()
@@ -88,6 +121,8 @@ class TorrentsTab:
             voices.append(self.voice)
         per_quality = collections.Counter(
             search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
+        ap = self.autopilot
+        in_qbit = self.in_qbit | {h for h, i in ap.items.items() if i.seen >= ap.last_check - 1}
         return {
             "query": self.query,
             "hits": [{"i": i, "label": h.label(), "poster": h.poster_url, "overview": h.overview,
@@ -103,7 +138,8 @@ class TorrentsTab:
                          "have": self.have.get(s.number, 0),
                          "selected": s.number in self.seasons}
                         for s in (title.seasons if title else [])],
-            "releases": [r.to_dict() for r in shown[:200]],
+            "releases": [self.release_dict(r, in_qbit) for r in shown[:200]],
+            "free": autopilot.free_space(title.kind) if title else 0,
             "total": len(self.releases),
             "fit": len(shown),
             "qualities": [[q, per_quality.get(q, 0)] for q in search.QUALITIES],
@@ -132,7 +168,9 @@ class TorrentsTab:
             "items": [{
                 "hash": i.hash, "name": i.name,
                 "kind": "сериал" if i.kind == library.TV else "фильм",
-                "status": i.status, "status_label": autopilot.STATUS_LABELS.get(i.status, i.status),
+                "status": i.status,
+                "status_label": (UPDATE_LABELS[i.update_step] if i.replaces
+                                 else autopilot.STATUS_LABELS.get(i.status, i.status)),
                 "title": i.title, "root": i.root, "error": i.error,
                 "candidates": [label for _, label in i.candidates],
                 "progress": i.progress,
@@ -148,6 +186,10 @@ class TorrentsTab:
                            "page": o.get("page", "")} for o in w.offer],
             } for w in sorted(self.watcher.items.values(), key=lambda w: w.title)],
         }
+
+
+UPDATE_LABELS = {"": "обновление: жду список файлов", "rename": "обновление: сверяю файлы",
+                 "check": "обновление: проверяю скачанное"}
 
 
 def tab() -> TorrentsTab:
@@ -169,7 +211,9 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     t.title, t.releases, t.voice, t.any_year = title, [], "", False
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
+    t.with_english = search.load_prefs().english
     t.releases = search.find(title, log=t.st.log.add)
+    t.refresh_in_qbit()
     t.search_status = (f"Найдено раздач: {len(t.releases)}"
                        + (f" — в медиатеке: {t.library_dir}" if t.library_dir else ""))
     t.st.log.add(f"Поиск раздач: {library.title_with_year(title.title, title.year)} — "
@@ -241,6 +285,20 @@ def search_options():
         prefs.voices = [str(v).strip() for v in data["voices"] if str(v).strip()]
     search.save_prefs(prefs)
     t.st.touch()
+    if prefs.english and t.title is not None and not t.with_english:
+        # Галку поставили после поиска — Knaben дозапрашиваем, jac.red не трогаем.
+        t.st.jobs.ensure_idle()
+
+        def work(job):
+            job.progress(0, 0, "английские раздачи…")
+            title = t.title
+            more = search.find(title, sources=[search.KNABEN], log=t.st.log.add)
+            if t.title is title:
+                t.releases = search.group(t.releases + more)
+                t.with_english = True
+            job.summary = f"Английских раздач: {len(more)}"
+
+        return jsonify({"job": t.st.jobs.start("Поиск раздач", work).to_dict()})
     return jsonify({"ok": True})
 
 
@@ -252,27 +310,87 @@ def search_download():
     rel = next((r for r in t.releases if r.hash == h), None)
     if rel is None or t.title is None:
         raise UserError("Нет такой раздачи", "Выполните поиск заново.")
+    kind = t.title.kind
+    wanted = (t.seasons if kind == library.TV and rel.seasons
+              and not set(rel.seasons) <= set(t.seasons) else [])
+    # Сборник, из которого нужны не все сезоны, займёт примерно свою долю.
+    need = rel.size * len(wanted) // len(rel.seasons) if wanted else rel.size
+    free = autopilot.free_space(kind)
+    if free and need > free and t.autopilot.replaced_by(pages_of(rel), rel.hash) is None:
+        replies.confirm("space", "Места может не хватить",
+                        f"Раздача — {autopilot.gb(need)}, свободно на диске — "
+                        f"{autopilot.gb(free)}. Всё равно скачать?", yes="Скачать")
+    said = _add(t, rel.magnet, rel.hash, kind, t.title.tmdb_id, rel.title, wanted, pages_of(rel))
+    label = library.title_with_year(t.title.title, t.title.year)
+    t.st.log.add(f"Поиск: в qBittorrent добавлено — {label}: {rel.title}")
+    return jsonify({"ok": True, "text": said})
+
+
+def pages_of(rel: search.Release) -> list[str]:
+    return [tr[1] for tr in rel.trackers if tr[1]]
+
+
+def _add(t: TorrentsTab, magnet: str, h: str, kind: str, tmdb_id: int, name: str,
+         wanted=(), pages=()) -> str:
+    """В qBittorrent через автоматику. → что сказать; автоматика выключена — Info."""
     qs = qbit.load_settings()
     if not qs.configured():
         raise UserError("qBittorrent не подключён",
                         "Впишите его адрес в «Настройках» → «qBittorrent».")
-    kind = t.title.kind
-    category = qs.tv_category if kind == library.TV else qs.movies_category
     try:
-        qbit.connect(qs).add(rel.magnet, category=category)
+        said = t.autopilot.add(magnet, h, kind, tmdb_id, name, wanted, pages)
     except qbit.QbitError as e:
         raise UserError("qBittorrent не взял раздачу",
-                        f"{e}\n\nВозможно, она уже есть в qBittorrent.")
-    wanted = (t.seasons if kind == library.TV and rel.seasons
-              and not set(rel.seasons) <= set(t.seasons) else [])
-    label = library.title_with_year(t.title.title, t.title.year)
-    t.autopilot.expect(rel.hash, kind, t.title.tmdb_id, rel.title, wanted)
-    t.st.log.add(f"Поиск: в qBittorrent добавлено — {label}: {rel.title}")
+                        f"{e}\n\nВозможно, она уже есть в qBittorrent.") from e
+    t.in_qbit.add(h)
     if not qs.auto:
         raise Info("Добавлено в qBittorrent",
                    "Автоматика выключена — когда начнёт качаться, разложите раздачу на вкладке "
                    "«Медиатека» или включите «Раскладывать новые раздачи сами».")
-    return jsonify({"ok": True})
+    return said
+
+
+_HEX40 = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+@bp.post("/api/torrents/add-link")
+def add_link():
+    """Вставленная magnet-ссылка, её хеш или ссылка на .torrent — в qBittorrent.
+    Страница раздачи из текущего поиска — берётся её magnet и уже известный тайтл."""
+    t = tab()
+    data = replies.body()
+    url = str(data.get("url", "")).strip()
+    kind = data["kind"] if data.get("kind") in (library.TV, library.MOVIE) else library.TV
+    if _HEX40.match(url):
+        url = f"magnet:?xt=urn:btih:{url.lower()}"
+    rel = next((r for r in t.releases if url in pages_of(r)), None)
+    if rel is not None and t.title is not None:
+        said = _add(t, rel.magnet, rel.hash, t.title.kind, t.title.tmdb_id, rel.title, (),
+                    pages_of(rel))
+        t.st.log.add(f"Ссылка: в qBittorrent добавлено — {rel.title}")
+        return jsonify({"ok": True, "text": said})
+    h = search.infohash(url)
+    if not h and not url.startswith(("http://", "https://")):
+        raise UserError("Это не ссылка на раздачу",
+                        "Вставьте magnet-ссылку (начинается с magnet:), её хеш из 40 знаков "
+                        "или ссылку на файл .torrent.")
+    if not h:
+        # Ссылка на .torrent: хеша не знаем — раздачу подхватит автоматика по категории.
+        qs = qbit.load_settings()
+        if not qs.configured():
+            raise UserError("qBittorrent не подключён",
+                            "Впишите его адрес в «Настройках» → «qBittorrent».")
+        try:
+            qbit.connect(qs).add(url, category=qs.tv_category if kind == library.TV
+                                 else qs.movies_category)
+        except qbit.QbitError as e:
+            raise UserError("qBittorrent не взял ссылку", str(e)) from e
+        t.st.log.add(f"Ссылка: в qBittorrent отправлено — {url}")
+        return jsonify({"ok": True, "text": "Отправлено в qBittorrent"})
+    name = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("dn", [""])[0] or h
+    said = _add(t, url, h, kind, 0, name)
+    t.st.log.add(f"Ссылка: в qBittorrent добавлено — {name}")
+    return jsonify({"ok": True, "text": said})
 
 
 # ------------------------------------------------------------ слежение --

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 import artwork
@@ -280,3 +282,68 @@ def test_kodi_path_map_from_smb_source():
     assert m.to_kodi("/media/disk1/nas/media/tv/Show (2026)") == \
         "smb://192.168.1.3/nas/media/tv/Show (2026)/"
     assert kodi.detect_map(["smb://x/share/music/"], ["/media/tv"]) is None
+
+
+# ---------------------------------------------------- обновляемая раздача --
+
+def test_update_map_matches_by_size_then_episode():
+    old = qbit.Torrent("o", "o", "tv", 1, Path("/tv"), Path("/tv/Show (2026)"), [
+        qbit.TorrentFile("Show (2026)/Season 01/Show - S01E01 - A.mkv", 100, 1),
+        qbit.TorrentFile("Show (2026)/Season 01/Show - S01E02 - B.mkv", 100, 1),
+        qbit.TorrentFile("Show (2026)/Season 01/Show - S01E01 - A.rus.srt", 7, 1)])
+    new = qbit.Torrent("n", "n", "tv", 0, Path("/tv"), Path("/tv/Show.S01"), [
+        qbit.TorrentFile("Show.S01/Show.S01E02.mkv", 100, 0),
+        qbit.TorrentFile("Show.S01/Show.S01E01.mkv", 100, 0),
+        qbit.TorrentFile("Show.S01/Show.S01E03.mkv", 120, 0),
+        qbit.TorrentFile("Show.S01/Subs/Show.S01E01.rus.srt", 7, 0)])
+    assert dict(autopilot.update_map(new, old)) == {
+        "Show.S01/Show.S01E02.mkv": "Show (2026)/Season 01/Show - S01E02 - B.mkv",
+        "Show.S01/Show.S01E01.mkv": "Show (2026)/Season 01/Show - S01E01 - A.mkv",
+        "Show.S01/Subs/Show.S01E01.rus.srt": "Show (2026)/Season 01/Show - S01E01 - A.rus.srt"}
+
+
+def test_updated_release_reuses_downloaded_files(env):
+    tv, fake, _ = env
+    page = "https://rutracker.org/forum/viewtopic.php?t=1"
+    _add(tv, fake, on_disk=(1, 2))
+    ap = autopilot.Autopilot()
+    ap.expect("h1", library.TV, 1, "Show.S01.1080p", pages=[page])
+    ap.tick()
+    assert ap.items["h1"].status == autopilot.DONE
+    # На трекере добавили третью серию — новый хеш, та же страница.
+    old = ap.replaced_by([page], "h2")
+    assert old is not None and old.hash == "h1"
+    fake.add("h2", {f"Show.S01.1080p/Show.S01E0{n}.1080p.mkv": 100 for n in (1, 2, 3)})
+    ap.expect("h2", library.TV, 1, "Show.S01.1080p v2", pages=[page], replaces="h1")
+    fake.renamed.clear()
+    ap.tick()                                   # список файлов есть — имена уже скачанных
+    assert sorted(fake.renamed) == [
+        ("Show.S01.1080p/Show.S01E01.1080p.mkv", "Show (2026)/Season 01/Show - S01E01 - Ep 1.mkv"),
+        ("Show.S01.1080p/Show.S01E02.1080p.mkv", "Show (2026)/Season 01/Show - S01E02 - Ep 2.mkv"),
+        # новая серия — пока в папку тайтла, на место её поставит раскладка
+        ("Show.S01.1080p/Show.S01E03.1080p.mkv", "Show (2026)/Show.S01.1080p/Show.S01E03.1080p.mkv")]
+    ap.tick()                                   # перепроверка
+    assert ("recheck", "h2") in fake.events
+    ap.tick()
+    assert ("remove", "h1") not in fake.events  # ещё проверяет
+    fake.states["h2"] = "stoppedDL"
+    ap.tick()
+    assert fake.events[-2:] == [("remove", "h1"), ("start", "h2")]
+    assert ap.items["h2"].replaces == ""
+    fake.renamed.clear()
+    ap.tick()                                   # обычная раскладка: новая серия на место
+    assert ap.items["h2"].status == autopilot.DONE, ap.items["h2"].error
+    assert fake.renamed == [("Show (2026)/Show.S01.1080p/Show.S01E03.1080p.mkv",
+                             "Show (2026)/Season 01/Show - S01E03.mkv")]
+
+
+def test_update_without_common_files_downloads_whole(env):
+    tv, fake, _ = env
+    _add(tv, fake)
+    ap = autopilot.Autopilot()
+    ap.tick()
+    fake.add("h2", {"Other.S01/Other.S01E01.mkv": 555})
+    ap.expect("h2", library.TV, 1, "Other", replaces="h1")
+    ap.tick()
+    assert ap.items["h2"].replaces == "" and ("start", "h2") in fake.events
+    assert ("remove", "h1") not in fake.events
