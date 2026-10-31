@@ -73,15 +73,16 @@
       <div class="row">
         <span class="small muted">Качество:</span>
         <div class="seg">
-          <template x-for="qq in [[2160, '4K'], [1080, '1080p'], [720, '720p']]" :key="qq[0]">
+          <template x-for="qq in s.qualities || []" :key="qq[0]">
             <button type="button" :class="{ on: s.prefs && s.prefs.quality === qq[0] }"
-                    @click="opt({ quality: qq[0] })" x-text="qq[1]"></button>
+                    @click="opt({ quality: qq[0] })" :title="'Раздач в этом качестве: ' + qq[1]">
+              <span x-text="qualityLabel(qq[0])"></span><span class="count" x-text="qq[1]"></span></button>
           </template>
         </div>
-        <label class="check"><input type="checkbox" :checked="s.prefs && s.prefs.hdr"
-               @change="opt({ hdr: $event.target.checked })">HDR</label>
-        <label class="check"><input type="checkbox" :checked="s.prefs && s.prefs.dv"
-               @change="opt({ dv: $event.target.checked })">Dolby Vision</label>
+        <label class="check" title="Показывать раздачи с HDR — если телевизор его умеет"><input type="checkbox"
+               :checked="s.prefs && s.prefs.hdr" @change="opt({ hdr: $event.target.checked })">HDR</label>
+        <label class="check" title="Показывать раздачи с Dolby Vision — если телевизор его умеет"><input type="checkbox"
+               :checked="s.prefs && s.prefs.dv" @change="opt({ dv: $event.target.checked })">Dolby Vision</label>
         <label class="check"><input type="checkbox" :checked="s.any_year"
                @change="opt({ any_year: $event.target.checked })">и с другим годом</label>
       </div>
@@ -93,10 +94,22 @@
                   @click="opt({ voice: s.voice === v ? '' : v })" x-text="v"></button>
         </template>
       </div>
+      <div class="row" x-show="(s.releases || []).length > 1">
+        <span class="small muted">Порядок:</span>
+        <div class="seg">
+          <template x-for="o in sorts" :key="o[0]">
+            <button type="button" :class="{ on: sortBy === o[0] }" @click="setSort(o[0])">
+              <span x-text="o[1]"></span>
+              <svg class="icon" x-show="o[0] !== 'best' && sortBy === o[0] && sortDesc"><use href="#i-down"/></svg>
+              <svg class="icon" x-show="o[0] !== 'best' && sortBy === o[0] && !sortDesc"><use href="#i-up"/></svg>
+            </button>
+          </template>
+        </div>
+      </div>
     </div>
 
     <div class="empty" x-show="!(s.releases || []).length">
-      <div>Ничего не подходит<span x-show="s.total"> — снимите фильтры или отметьте «и с другим годом»</span>.</div>
+      <div>Ничего не подходит<span x-show="s.total"> — смените качество, снимите фильтры или отметьте «и с другим годом»</span>.</div>
       <div class="row" style="justify-content: center; margin-top: 10px">
         <template x-for="l in s.links || []" :key="l[0]">
           <a class="btn btn-sm" :href="l[1]" target="_blank" rel="noopener">
@@ -112,7 +125,7 @@
             <th class="num">Сиды</th><th></th></tr>
         </thead>
         <tbody>
-          <template x-for="r in (showAll ? s.releases : (s.releases || []).slice(0, 30))" :key="r.hash">
+          <template x-for="r in (showAll ? releases : releases.slice(0, 30))" :key="r.hash">
             <tr :class="{ selected: r.recommended }">
               <td class="file">
                 <div><span x-show="r.recommended" title="Рекомендую">⭐ </span><span x-text="r.title"></span></div>
@@ -127,8 +140,9 @@
               </td>
               <td class="nowrap">
                 <span class="badge plain" :class="{ accent: r.quality >= 2160 }" x-text="qualityLabel(r.quality)"></span>
-                <span class="badge plain" x-show="r.dv">DV</span>
-                <span class="badge plain" x-show="r.hdr && !r.dv">HDR</span>
+                <span class="badge plain" x-show="r.hdr && !r.dv_only">HDR</span>
+                <span class="badge plain" x-show="r.dv"
+                      :title="r.dv_only ? 'Только Dolby Vision: экран без DV покажет блёклую картинку' : 'Dolby Vision поверх HDR: экран без DV покажет HDR'">DV</span>
               </td>
               <td class="num" x-text="episodes(r)"></td>
               <td class="num nowrap" x-text="size(r.size)"></td>

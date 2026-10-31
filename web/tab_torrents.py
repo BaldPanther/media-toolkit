@@ -63,20 +63,32 @@ class TorrentsTab:
                 return [s.number]
         return [self.title.seasons[-1].number]
 
-    def fitting(self) -> list[search.Release]:
+    def fitting(self, prefs: search.Prefs) -> list[search.Release]:
+        """Подходят тайтлу и экрану: тип, год, сезоны, HDR/DV. Качество и озвучка — потом."""
         if self.title is None:
             return []
-        return [r for r in self.releases if search.fits(r, self.title, self.seasons, self.any_year)]
+        return [r for r in self.releases if search.fits(r, self.title, self.seasons, self.any_year)
+                and search.picture_ok(r, prefs)]
 
-    def shown(self) -> list[search.Release]:
-        fit = [r for r in self.fitting() if not self.voice or search.has_voice(r, self.voice)]
-        return search.rank(fit, self.title, search.load_prefs(), self.seasons) if fit else []
+    def shown(self, prefs: search.Prefs | None = None) -> list[search.Release]:
+        prefs = prefs or search.load_prefs()
+        fit = [r for r in self.fitting(prefs) if search.quality_of(r) == prefs.quality
+               and (not self.voice or search.has_voice(r, self.voice))]
+        return search.rank(fit, self.title, prefs, self.seasons) if fit else []
 
     def search_dict(self) -> dict:
         title = self.title
-        shown = self.shown()
-        voices = collections.Counter(v for r in self.fitting() for v in r.voices)
         prefs = search.load_prefs()
+        fit = self.fitting(prefs)
+        shown = self.shown(prefs)
+        # Озвучки — из раздач выбранного качества, число раздач на кнопках
+        # качества — с выбранной озвучкой: пустых кнопок не бывает.
+        voices = [v for v, _ in collections.Counter(
+            v for r in fit if search.quality_of(r) == prefs.quality for v in r.voices).most_common(14)]
+        if self.voice and self.voice not in voices:
+            voices.append(self.voice)
+        per_quality = collections.Counter(
+            search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
         return {
             "query": self.query,
             "kind": self.kind,
@@ -96,12 +108,14 @@ class TorrentsTab:
             "releases": [r.to_dict() for r in shown[:200]],
             "total": len(self.releases),
             "fit": len(shown),
-            "voices": [v for v, _ in voices.most_common(14)],
+            "qualities": [[q, per_quality.get(q, 0)] for q in search.QUALITIES],
+            "voices": voices,
             "voice": self.voice,
             "any_year": self.any_year,
             "prefs": {"quality": prefs.quality, "hdr": prefs.hdr, "dv": prefs.dv,
                       "voices": prefs.voices},
-            "status": self.search_status,
+            "status": (f"Найдено раздач: {len(self.releases)}, под фильтры: {len(shown)}"
+                       if title else self.search_status),
             "links": search.tracker_search_links(title.names) if title and not shown else [],
         }
 
@@ -158,8 +172,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
     t.releases = search.find(title, log=t.st.log.add)
-    shown = t.shown()
-    t.search_status = (f"Найдено раздач: {len(t.releases)}, подходят: {len(shown)}"
+    t.search_status = (f"Найдено раздач: {len(t.releases)}"
                        + (f" — в медиатеке: {t.library_dir}" if t.library_dir else ""))
     t.st.log.add(f"Поиск раздач: {library.title_with_year(title.title, title.year)} — "
                  f"{t.search_status}")

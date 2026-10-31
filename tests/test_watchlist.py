@@ -164,3 +164,19 @@ def test_list_survives_restart(env):
     assert watchlist.Watcher().items[item.id].tmdb_id == 5
     w.remove(item.id)
     assert watchlist.Watcher().items == {}
+
+
+def test_offer_skips_hdr_without_checkbox_and_prefers_4k(env):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
+    hdr = _rel("h", [1, 10, 10], quality=2160, seeds=500)
+    hdr.hdr = True
+    state["releases"] = [_rel("a", [1, 10, 10]), _rel("k", [1, 10, 10], quality=2160), hdr]
+    item = w.add(library.TV, 5, "Тёмная материя (2024)")
+    w.tick(now=10 ** 9)
+    # Кнопка качества поиска (по умолчанию 4K) слежению не мешает: 1080p тоже в списке.
+    assert [o["hash"][0] for o in item.offer] == ["k", "a"]
+    search.save_prefs(search.Prefs(hdr=True))
+    w.check_now()
+    w.tick(now=10 ** 9 + 1)
+    assert [o["hash"][0] for o in item.offer] == ["h", "k", "a"]

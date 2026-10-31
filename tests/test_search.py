@@ -42,9 +42,10 @@ def test_group_merges_same_hash_across_trackers():
         _item("rutor", "Тёмная материя [S01] 1080p", sid=5, voices=["LostFilm"]),
         _item("rutracker", "Темная материя / Dark Matter / Сезон: 1 / Серии: 1-9 из 9 | LostFilm, TVShows",
               sid=40, voices=["LostFilm", "TVShows"]),
-        _item("kinozal", "Другая", h="B" * 40, sid=3),
+        _item("kinozal", "Другая от DoMiNo &amp; селезень", h="B" * 40, sid=3),
     ])
     assert len(rels) == 2
+    assert next(r for r in rels if r.hash == "b" * 40).title == "Другая от DoMiNo & селезень"
     a = next(r for r in rels if r.hash == "a" * 40)
     assert a.seeds == 40 and [t[0] for t in a.trackers] == ["rutor", "rutracker"]
     assert a.voices == ["LostFilm", "TVShows"] and a.episodes == [1, 9, 9]
@@ -65,28 +66,52 @@ def test_fits_uses_season_year_and_type():
     assert not search.fits(movie, t, [1])
 
 
-def test_rank_prefers_quality_then_voice_and_keeps_low_seeds():
+def test_picture_filter_follows_hdr_and_dv_checkboxes():
+    sdr, hdr, hybrid, dv_only = _releases([
+        _item("a", "SDR", h="1" * 40),
+        _item("b", "HDR10+", h="2" * 40, videotype="hdr"),
+        _item("c", "HDR10, Dolby Vision Profile 8", h="3" * 40, videotype="hdr"),
+        _item("d", "Dolby Vision", h="4" * 40),
+    ])
+    shown = lambda **kw: [r.title for r in (sdr, hdr, hybrid, dv_only)   # noqa: E731
+                          if search.picture_ok(r, search.Prefs(**kw))]
+    assert shown() == ["SDR"]                                   # обе галки сняты — только SDR
+    assert shown(hdr=True) == ["SDR", "HDR10+", "HDR10, Dolby Vision Profile 8"]
+    assert shown(dv=True) == ["SDR", "HDR10, Dolby Vision Profile 8", "Dolby Vision"]
+    assert len(shown(hdr=True, dv=True)) == 4
+
+
+def test_quality_of_puts_unknown_into_sd():
+    rels = _releases([_item("a", "x", h="1" * 40, quality=2160), _item("b", "y", h="2" * 40, quality=0)])
+    assert [search.quality_of(r) for r in rels] == [2160, 480]
+
+
+def test_rank_prefers_complete_then_quality_voice_and_keeps_low_seeds():
     t = _title()
     rels = _releases([
         _item("a", "4K мало сидов (1 сезон: 1-9 серии из 9)", h="1" * 40, quality=2160, sid=1),
-        _item("b", "1080 TVShows (1 сезон: 1-9 серии из 9)", h="2" * 40, quality=1080, sid=200,
+        _item("b", "4K TVShows (1 сезон: 1-9 серии из 9)", h="2" * 40, quality=2160, sid=0,
               voices=["TVShows"]),
         _item("c", "4K неполный (1 сезон: 1-8 серии из 9)", h="3" * 40, quality=2160, sid=300),
-        _item("d", "4K DV only (1 сезон: 1-9 серии из 9) Dolby Vision", h="4" * 40, quality=2160,
-              sid=500, videotype="hdr"),
+        _item("e", "1080 (1 сезон: 1-9 серии из 9)", h="5" * 40, quality=1080, sid=900),
     ])
-    ranked = search.rank(rels, t, search.Prefs(quality=2160), [1])
-    assert ranked[0].hash == "1" * 40 and ranked[0].recommended
-    assert "мало сидов" in ranked[0].notes
-    assert ranked[-1].hash == "4" * 40 and "только Dolby Vision" in ranked[-1].notes
-    incomplete = next(r for r in ranked if r.hash == "3" * 40)
-    assert "не все серии: 8 из 9" in incomplete.notes
-    # Лестница с 1080 наверху: та же выдача, но первым — 1080p с любимой озвучкой.
-    ranked = search.rank(rels, t, search.Prefs(quality=1080), [1])
-    assert ranked[0].hash == "2" * 40 and "TVShows" in ranked[0].why
-    # Dolby Vision разрешён — раздача с одним DV уже не в конце.
-    ranked = search.rank(rels, t, search.Prefs(quality=2160, hdr=True, dv=True), [1])
-    assert ranked[0].hash == "4" * 40
+    ranked = search.rank(rels, t, search.Prefs(), [1])
+    assert [r.hash[0] for r in ranked] == ["2", "1", "5", "3"]
+    assert "нет сидов" in ranked[0].notes and not ranked[0].recommended   # без сидов — не советую
+    assert ranked[1].recommended and "мало сидов" in ranked[1].notes
+    assert "не все серии: 8 из 9" in ranked[-1].notes
+
+
+def test_rank_puts_dv_then_hdr_first_when_allowed():
+    t = _title()
+    rels = _releases([
+        _item("a", "SDR (1 сезон: 1-9 серии из 9)", h="1" * 40, sid=500),
+        _item("b", "HDR10 (1 сезон: 1-9 серии из 9)", h="2" * 40, sid=50, videotype="hdr"),
+        _item("c", "Dolby Vision (1 сезон: 1-9 серии из 9)", h="3" * 40, sid=5),
+    ])
+    ranked = search.rank(rels, t, search.Prefs(hdr=True, dv=True), [1])
+    assert [r.hash[0] for r in ranked] == ["3", "2", "1"]
+    assert "только Dolby Vision" in ranked[0].notes
 
 
 def test_pack_with_extra_seasons_is_noted():
@@ -148,7 +173,9 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(search, "title_info", lambda kind, tmdb_id, key: _title())
     monkeypatch.setattr(search, "find", lambda title, sources=None, log=None: _releases([
         _item("rutor", "Тёмная материя (1 сезон: 1-9 серии из 9)", h="1" * 40, seasons=[1]),
-        _item("rutor", "Тёмная материя [S01-02]", h="2" * 40, seasons=[1, 2], year=2026)]))
+        _item("rutor", "Тёмная материя [S01-02]", h="2" * 40, seasons=[1, 2], year=2026),
+        _item("rutor", "Тёмная материя (1 сезон: 1-9 серии из 9) HDR10", h="3" * 40, seasons=[1],
+              videotype="hdr")]))
     added = []
 
     class FakeQ:
@@ -174,9 +201,16 @@ def test_search_flow_select_filter_download(web):
     s = _search(c)
     assert s["title"]["label"] == "Тёмная материя (2024)"
     assert [x["number"] for x in s["seasons"] if x["selected"]] == [1]   # в медиатеке пусто
+    # Показывается только выбранное качество (4K), HDR — только с галкой.
+    assert s["releases"] == [] and dict(s["qualities"]) == {2160: 0, 1080: 2, 720: 0, 480: 0}
+    c.post("/api/torrents/search/options", json={"quality": 1080})
+    s = _search(c)
     assert len(s["releases"]) == 2 and s["releases"][0]["recommended"]
+    assert s["status"] == "Найдено раздач: 3, под фильтры: 2"
+    c.post("/api/torrents/search/options", json={"hdr": True})
+    assert len(_search(c)["releases"]) == 3
     # Второй сезон: остаётся только сборник, с пометкой.
-    c.post("/api/torrents/search/options", json={"seasons": [2], "quality": 1080, "hdr": True})
+    c.post("/api/torrents/search/options", json={"seasons": [2]})
     s = _search(c)
     assert [r["hash"] for r in s["releases"]] == ["2" * 40]
     assert "сборник: сезоны 1–2" in s["releases"][0]["notes"]

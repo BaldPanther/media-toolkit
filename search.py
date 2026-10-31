@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import html
 import re
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -45,9 +46,9 @@ MOVIE_TYPES = {"movie", "multfilm", "documovie", "anime"}
 
 @dataclass
 class Prefs:
-    quality: int = 2160                 # верх лестницы: 2160 → 1080 → 720
-    hdr: bool = False                   # предпочитать HDR; нет — SDR выше
-    dv: bool = False                    # Dolby Vision показывает экран
+    quality: int = 2160                 # поиск показывает только его; слежение спускается ниже
+    hdr: bool = False                   # экран показывает HDR; нет — HDR-раздачи скрыты
+    dv: bool = False                    # экран показывает Dolby Vision; нет — DV-раздачи скрыты
     voices: list[str] = field(default_factory=lambda: ["Кубик в Кубе", "TVShows"])
 
 
@@ -248,7 +249,7 @@ def _from_jacred(item: dict) -> Release | None:
     h = infohash(magnet)
     if not h:
         return None
-    title = str(item.get("title") or "")
+    title = html.unescape(str(item.get("title") or ""))     # jac.red отдаёт «&amp;»
     parsed = parse_title(title)
     quality = int(item.get("quality") or 0) or parsed.get("quality", 0)
     rel = Release(
@@ -408,10 +409,25 @@ def _voice_rank(rel: Release, voices: list[str]) -> int:
     return next((i for i, v in enumerate(voices) if has_voice(rel, v)), len(voices))
 
 
-def _quality_order(top: int) -> list[int]:
-    lower = [q for q in QUALITIES if q <= top]
-    higher = [q for q in reversed(QUALITIES) if q > top]
-    return lower + higher + [0]
+def quality_of(rel: Release) -> int:
+    """Кнопка качества, под которой раздача: в SD — и всё без пометки качества."""
+    return rel.quality if rel.quality in QUALITIES[:-1] else QUALITIES[-1]
+
+
+def picture_ok(rel: Release, prefs: Prefs) -> bool:
+    """HDR и Dolby Vision — только с галками. Гибрид HDR10 + DV годится под любую
+    из двух; «только Dolby Vision» (без слоя HDR) — только под DV."""
+    if not rel.hdr:
+        return True
+    if rel.dv and prefs.dv:
+        return True
+    return prefs.hdr and not rel.dv_only
+
+
+def _picture_rank(rel: Release, prefs: Prefs) -> int:
+    if rel.dv and prefs.dv:
+        return 0
+    return 1 if rel.hdr and prefs.hdr else 2
 
 
 def complete(rel: Release, title: Title, seasons=()) -> bool:
@@ -425,14 +441,12 @@ def complete(rel: Release, title: Title, seasons=()) -> bool:
 
 
 def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> list[Release]:
-    order = _quality_order(prefs.quality)
+    """Лучшие сверху: все серии, качество повыше, картинка под галки, любимая
+    озвучка, сиды. Фильтры (`picture_ok`, качество) — до вызова."""
     for r in releases:
         full = complete(r, title, seasons)
-        q_pos = order.index(r.quality) if r.quality in order else len(order)
-        hdr_pos = 0 if r.hdr == prefs.hdr else 1
-        dv_bad = 1 if (r.dv_only and not prefs.dv) else 0
-        r.score = (dv_bad, 0 if full else 1, q_pos, hdr_pos, _voice_rank(r, prefs.voices),
-                   0 if r.seeds >= 1 else 1, -r.seeds)
+        r.score = (0 if full else 1, -quality_of(r), _picture_rank(r, prefs),
+                   _voice_rank(r, prefs.voices), 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
         if r.seeds < LOW_SEEDS:
             r.notes.append("мало сидов" if r.seeds else "нет сидов")
@@ -445,7 +459,7 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         r.recommended = False
         r.why = _why(r, prefs)
     releases.sort(key=lambda r: r.score)
-    best = next((r for r in releases if r.seeds >= 1 and not (r.dv_only and not prefs.dv)), None)
+    best = next((r for r in releases if r.seeds >= 1), None)
     if best is not None:
         best.recommended = True
     return releases

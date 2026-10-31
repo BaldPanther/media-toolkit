@@ -8,13 +8,20 @@ document.addEventListener("alpine:init", () => {
     kind: "tv",
     showAll: false,
     choosing: false,      // снова показать карточки TMDb, когда тайтл уже выбран
+    sorts: [["best", "Лучшие"], ["seeds", "По сидам"], ["size", "По размеру"]],
+    sortBy: "best",
+    sortDesc: true,
 
     get t() { return this.$store.app.tabs.torrents || {}; },
     get s() { return this.t.search || {}; },
     get busy() { return this.$store.app.busy; },
 
     init() {
-      try { this.view = localStorage.getItem("mt.torrents.view") || "search"; } catch (e) { /* без хранилища */ }
+      try {
+        this.view = localStorage.getItem("mt.torrents.view") || "search";
+        const [by, dir] = (localStorage.getItem("mt.torrents.sort") || "").split(":");
+        if (this.sorts.some((o) => o[0] === by)) { this.sortBy = by; this.sortDesc = dir !== "asc"; }
+      } catch (e) { /* без хранилища */ }
       this.$watch("s.query", (v) => { if (v && !this.q) this.q = v; });
       this.$watch("s.kind", (v) => { if (v) this.kind = v; });
     },
@@ -42,6 +49,18 @@ document.addEventListener("alpine:init", () => {
       await this.$store.app.loadState();
     },
     pickOther() { this.choosing = !this.choosing; },
+    // Порядок — здесь же, без сервера: «Лучшие» — как рекомендует программа.
+    setSort(by) {
+      if (by === this.sortBy && by !== "best") this.sortDesc = !this.sortDesc;
+      else { this.sortBy = by; this.sortDesc = true; }
+      try { localStorage.setItem("mt.torrents.sort", `${this.sortBy}:${this.sortDesc ? "desc" : "asc"}`); } catch (e) { /* без хранилища */ }
+    },
+    get releases() {
+      const list = [...(this.s.releases || [])];
+      if (this.sortBy === "best") return list;
+      const dir = this.sortDesc ? -1 : 1;
+      return list.sort((a, b) => dir * (a[this.sortBy] - b[this.sortBy]));
+    },
     async opt(changes) {
       await api.post("/api/torrents/search/options", changes);
       await this.$store.app.loadState();
