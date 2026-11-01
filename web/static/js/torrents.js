@@ -22,7 +22,8 @@ document.addEventListener("alpine:init", () => {
         const [by, dir] = (localStorage.getItem("mt.torrents.sort") || "").split(":");
         if (this.sorts.some((o) => o[0] === by)) { this.sortBy = by; this.sortDesc = dir !== "asc"; }
       } catch (e) { /* без хранилища */ }
-      this.$watch("s.query", (v) => { if (v && !this.q) this.q = v; });
+      // Сервер меняет название сам после «Сканировать» папки тайтла — подставить его.
+      this.$watch("s.query", (v) => { if (v) this.q = v; });
       this.$watch("q", () => { if (this.isLink) this.linkKind = this.guessKind(); });
     },
     setView(v) {
@@ -96,7 +97,8 @@ document.addEventListener("alpine:init", () => {
       return `${se.episodes} сер.`;
     },
     seasonHint(se) {
-      return `Серий: ${se.episodes || "?"}, год: ${se.year || "?"}, в медиатеке: ${se.have}`;
+      return `Серий: ${se.episodes || "?"}, год: ${se.year || "?"}, в медиатеке: ${se.have}`
+        + (se.tmdb ? `; в TMDb — ${se.tmdb}` : "");
     },
     async download(r) {
       const res = await api.post("/api/torrents/search/download", { hash: r.hash });

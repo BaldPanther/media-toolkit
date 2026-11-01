@@ -10,6 +10,7 @@ import collections
 import re
 import time
 import urllib.parse
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify
 
@@ -42,6 +43,7 @@ class TorrentsTab:
         self.hit: metadata.SearchHit | None = None
         self.title: search.Title | None = None
         self.library_dir = ""
+        self.numbering_note = ""       # нумерация трекеров и TMDb разная — как связаны
         self.have: dict[int, int] = {}
         self.seasons: list[int] = []
         self.releases: list[search.Release] = []
@@ -55,6 +57,18 @@ class TorrentsTab:
         self.bot.start()
         self.autopilot.start()
         self.watcher.start()
+
+    def on_scan_requested(self, path: str) -> None:
+        """Выбрали папку тайтла и нажали «Сканировать» — его название в поле поиска:
+        дальше логично поискать продолжение. Искать — по кнопке, самому."""
+        p = Path(path)
+        if p.is_file():
+            p = p.with_suffix("")
+        elif library.season_of_dir(p.name) is not None:
+            p = p.parent                # папка сезона — название у папки сериала
+        title, _ = library.guess_title_year(p.name)
+        if title:
+            self.query = title
 
     # ------------------------------------------------------------ поиск --
     def default_seasons(self) -> list[int]:
@@ -133,10 +147,12 @@ class TorrentsTab:
                        "kind": title.kind, "names": title.names, "status": title.status,
                        "poster": self.hit.poster_url if self.hit else "",
                        "library": self.library_dir,
+                       "numbering": self.numbering_note,
                        "watching": self.watcher.find(title.kind, title.tmdb_id) is not None}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,
                          "have": self.have.get(s.number, 0),
+                         "tmdb": search.tmdb_range(title, s.number),
                          "selected": s.number in self.seasons}
                         for s in (title.seasons if title else [])],
             "releases": [self.release_dict(r, in_qbit) for r in shown[:200]],
@@ -211,6 +227,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     title = search.title_info(hit.kind, hit.tmdb_id, meta.tmdb_key)
     roots = meta.tv_roots if hit.kind == library.TV else meta.movies_roots
     t.library_dir, t.have = search.in_library(title, roots)
+    t.numbering_note = search.numbering_note(title, t.library_dir)
     t.title, t.releases, t.voice, t.any_year = title, [], "", False
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")

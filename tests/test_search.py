@@ -345,3 +345,11 @@ def test_release_marks_and_free_space_warning(web, monkeypatch):
     tab = st.tabs["torrents"]
     tab.have = {1: 9}
     assert all(r["in_library"] for r in _search(c)["releases"] if r["seasons"] == [1])
+
+
+def test_scan_of_title_folder_fills_search_field(web, tmp_path):
+    st, c, _ = web
+    season = tmp_path / "tv" / "The Apothecary Diaries (2023)" / "Season 01"
+    season.mkdir(parents=True)
+    c.post("/api/scan", json={"path": str(season)})       # сканирование может и не начаться
+    assert _search(c)["query"] == "The Apothecary Diaries"

@@ -502,8 +502,11 @@ def count_in_season(rel: Release, title: Title) -> None:
     if before < first and last - before <= tail.episodes:
         rel.episodes = [first - before, last - before, tail.episodes]
         return
+    if last <= tail.episodes:
+        return              # «[03x01-04 из 24]» — серии внутри сезона, «из 24» — весь ТВ-3
     # Нумерация как в TMDb — один сезон подряд: «1 сезон: 1-52 из 60», «S01E50».
-    # Это сквозные номера: раздача уходит в те сезоны трекеров, где эти серии.
+    # Номера больше самого сезона — сквозные: раздача уходит в те сезоны трекеров,
+    # где эти серии.
     start, end = nb.from_absolute(first), nb.from_absolute(last)
     if start is None or end is None:
         return
@@ -671,6 +674,40 @@ def in_library(title: Title, roots) -> tuple[str, dict[int, int]]:
     for season, episode in library_episodes(Path(folder), title.numbering):
         have[season] = have.get(season, 0) + 1
     return folder, have
+
+
+def tmdb_range(title: Title, season: int) -> str:
+    """Сезон трекеров в нумерации TMDb: «серии 49–60» или «S01E49–E60»."""
+    span = title.numbering.span(season)
+    if span is None or not title.numbering.grouped:
+        return ""
+    last = span.first + span.count - 1
+    if len(title.numbering.tmdb_seasons()) == 1:
+        return f"серии {span.first}–{last}"
+    return f"S{span.tmdb_season:02d}E{span.first:02d}–E{last:02d}"
+
+
+def numbering_note(title: Title, folder: str = "") -> str:
+    """Нумерация трекеров и TMDb разная — сказать прямо, чтобы не искать «сезон 3»
+    в TMDb, где он часть первого, и знать, под какими номерами лягут серии."""
+    nb = title.numbering
+    if title.kind != library.TV or not nb.grouped:
+        return ""
+    tmdb_count = len(nb.tmdb_seasons())
+    total = sum(s.count for s in nb.spans)
+    where = (f"в TMDb один сезон из {total} серий подряд" if tmdb_count == 1
+             else f"в TMDb сезонов {tmdb_count}")
+    parts = ", ".join(f"{s.season} — {tmdb_range(title, s.season)}" for s in nb.spans)
+    text = (f"Нумерация разная: {where}, а трекеры делят на сезоны: {parts}. "
+            f"Программа сверяет сама.")
+    if folder:
+        grouped_disk = numbering.library_grouped(nb, library.scan_folder(Path(folder)).seasons())
+        last = nb.spans[-1]
+        tmdb_season, first = nb.to_tmdb(last.season, 1)
+        text += (" В медиатеке — по сезонам трекеров (S02E01…)." if grouped_disk else
+                 f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
+                 f"S{tmdb_season:02d}E{first:02d} и дальше.")
+    return text
 
 
 def library_dir(kind: str, tmdb_id: int, roots) -> str:

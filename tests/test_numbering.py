@@ -104,6 +104,10 @@ def test_release_numbered_like_tmdb_goes_to_tracker_seasons(monkeypatch):
     search.count_in_season(scene, title)
     assert scene.seasons == [3] and scene.episodes == [2, 2, 12]
     assert search.fits(scene, title, [3])
+    # А «из 24» у раздачи третьего сезона — весь ТВ-3, а не сквозные номера.
+    tv3 = search.Release("c" * 40, "[03x01-04 из 24] (2026)", "m", seasons=[3], episodes=[1, 4, 24])
+    search.count_in_season(tv3, title)
+    assert tv3.seasons == [3] and tv3.episodes == [1, 4, 24]
 
 
 def test_release_without_season_checked_by_season_year(monkeypatch):
@@ -149,3 +153,14 @@ def test_sibling_numbers(tmp_path):
     got = library.sibling_numbers(vids)
     assert [got.get(v) for v in vids] == [1, 2, 25, 1, 2, None]
     assert library.season_of_dir("SPs") == 0
+
+
+def test_numbering_note_says_how_seasons_map(tmp_path, monkeypatch):
+    title = _title(monkeypatch)
+    note = search.numbering_note(title)
+    assert "один сезон из 60 серий" in note and "3 — серии 49–60" in note
+    show = tmp_path / "Show"
+    (show / "Season 01").mkdir(parents=True)
+    (show / "Season 01" / "Show - S01E01 - x.mkv").write_bytes(b"")
+    assert "сезон 3 ложится как S01E49" in search.numbering_note(title, str(show))
+    assert search.tmdb_range(title, 3) == "серии 49–60"

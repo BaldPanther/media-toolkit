@@ -56,6 +56,7 @@
         <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
+        <div class="small warn-text" x-show="s.title && s.title.numbering" x-text="s.title && s.title.numbering"></div>
       </div>
     </div>
   </section>
