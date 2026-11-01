@@ -1,4 +1,5 @@
 """Тесты каркаса edl.py: парсинг S/E, padding, формат/запись .edl, выбор дорожки."""
+import os
 from pathlib import Path
 
 import pytest
@@ -253,7 +254,7 @@ def test_final_outro_fixed_end_still_takes_padding():
 
 def test_find_tool_falls_back_to_brew_dirs(monkeypatch, tmp_path):
     """PATH урезан (запуск из Dock/Finder) — инструмент ищется в папках brew."""
-    fake = tmp_path / "fpcalc"
+    fake = tmp_path / ("fpcalc.exe" if os.name == "nt" else "fpcalc")
     fake.write_text("")
     monkeypatch.setattr(edl.shutil, "which", lambda *_: None)
     monkeypatch.setattr(edl, "_TOOL_DIRS", [str(tmp_path)])

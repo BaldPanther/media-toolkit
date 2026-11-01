@@ -154,5 +154,5 @@ def test_subs_only_selected_files(env, monkeypatch):
     monkeypatch.setattr(subs, "subliminal_available", lambda: "")
     monkeypatch.setattr(subs, "load_settings", lambda: subs.Settings("u", "p", "k", False))
     ask = c.post("/api/tracks/subs", json={"only_missing": False, "scope": "sel",
-                                           "selected": ["/lib/Show/S01E02.mkv"]}).get_json()
+                                           "selected": [str(Path("/lib/Show/S01E02.mkv"))]}).get_json()
     assert "для 1 серий — по выделенным файлам?" in ask["ask"]["text"]

@@ -76,7 +76,8 @@ def test_find_single_hit_loads_info_and_plan(env):
     # Лучший постер — русский (он первый в приоритете языков).
     poster = next(a for a in t["art"] if a["kind"] == metadata.ART_POSTER)
     assert poster["candidate"]["lang"] == "ru"
-    nexts = [r["next"] for r in t["rows"] if r["i"] is not None]
+    # На Windows пути — через «\»: сравниваем без разницы в разделителе.
+    nexts = [r["next"].replace("\\", "/") for r in t["rows"] if r["i"] is not None]
     assert "Archer (2009)/Season 01/Archer - S01E01 - Mole Hunt.mkv" in nexts
     junk = next(r for r in t["rows"] if r["junk"])
     assert junk["sel"] is True
@@ -212,7 +213,7 @@ def test_episode_override_rebuilds_plan(env, tmp_path):
     row = next(r for r in _tab(c)["rows"] if r["video"] and "bonus" in r["now"])
     assert "нет номера" in row["status"]
     c.post("/api/library/episode", json={"index": row["i"], "season": "1", "episode": "2"})
-    nexts = [r["next"] for r in _tab(c)["rows"]]
+    nexts = [r["next"].replace("\\", "/") for r in _tab(c)["rows"]]
     assert "Archer (2009)/Season 01/Archer - S01E02 - Training Day.mkv" in nexts
 
 
