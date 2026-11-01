@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import html
 import re
+import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -428,9 +429,31 @@ def _jacred(source: dict, title: Title) -> list[Release]:
                             timeout=30) or []
         for item in data if isinstance(data, list) else []:
             rel = _from_jacred(item)
-            if rel is not None:
+            if rel is not None and not _other_title(item, title):
                 found.setdefault((rel.trackers[0][0], rel.trackers[0][1], rel.hash), rel)
     return list(found.values())
+
+
+def _plain(text: str) -> str:
+    """Для сравнения названий: без регистра, диакритики («Shōgun» — «Shogun») и знаков."""
+    text = unicodedata.normalize("NFKD", text or "")
+    text = "".join(c for c in text if not unicodedata.combining(c)).casefold().replace("ё", "е")
+    return " " + " ".join(re.findall(r"\w+", text)) + " "
+
+
+def _other_title(item: dict, title: Title) -> bool:
+    """jac.red ищет по русскому названию, а под ним бывают и чужие тайтлы: «Настоящий
+    детектив» — ещё и русская телепередача (выпуски без года и сезона — фильтры её не
+    отсеют), «Бумажный дом» — и турецкий сериал. Раздача зарубежного тайтла называет и
+    оригинал — в названии или в `originalname` jac.red; не называет ни одного его
+    латинского названия — чужая. Тайтлы с оригиналом не латиницей (русские, аниме) так
+    не проверяются: их раздачи латинского названия могут и не писать."""
+    if not _LATIN.search(title.original) or _CYRILLIC.search(title.original):
+        return False
+    names = {_plain(n) for n in [title.original] + title.names
+             if _LATIN.search(n) and not _CYRILLIC.search(n)}
+    text = _plain(f"{item.get('title') or ''} {item.get('originalname') or ''}")
+    return not any(n in text for n in names if n.strip())
 
 
 _TZ = "{http://torznab.com/schemas/2015/feed}"

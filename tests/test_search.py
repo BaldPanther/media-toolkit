@@ -14,7 +14,8 @@ def _item(tracker, title, h="A" * 40, sid=10, quality=1080, seasons=(1,), year=2
     return {"tracker": tracker, "url": f"https://{tracker}/t/1", "title": title, "size": size,
             "sid": sid, "pir": 1, "magnet": f"magnet:?xt=urn:btih:{h}", "relased": year,
             "videotype": videotype, "quality": quality, "voices": list(voices),
-            "seasons": list(seasons), "types": list(types), "updateTime": "2026-10-29T00:00:00Z"}
+            "seasons": list(seasons), "types": list(types), "updateTime": "2026-10-29T00:00:00Z",
+            "originalname": "Dark Matter"}
 
 
 def _title():
@@ -139,6 +140,24 @@ def test_find_uses_sources_and_reports_failures(monkeypatch):
                        log=logged.append)
     assert len(rels) == 1 and "exact=true" in calls[0] and "altname=Dark+Matter" in calls[0]
     assert logged and "broken" in logged[0]
+
+
+def test_other_title_with_same_russian_name_dropped():
+    t = search.Title(kind=library.TV, tmdb_id=46648, title="Настоящий детектив", year=2014,
+                     original="True Detective", names=["Настоящий детектив", "True Detective"])
+    show = {"title": "Настояший детектив (Паутина любви) / 2025 / РУ / WEBRip",
+            "originalname": "Настояший детектив"}
+    real = {"title": "Настоящий детектив [04x01 из 06] (2024) WEB-DL", "originalname": "True Detective"}
+    eng = {"title": "Настояший детектив / True Detective / Сезон: 4", "originalname": "Настояший детектив"}
+    assert search._other_title(show, t)
+    assert not search._other_title(real, t) and not search._other_title(eng, t)
+    shogun = search.Title(kind=library.TV, tmdb_id=1, title="Сёгун", year=2024, original="Shōgun",
+                          names=["Сёгун", "Shōgun"])
+    assert not search._other_title({"title": "Сёгун / Shogun [S01] (2024)"}, shogun)
+    # Оригинал не латиницей (русский сериал, аниме) — не проверяется.
+    noon = search.Title(kind=library.TV, tmdb_id=2, title="Полдень", year=2026, original="Полдень",
+                        names=["Полдень", "Noon"])
+    assert not search._other_title({"title": "Полдень (2026) WEB-DL 1080p"}, noon)
 
 
 def test_in_library_by_tmdb_id(tmp_path):
