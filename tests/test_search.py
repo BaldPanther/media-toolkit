@@ -526,3 +526,12 @@ def test_same_hash_different_size_is_stale_magnet_not_merged():
     ranked = search.rank(out, _title(), search.Prefs(), [3])
     assert ranked[0] is tby and tby.recommended and not kz.recommended
     assert any("старый magnet" in n for n in kz.notes)
+
+
+def test_more_episodes_first_among_incomplete():
+    title = _title()
+    pack = search.Release("p" * 40, "1-2 сезоны WEB-DL", "m", quality=1080, seeds=2, source="WEB-DL",
+                          seasons=[1, 2], episodes=[1, 1, 10])          # из второго — одна серия
+    five = search.Release("f" * 40, "[02x01-05 из 10] WEBRip", "m", quality=1080, seeds=2,
+                          source="WEBRip", seasons=[2], episodes=[1, 5, 10])
+    assert search.rank([pack, five], title, search.Prefs(), [2])[0] is five

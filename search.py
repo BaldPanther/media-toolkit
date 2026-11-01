@@ -11,8 +11,8 @@
   перечисляются, сиды берутся наибольшие (рой у неё общий).
 - Год: у сериала годится и год начала, и год выбранного сезона (±1) — трекеры
   пишут «(2026) Сезон 2» у сериала 2024-го.
-- Рекомендация: русские дорожки → все серии → качество → любимая озвучка →
-  источник (Remux → BDRip → WEB-DL → WEBRip) → HEVC/AV1 → сиды.
+- Рекомендация: русские дорожки → все серии → качество → больше серий (у неполных) →
+  любимая озвучка → источник (Remux → BDRip → WEB-DL → WEBRip) → HEVC/AV1 → сиды.
   Мало сидов — не повод убирать из списка: «для коллекции подожду неделю».
 - Сезоны — как у трекеров (`numbering.py`): у аниме, которое TMDb держит одним
   сезоном со сквозной нумерацией, это деление из episode groups.
@@ -719,8 +719,11 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         # После любимой озвучки — источник (Remux → BDRip → WEB-DL → WEBRip → HDTV),
         # и только при равном источнике HEVC/AV1: они мельче, но качества не добавляют.
         # Устаревший magnet — в самый низ: скачалась бы не та версия, что в названии.
+        # Среди неполных — где больше серий (у сборника — в его последнем сезоне):
+        # пять серий третьего сезона лучше сборника на 48 ГБ с одной.
+        count = r.episodes[1] - r.episodes[0] + 1 if r.episodes and not full else 0
         r.score = (1 if r.stale else 0, 0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
-                   _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
+                   -count, _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
                    SOURCE_RANK.get(r.source, _UNKNOWN_SOURCE_RANK),
                    0 if r.codec in CODEC_FACTOR else 1, 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
