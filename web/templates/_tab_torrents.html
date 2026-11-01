@@ -97,9 +97,9 @@
       <div class="row" x-show="(s.codecs || []).some((c) => c[1] > 0)">
         <span class="small muted">Кодек:</span>
         <button type="button" class="btn btn-sm" :class="{ 'btn-primary': !s.codec }" @click="opt({ codec: '' })">все</button>
-        <template x-for="c in s.codecs" :key="c[0]">
+        <template x-for="c in (s.codecs || []).filter((c) => c[1] > 0 || s.codec === c[0])" :key="c[0]">
           <button type="button" class="btn btn-sm" :class="{ 'btn-primary': s.codec === c[0] }"
-                  :title="c[0] === 'HEVC' ? 'H.265 / x265: при том же качестве примерно вдвое мельче' : 'H.264 / x264'"
+                  :title="codecHint(c[0])"
                   @click="opt({ codec: s.codec === c[0] ? '' : c[0] })">
             <span x-text="c[0]"></span> <span class="faint" x-text="c[1]"></span></button>
         </template>
@@ -165,7 +165,8 @@
                 <span class="badge plain" :class="{ accent: r.quality >= 2160 }" x-text="qualityLabel(r.quality)"></span>
                 <span class="badge plain" x-show="r.source" x-text="r.source"
                       title="Источник: Remux и BDRip — с Blu-ray, WEB-DL — поток сервиса как есть, WEBRip — пережатый"></span>
-                <span class="badge plain" x-show="r.codec === 'HEVC'" title="H.265 / x265: при том же качестве примерно на треть мельче">HEVC</span>
+                <span class="badge plain" x-show="r.codec === 'HEVC' || r.codec === 'AV1'" x-text="r.codec"
+                      :title="codecHint(r.codec)"></span>
                 <span class="badge plain" x-show="r.hdr && !r.dv_only">HDR</span>
                 <span class="badge plain" x-show="r.dv"
                       :title="r.dv_only ? 'Только Dolby Vision: экран без DV покажет блёклую картинку' : 'Dolby Vision поверх HDR: экран без DV покажет HDR'">DV</span>

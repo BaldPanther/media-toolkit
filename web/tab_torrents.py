@@ -140,7 +140,8 @@ class TorrentsTab:
             d["vs_library"] = round(search.avc_equivalent(per, rel.codec)
                                     / search.avc_equivalent(mine.per_episode, mine.codec), 1)
             d["vs_raw"] = round(per / mine.per_episode, 1)
-            d["vs_codec"] = (rel.codec == search.HEVC) != (mine.codec == search.HEVC)
+            d["vs_codec"] = (search.CODEC_FACTOR.get(rel.codec, 1.0)
+                             != search.CODEC_FACTOR.get(mine.codec, 1.0))
         return d
 
     def search_dict(self) -> dict:

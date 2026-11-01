@@ -44,11 +44,13 @@ DEFAULT_SOURCES = [{"type": "jacred", "url": "https://jac.red"}]
 KNABEN = {"type": "knaben", "url": "https://api.knaben.org/v1"}
 QUALITIES = (2160, 1080, 720, 480)
 QUALITY_NAMES = {2160: "4K", 1080: "1080p", 720: "720p", 480: "SD"}
-HEVC, AVC = "HEVC", "AVC"
-CODECS = (HEVC, AVC)
-# HEVC при том же качестве — примерно 65% битрейта AVC (на практике экономия 30–40%,
-# «вдвое» — рекламная цифра). Для сравнения размеров раздач с разными кодеками.
-HEVC_FACTOR = 0.65
+HEVC, AVC, AV1 = "HEVC", "AVC", "AV1"
+CODECS = (HEVC, AVC, AV1)
+# Битрейт при том же качестве относительно AVC: HEVC — примерно 65% (на практике
+# экономия 30–40%, «вдвое» — рекламная цифра), AV1 — примерно половина. Для сравнения
+# размеров раздач с разными кодеками. AV1 в рекомендации не предпочитается: многие
+# приставки не умеют его аппаратно.
+CODEC_FACTOR = {HEVC: 0.65, AV1: 0.5}
 
 # Источник раздачи — по качеству он важнее кодека: пережатие не добавляет деталей.
 # Порядок проверки (не качества!) важен: «BDRemux» — Remux, «WEB-DLRip» — пережатый
@@ -79,7 +81,15 @@ def source_of(text: str) -> str:
 def avc_equivalent(size: float, codec: str) -> float:
     """Размер, пересчитанный на AVC: так сравниваются раздачи с разными кодеками.
     Кодек не указан — считаем AVC: русские трекеры не пишут его, когда он обычный."""
-    return size / HEVC_FACTOR if codec == HEVC else size
+    return size / CODEC_FACTOR.get(codec, 1.0)
+
+
+def codec_of(text: str) -> str:
+    """Кодек видео по названию раздачи или по ответу mkvmerge: HEVC, AVC, AV1; «» — не указан."""
+    c = _CODEC.search(text or "")
+    if not c:
+        return ""
+    return HEVC if c.group(1) else AVC if c.group(2) else AV1
 LOW_SEEDS = 5
 
 TV_TYPES = {"serial", "multserial", "docuserial", "anime", "tvshow"}
@@ -270,8 +280,8 @@ _EPISODES = re.compile(
     r"(?:(\d{1,4})\s*[-–]\s*)?(\d{1,4})\s*(?:сери[яий]\s*)?из\s*(\d{1,4})", re.I)
 _DV = re.compile(r"dolby\s*vision|\bdovi\b|\bdv\b", re.I)
 _HDR = re.compile(r"\bhdr(?:10\+?)?\b", re.I)
-# HEVC (x265) при том же качестве примерно вдвое мельче AVC (x264).
-_CODEC = re.compile(r"\b(hevc|h\.?265|x\.?265)\b|\b(avc|h\.?264|x\.?264)\b", re.I)
+# Кодек видео: HEVC (x265), AVC (x264), AV1 — см. CODEC_FACTOR.
+_CODEC = re.compile(r"\b(hevc|h\.?265|x\.?265)\b|\b(avc|h\.?264|x\.?264)\b|\b(av1)\b", re.I)
 _QUALITY = re.compile(r"\b(2160|1080|720|480)[pi]\b|\b(4k|uhd)\b", re.I)
 _SEASON_RANGE = re.compile(r"(?:сезон[ыа]?|seasons?)\s*[:.]?\s*(\d{1,2})\s*[-–]\s*(\d{1,2})"
                            r"|\[?s(\d{1,2})\s*[-–]\s*s?(\d{1,2})\]?", re.I)
@@ -323,8 +333,7 @@ def parse_title(text: str) -> dict:
     q = _QUALITY.search(text or "")
     if q:
         out["quality"] = int(q.group(1)) if q.group(1) else 2160
-    c = _CODEC.search(text or "")
-    out["codec"] = (HEVC if c.group(1) else AVC) if c else ""
+    out["codec"] = codec_of(text)
     out["source"] = source_of(text)
     dv = bool(_DV.search(text or ""))
     hdr = bool(_HDR.search(text or ""))
@@ -725,8 +734,8 @@ def _why(r: Release, prefs: Prefs) -> str:
     parts = [f"{r.quality}p" if r.quality > 480 else ("SD" if r.quality else "качество ?")]
     if r.source:
         parts[0] += f" {r.source}"
-    if r.codec == HEVC:
-        parts[0] += " HEVC"
+    if r.codec in (HEVC, AV1):
+        parts[0] += f" {r.codec}"
     if r.dv:
         parts.append("Dolby Vision")
     elif r.hdr:
@@ -839,8 +848,7 @@ def library_version(kind: str, folder: str, extras: str = "Extras", probe: bool 
         sample = max(videos, key=scan.size_of)
         width, duration, codec = core.video_info(sample)
         owned.quality = quality_of_width(width)
-        c = _CODEC.search(codec)
-        owned.codec = (HEVC if c.group(1) else AVC) if c else codec.split("/")[0]
+        owned.codec = codec_of(codec) or codec.split("/")[0]
         # Источник — по имени файла в раздаче, которое сохранено в .nfo (его пишут и
         # эта программа, и tinyMediaManager); у tmm есть ещё тег <source>.
         hint = next((p for p in (sample.with_suffix(".nfo"), root / "movie.nfo") if p.is_file()), None)
