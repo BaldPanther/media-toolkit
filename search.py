@@ -241,6 +241,20 @@ _LATIN = re.compile(r"[a-z]", re.I)
 _RUS_TAG = re.compile(r"\brus\b", re.I)
 
 
+_TOPIC = re.compile(r"[?&](?:t|id)=(\d+)|/torrent/(\d+)")
+
+
+def page_key(url: str) -> str:
+    """Страница раздачи на трекере → «трекер:номер темы». У rutor в адресе ещё и
+    название («/torrent/959050/…-01x01-22-iz-24»), оно меняется с каждой новой
+    серией, а rutracker отдаётся то с .org, то с .net — тема при этом та же."""
+    host = (urllib.parse.urlparse(url).hostname or "").removeprefix("www.")
+    m = _TOPIC.search(url)
+    if not host or not m:
+        return url
+    return f"{host.split('.')[0]}:{m.group(1) or m.group(2)}"
+
+
 def infohash(magnet: str) -> str:
     """Хеш из magnet — всегда 40 hex-знаков, как у qBittorrent (бывает и base32)."""
     m = _BTIH.search(magnet or "")

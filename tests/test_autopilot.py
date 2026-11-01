@@ -478,3 +478,14 @@ def test_update_without_common_files_downloads_whole(env):
     ap.tick()
     assert ap.items["h2"].replaces == "" and ("start", "h2") in fake.events
     assert ("remove", "h1") not in fake.events
+
+
+def test_new_version_found_by_topic_even_if_rutor_slug_changed(env):
+    tv, fake, _ = env
+    _add(tv, fake)
+    ap = autopilot.Autopilot()
+    ap.expect("h1", library.TV, 1, "Show [01x01-22 из 24]",
+              pages=["http://rutor.info/torrent/959050/show-01x01-22-iz-24"])
+    ap.tick()
+    old = ap.replaced_by(["http://rutor.info/torrent/959050/show-01x01-23-iz-24"], "h2")
+    assert old is not None and old.hash == "h1"

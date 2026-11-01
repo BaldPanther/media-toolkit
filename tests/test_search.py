@@ -382,3 +382,13 @@ def test_ukrainian_release_is_not_russian():
     title = _title()
     search.rank([ukr], title, search.Prefs())
     assert "украинская" in ukr.notes
+
+
+def test_page_key_same_topic():
+    a = "http://rutor.info/torrent/959050/monolog-farmacevta_kusuriya-no-hitorigoto-01x01-22-iz-24"
+    b = "http://rutor.info/torrent/959050/monolog-farmacevta_kusuriya-no-hitorigoto-01x01-23-iz-24"
+    assert search.page_key(a) == search.page_key(b) == "rutor:959050"
+    assert (search.page_key("https://rutracker.org/forum/viewtopic.php?t=6426359")
+            == search.page_key("https://rutracker.net/forum/viewtopic.php?t=6426359"))
+    assert search.page_key("https://kinozal.guru/details.php?id=2155818") == "kinozal:2155818"
+    assert search.page_key("https://torrent.by/111210/Monolog") == "https://torrent.by/111210/Monolog"

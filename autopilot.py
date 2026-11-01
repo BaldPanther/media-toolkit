@@ -294,12 +294,13 @@ class Autopilot:
 
     def replaced_by(self, pages, new_hash: str) -> Item | None:
         """Раздача с той же страницы трекера, что ещё в qBittorrent, — старая версия."""
-        pages = {p for p in pages if p}
+        pages = {search.page_key(p) for p in pages if p}
         if not pages:
             return None
         with self._lock:
             return next((i for i in self.items.values()
-                         if i.hash != new_hash and set(i.pages) & pages and not i.replaces
+                         if i.hash != new_hash and {search.page_key(p) for p in i.pages} & pages
+                         and not i.replaces
                          and i.status != SKIP and i.seen >= self.last_check - 1), None)
 
     def add(self, magnet: str, torrent_hash: str, kind: str, tmdb_id: int, name: str,
