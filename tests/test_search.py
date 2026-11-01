@@ -546,3 +546,16 @@ def test_dub_matches_any_studio():
     assert search.has_voice(rel("Фильм", ["Дубляж", "AniLibria"]), "Дубляж")
     assert not search.has_voice(rel("Фильм / ЛМ (AniLibria) / WEB-DL"), "Дубляж")
     assert not search.has_voice(rel("Film (2026) WEB-DL | L, P2 |"), "Дубляж")
+
+
+def test_any_russian_voice_not_subtitles():
+    def rel(title, voices=()):
+        return search.Release("v" * 40, title, "m", voices=list(voices))
+    rus = "Любая русская"
+    assert search.has_voice(rel("Фильм / 2026 / ЛМ (Dream Cast) / WEB-DL"), rus)
+    assert search.has_voice(rel("Film (2026) WEB-DL 1080p | L1 |"), rus)
+    assert search.has_voice(rel("Фильм [2026, BDRip] MVO + Sub"), rus)
+    assert search.has_voice(rel("Фильм [RUS(int), JAP+Sub]"), rus)
+    assert search.has_voice(rel("Фильм", ["AniLibria"]), rus)
+    assert not search.has_voice(rel("Фильм / Film [2026, WEB-DL] JAP + Sub Rus"), rus)
+    assert not search.has_voice(rel("Фильм / 2026 / СТ / WEB-DL (1080p)"), rus)

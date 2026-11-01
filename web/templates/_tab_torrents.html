@@ -245,7 +245,7 @@
                               @change="watchFilter(w.id, { voice: $event.target.value })">
                         <option value="" :selected="!w.voice">любая озвучка</option>
                         <template x-for="v in w.voices" :key="v">
-                          <option :value="v" x-text="v" :selected="v === w.voice"></option>
+                          <option :value="v" x-text="voiceLabel(v)" :selected="v === w.voice"></option>
                         </template>
                       </select>
                       <select class="input" style="width: 190px"

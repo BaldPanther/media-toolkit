@@ -25,7 +25,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import autopilot
 import library
@@ -282,9 +282,10 @@ class Watcher:
         w.status = f"сезон {number}: есть полные раздачи — можно качать"
         # Число серий — в ключе: сезон аниме выходит частями («ТВ-3, часть 2» через
         # полгода), и о дополненном сезоне надо сказать заново.
-        self._event(w, f"season:{number}:{s.episodes}",
+        key, voice = self._voice_event(w)
+        self._event(w, f"season:{number}:{s.episodes}{key}",
                     f"🎬 <b>{telegram.esc(w.title)}</b>: сезон {number} вышел целиком, "
-                    f"раздачи со всеми сериями есть", self._buttons(w))
+                    f"раздачи со всеми сериями есть{voice}", self._buttons(w))
 
     def _check_episode(self, w: Watch, title, have, min_size: int = 0) -> None:
         number, episode = title.last_aired
@@ -305,9 +306,10 @@ class Watcher:
             return
         top = w.offer[0]
         w.status = f"сезон {number}: {where} уже {top['episodes']} сер., у вас {have.get(number, 0)}"
-        self._event(w, f"episode:{number}:{top['episodes']}",
+        key, voice = self._voice_event(w)
+        self._event(w, f"episode:{number}:{top['episodes']}{key}",
                     f"🆕 <b>{telegram.esc(w.title)}</b>: сезон {number}, {where} уже "
-                    f"{top['episodes']} сер. (у вас {have.get(number, 0)})", self._buttons(w))
+                    f"{top['episodes']} сер. (у вас {have.get(number, 0)}){voice}", self._buttons(w))
 
     def _check_movie(self, w: Watch, title, owned: bool, min_size: int = 0) -> None:
         if owned and not (w.quality or w.voice or w.pin or w.bigger):
@@ -320,9 +322,23 @@ class Watcher:
             w.status = f"жду: {wanted} — пока нет" if wanted else "раздач в хорошем качестве пока нет"
             return
         w.status = "есть раздачи — можно качать" + self._wanted(w)
-        self._event(w, f"movie:{w.offer[0]['hash']}",
+        key, voice = self._voice_event(w)
+        # «Любая русская» — два сообщения: русская озвучка появилась, потом дубляж; иначе —
+        # о каждой новой лучшей раздаче.
+        event = (f"movie:{'dub' if key else 'rus'}" if w.voice == search.RUS_VOICE
+                 else f"movie:{w.offer[0]['hash']}")
+        self._event(w, event,
                     f"🎬 <b>{telegram.esc(w.title)}</b>: появились раздачи"
-                    f"{telegram.esc(self._wanted(w))}", self._buttons(w))
+                    f"{voice or telegram.esc(self._wanted(w))}", self._buttons(w))
+
+    def _voice_event(self, w: Watch) -> tuple[str, str]:
+        """«Любая русская»: (хвост ключа события, хвост сообщения). Сначала сообщаем о
+        любой русской озвучке, а когда выйдет дубляж — ещё раз: ключ у него свой."""
+        if w.voice != search.RUS_VOICE or not w.offer:
+            return "", ""
+        if w.offer[0].get("dub"):
+            return ":dub", " — с дубляжом"
+        return "", " — с русской озвучкой (дубляжа пока нет)"
 
     def _wanted(self, w: Watch, bare: bool = False) -> str:
         """Условия словами: «4K · Дубляж», «ваша раздача». bare=False — « (…)» для хвоста."""
@@ -367,11 +383,14 @@ class Watcher:
         present = self.autopilot.present() if self.autopilot is not None else set()
         self.only_in_qbit = bool(fit) and all(r.hash in present for r in fit)
         fit = [r for r in fit if r.hash not in present]
+        if w.voice == search.RUS_VOICE:
+            # «Любая русская»: годится любая озвучка, но дубляж — первым.
+            prefs = replace(prefs, voices=[search.DUB] + prefs.voices)
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,
                     "page": r.trackers[0][1] if r.trackers else "", "size": r.size,
-                    "pages": pages_of(r)}
+                    "pages": pages_of(r), "dub": search.has_voice(r, search.DUB)}
                    for r in ranked[:OFFER]]
         w.offer_season = seasons[0] if seasons else 0
         return bool(w.offer)

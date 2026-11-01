@@ -300,3 +300,35 @@ def test_watch_dub_condition_any_studio(env):
     w.set_filter(item.id, voice="Дубляж")
     w.tick(now=10 ** 9)
     assert [o["hash"] for o in item.offer] == ["d" * 40]
+
+
+def test_any_russian_then_dub_two_messages(env, monkeypatch):
+    state, w, bot, _ = env
+    monkeypatch.setattr(search, "in_library", lambda title, roots: ("", {}))
+    state["title"] = _title(kind=library.MOVIE, seasons=0)
+    subs = _rel("s", [], seasons=(), quality=1080, year=2024, seeds=50)
+    subs.title, subs.types = "Фильм / JAP + Sub Rus", ["movie"]
+    state["releases"] = [subs]
+    item = w.add(library.MOVIE, 5, "Фильм")
+    w.set_filter(item.id, voice="Любая русская")
+    w.tick(now=10 ** 9)
+    assert item.offer == [] and bot.sent == []              # одни субтитры — не озвучка
+    amateur = _rel("a", [], seasons=(), quality=1080, year=2024, seeds=5)
+    amateur.title, amateur.types = "Фильм / ЛМ (Dream Cast)", ["movie"]
+    state["releases"].append(amateur)
+    w.check_now()
+    w.tick(now=10 ** 9 + 1)
+    assert len(bot.sent) == 1 and "дубляжа пока нет" in bot.sent[0][0]
+    other = _rel("o", [], seasons=(), quality=1080, year=2024, seeds=9)
+    other.title, other.types = "Фильм / ЛО (Кто-то)", ["movie"]
+    state["releases"].append(other)
+    w.check_now()
+    w.tick(now=10 ** 9 + 2)
+    assert len(bot.sent) == 1                                # ещё любительская — молчим
+    dub = _rel("d", [], seasons=(), quality=1080, year=2024, seeds=1)
+    dub.title, dub.types = "Фильм / ДБ (Мосфильм-Мастер)", ["movie"]
+    state["releases"].append(dub)
+    w.check_now()
+    w.tick(now=10 ** 9 + 3)
+    assert len(bot.sent) == 2 and "с дубляжом" in bot.sent[1][0]
+    assert item.offer[0]["hash"] == "d" * 40                 # дубляж — первым

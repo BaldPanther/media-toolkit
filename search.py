@@ -652,10 +652,22 @@ DUB = "Дубляж"
 _DUB = re.compile(r"дубляж|дублир|\bдб\b|\bdub\b|\|\s*(?:[a-z]\s*,\s*)*d(?:\s*,\s*[a-z])*\s*\|", re.I)
 
 
+RUS_VOICE = "Любая русская"
+# Русский звук, а не только субтитры — для редких фильмов, где дубляжа может и не быть:
+# озвучки из jac.red, сокращения трекеров (ДБ, ПМ, ЛМ, АП, MVO, «RUS(int)»), коды rutor
+# «| D, P2, L1, A |». «Sub», «СТ» и «субтитры» — не озвучка.
+_RUS_VOICE = re.compile(
+    r"дубляж|дублир|многоголос|двухголос|одноголос|закадров|любительск|профессиональн|авторск"
+    r"|\b(?:дб|пм|пд|мво|дво|лм|лд|лп|ло|ао|ап|mvo|dvo|avo|vo|dub)\b|rus\s*\(int\)", re.I)
+_RUTOR_VOICES = re.compile(r"\|\s*(?:[DPLA]\d?\s*,\s*)*[DPLA]\d?\s*\|")
+
+
 def has_voice(rel: Release, voice: str) -> bool:
     have = " ".join(rel.voices + [rel.title]).casefold().replace("ё", "е")
     if voice == DUB:
         return bool(_DUB.search(have))
+    if voice == RUS_VOICE:
+        return bool(rel.voices or _RUS_VOICE.search(have) or _RUTOR_VOICES.search(rel.title))
     return voice.casefold().replace("ё", "е") in have
 
 

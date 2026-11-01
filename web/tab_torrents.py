@@ -240,9 +240,11 @@ class TorrentsTab:
                           if (m == watchlist.MOVIE) == (w.kind == library.MOVIE)],
                 "quality": w.quality, "voice": w.voice, "bigger": w.bigger,
                 "qualities": [[q, label] for q, label in watchlist.QUALITY_LABELS.items()],
-                # «Дубляж» — всегда первым: какая студия будет дублировать, заранее не знать.
-                "voices": [search.DUB] + sorted((set(w.voices) | set(prefs.voices)
-                                                 | ({w.voice} - {""})) - {search.DUB}),
+                # «Дубляж» и «Любая русская» — всегда первыми: какая студия будет
+                # дублировать (и будет ли), заранее не знать.
+                "voices": [search.DUB, search.RUS_VOICE] + sorted(
+                    (set(w.voices) | set(prefs.voices) | ({w.voice} - {""}))
+                    - {search.DUB, search.RUS_VOICE}),
                 "pin_title": w.pin_title,
                 "offer": [{"hash": o["hash"], "why": o["why"], "title": o["title"],
                            "page": o.get("page", ""), "update": self.watcher.is_update(o)}
