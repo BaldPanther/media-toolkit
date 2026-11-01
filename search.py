@@ -631,8 +631,10 @@ def check_alive(cards: list[Release]) -> None:
 
     Сиды с открытых трекеров заменяют число источника, если они больше, а у раздач
     одного rutor — всегда, если ответил его трекер opentor: это и есть число rutor,
-    сегодняшнее. Мёртвая — rutracker хеша не знает и сидов сейчас ни у кого нет:
-    тему перезалили."""
+    сегодняшнее. Мёртвая — раздача rutracker, а он её хеша не знает, и сидов сейчас ни
+    у кого нет: тему перезалили. «Знает» годится любой раздаче (kinozal и nnm-club
+    часто держат торренты rutracker), «не знает» — только его собственной: у kinozal
+    бывают и свои торренты."""
     by_seeds = sorted(cards, key=lambda c: -c.seeds)
     rutor = [c for c in by_seeds if any(tr[0] == "rutor" for tr in c.trackers)]
     closed = [c.hash for c in by_seeds
@@ -650,7 +652,7 @@ def check_alive(cards: list[Release]) -> None:
         if n is not None and (n > c.seeds or home):
             c.seeds, c.seeds_at, c.seeds_live = n, now, True
         c.alive = bool(n) or reg is True
-        c.dead = reg is False and not n
+        c.dead = reg is False and not n and any(tr[0] == "rutracker" for tr in c.trackers)
 
 
 def hashes(rel: Release) -> set[str]:

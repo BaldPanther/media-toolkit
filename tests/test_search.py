@@ -649,20 +649,23 @@ def test_check_alive(monkeypatch):
     popular = search.Release("4" * 40, "korsars", "m", seeds=152, seeds_at="2026-08-18",
                              trackers=[["korsars", "u"], ["rutracker", "u2"]])
     quiet = search.Release("5" * 40, "rutor", "m", seeds=40, trackers=[["rutor", "u"]])
+    own = search.Release("6" * 40, "свой торрент kinozal", "m", seeds=22, trackers=[["kinozal", "u"]])
     asked, scraped = [], []
     ot, op = search.swarm.RUTOR, "tracker.opentrackr.org"
 
     def scrape(hs):
         scraped.extend(hs)
         return {"1" * 40: {op: 0}, "2" * 40: {ot: 0, op: 1}, "3" * 40: {op: 0},
-                "4" * 40: {op: 50}, "5" * 40: {op: 0}}
+                "4" * 40: {op: 50}, "5" * 40: {op: 0}, "6" * 40: {op: 0}}
 
     monkeypatch.setattr(search.swarm, "scrape", scrape)
     monkeypatch.setattr(search.swarm, "registered",
-                        lambda hs: asked.extend(hs) or {"1" * 40: False, "3" * 40: True})
-    search.check_alive([dead, rutor, known, popular, quiet])
+                        lambda hs: asked.extend(hs) or {"1" * 40: False, "3" * 40: True,
+                                                        "6" * 40: False})
+    search.check_alive([dead, rutor, known, popular, quiet, own])
     assert scraped[:2] == ["2" * 40, "5" * 40]           # раздачи rutor — первыми (для opentor)
-    assert asked == ["1" * 40, "4" * 40, "3" * 40]       # закрытые, сидовые — первыми
+    assert asked == ["1" * 40, "4" * 40, "6" * 40, "3" * 40]   # закрытые, сидовые — первыми
+    assert not own.dead and not own.alive                # rutracker не обязан знать чужой торрент
     assert dead.dead and not dead.alive and dead.seeds == 845
     assert rutor.seeds == 1 and rutor.seeds_live and not rutor.dead   # opentor — его трекер
     assert quiet.seeds == 40 and not quiet.seeds_live    # opentor промолчал — число источника
