@@ -413,13 +413,13 @@ def test_pin_release_and_watch_conditions(web):
 
 def test_library_version_and_comparison(tmp_path, monkeypatch):
     import core
-    monkeypatch.setattr(core, "video_info", lambda path: (1920, 1000.0))
+    monkeypatch.setattr(core, "video_info", lambda path: (1920, 1000.0, "HEVC/H.265/MPEG-H"))
     movie = tmp_path / "Film (2021)"
     (movie / "Extras").mkdir(parents=True)
     (movie / "Film (2021).mkv").write_bytes(b"x" * 1_000_000)
     (movie / "Extras" / "Film (2021).mkv").write_bytes(b"x" * 5_000_000)   # отложенная — не в счёт
     owned = search.library_version(library.MOVIE, str(movie))
-    assert (owned.size, owned.quality, owned.bitrate) == (1_000_000, 1080, 0.0)   # 8 Мбит / 1000 с
+    assert (owned.size, owned.quality, owned.bitrate, owned.codec) == (1_000_000, 1080, 0.0, "HEVC")
     show = tmp_path / "Show"
     (show / "Season 01").mkdir(parents=True)
     (show / "Specials").mkdir()
@@ -432,3 +432,28 @@ def test_library_version_and_comparison(tmp_path, monkeypatch):
     pack = search.Release("p" * 40, "S01-02", "m", seasons=[1, 2], episodes=[1, 4, 10], size=1300)
     assert search.episode_count(pack, title) == 13          # 9 серий первого + 4 второго
     assert search.bitrate(3_000_000_000, 50) == 8.0
+
+
+def test_codec_parsed_and_hevc_preferred():
+    assert search.parse_title("Show [BDRip 1080p x265 FLAC]")["codec"] == "HEVC"
+    assert search.parse_title("Show WEBRip-HEVC 1080p")["codec"] == "HEVC"
+    assert search.parse_title("Show / H.264 / WEB-DL 1080p")["codec"] == "AVC"
+    assert search.parse_title("Show WEB-DL 1080p")["codec"] == ""
+    title = _title()
+    avc = search.Release("a" * 40, "S01 1080p x264", "m", quality=1080, seeds=50, codec="AVC",
+                         seasons=[1], episodes=[1, 9, 9], voices=["LostFilm"])
+    hevc = search.Release("h" * 40, "S01 1080p x265", "m", quality=1080, seeds=10, codec="HEVC",
+                          seasons=[1], episodes=[1, 9, 9], voices=["LostFilm"])
+    ranked = search.rank([avc, hevc], title, search.Prefs(), [1])
+    assert ranked[0] is hevc and hevc.why.startswith("1080p HEVC")
+
+
+def test_codec_filter_in_search(web):
+    st, c, _ = web
+    c.post("/api/torrents/search", json={"query": "Тёмная материя"})
+    assert st.jobs.wait()
+    c.post("/api/torrents/search/options", json={"quality": 1080, "codec": "HEVC"})
+    s = _search(c)
+    assert s["codec"] == "HEVC" and s["releases"] == []
+    c.post("/api/torrents/search/options", json={"codec": ""})
+    assert len(_search(c)["releases"]) == 2

@@ -11,7 +11,8 @@
   перечисляются, сиды берутся наибольшие (рой у неё общий).
 - Год: у сериала годится и год начала, и год выбранного сезона (±1) — трекеры
   пишут «(2026) Сезон 2» у сериала 2024-го.
-- Рекомендация: русские дорожки → все серии → качество → любимая озвучка → сиды.
+- Рекомендация: русские дорожки → все серии → качество → любимая озвучка → HEVC →
+  сиды.
   Мало сидов — не повод убирать из списка: «для коллекции подожду неделю».
 - Сезоны — как у трекеров (`numbering.py`): у аниме, которое TMDb держит одним
   сезоном со сквозной нумерацией, это деление из episode groups.
@@ -43,6 +44,8 @@ DEFAULT_SOURCES = [{"type": "jacred", "url": "https://jac.red"}]
 KNABEN = {"type": "knaben", "url": "https://api.knaben.org/v1"}
 QUALITIES = (2160, 1080, 720, 480)
 QUALITY_NAMES = {2160: "4K", 1080: "1080p", 720: "720p", 480: "SD"}
+HEVC, AVC = "HEVC", "AVC"
+CODECS = (HEVC, AVC)
 LOW_SEEDS = 5
 
 TV_TYPES = {"serial", "multserial", "docuserial", "anime", "tvshow"}
@@ -207,6 +210,7 @@ class Release:
     hdr: bool = False
     dv: bool = False
     dv_only: bool = False
+    codec: str = ""                     # HEVC / AVC — из названия; "" — не указан
     voices: list[str] = field(default_factory=list)
     seasons: list[int] = field(default_factory=list)
     year: int | None = None
@@ -231,6 +235,8 @@ _EPISODES = re.compile(
     r"(?:(\d{1,4})\s*[-–]\s*)?(\d{1,4})\s*(?:сери[яий]\s*)?из\s*(\d{1,4})", re.I)
 _DV = re.compile(r"dolby\s*vision|\bdovi\b|\bdv\b", re.I)
 _HDR = re.compile(r"\bhdr(?:10\+?)?\b", re.I)
+# HEVC (x265) при том же качестве примерно вдвое мельче AVC (x264).
+_CODEC = re.compile(r"\b(hevc|h\.?265|x\.?265)\b|\b(avc|h\.?264|x\.?264)\b", re.I)
 _QUALITY = re.compile(r"\b(2160|1080|720|480)[pi]\b|\b(4k|uhd)\b", re.I)
 _SEASON_RANGE = re.compile(r"(?:сезон[ыа]?|seasons?)\s*[:.]?\s*(\d{1,2})\s*[-–]\s*(\d{1,2})"
                            r"|\[?s(\d{1,2})\s*[-–]\s*s?(\d{1,2})\]?", re.I)
@@ -282,6 +288,8 @@ def parse_title(text: str) -> dict:
     q = _QUALITY.search(text or "")
     if q:
         out["quality"] = int(q.group(1)) if q.group(1) else 2160
+    c = _CODEC.search(text or "")
+    out["codec"] = (HEVC if c.group(1) else AVC) if c else ""
     dv = bool(_DV.search(text or ""))
     hdr = bool(_HDR.search(text or ""))
     out["dv"] = dv
@@ -332,7 +340,7 @@ def _from_jacred(item: dict) -> Release | None:
         updated=str(item.get("updateTime") or item.get("createTime") or ""),
         quality=quality,
         hdr=str(item.get("videotype") or "").lower() == "hdr" or parsed["hdr"],
-        dv=parsed["dv"], dv_only=parsed["dv_only"],
+        dv=parsed["dv"], dv_only=parsed["dv_only"], codec=parsed["codec"],
         voices=[str(v) for v in item.get("voices") or []],
         seasons=[int(s) for s in item.get("seasons") or [] if str(s).isdigit()]
         or parsed.get("seasons", []),
@@ -395,7 +403,7 @@ def _torznab(source: dict, title: Title) -> list[Release]:
                 seeds=int(attrs.get("seeders") or 0), peers=int(attrs.get("peers") or 0),
                 updated=it.findtext("pubDate") or "", quality=parsed.get("quality", 0),
                 hdr=parsed["hdr"], dv=parsed["dv"], dv_only=parsed["dv_only"],
-                seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
+                codec=parsed["codec"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
                 trackers=[[it.findtext("jackettindexer") or source.get("name") or "torznab",
                            it.findtext("comments") or ""]],
                 episodes=parsed.get("episodes", []), pack=parsed.get("pack", False)))
@@ -436,7 +444,7 @@ def _knaben(source: dict, title: Title) -> list[Release]:
                 peers=int(it.get("peers") or 0), updated=str(it.get("date") or ""),
                 quality=parsed.get("quality", 0),
                 hdr=parsed["hdr"], dv=parsed["dv"], dv_only=parsed["dv_only"],
-                seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
+                codec=parsed["codec"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
                 trackers=[[str(it.get("tracker") or "Knaben"), str(it.get("details") or "")]],
                 episodes=parsed.get("episodes", []), pack=parsed.get("pack", False)))
     return out
@@ -464,6 +472,7 @@ def group(items: list[Release]) -> list[Release]:
         if r.dv:
             g.dv_only = r.dv_only and (g.dv_only or not g.dv)
         g.hdr, g.dv = g.hdr or r.hdr, g.dv or r.dv
+        g.codec = g.codec or r.codec
         g.voices += [v for v in r.voices if v not in g.voices]
         g.seasons = sorted(set(g.seasons) | set(r.seasons))
         g.types += [t for t in r.types if t not in g.types]
@@ -643,9 +652,10 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
     под галки, любимая озвучка, сиды. Фильтры (`picture_ok`, качество) — до вызова."""
     for r in releases:
         full = complete(r, title, seasons)
+        # HEVC — сразу после любимой озвучки: при том же качестве он вдвое мельче.
         r.score = (0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
                    _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
-                   0 if r.seeds >= 1 else 1, -r.seeds)
+                   0 if r.codec == HEVC else 1, 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
         if not russian(r):
             r.notes.append("украинская" if _UKRAINIAN.search(r.title) else "английская")
@@ -674,6 +684,8 @@ def _ranges(nums) -> str:
 
 def _why(r: Release, prefs: Prefs) -> str:
     parts = [f"{r.quality}p" if r.quality > 480 else ("SD" if r.quality else "качество ?")]
+    if r.codec == HEVC:
+        parts[0] += " HEVC"
     if r.dv:
         parts.append("Dolby Vision")
     elif r.hdr:
@@ -749,6 +761,7 @@ class Owned:
     episodes: int = 1
     quality: int = 0                    # 2160 / 1080 / 720 / 480; 0 — не прочитать
     bitrate: float = 0.0                # Мбит/с, вместе со звуком
+    codec: str = ""                     # HEVC / AVC / прочее, как у раздач
 
     @property
     def per_episode(self) -> int:
@@ -782,8 +795,10 @@ def library_version(kind: str, folder: str, extras: str = "Extras", probe: bool 
         owned = Owned(max(scan.size_of(v) for v in videos))
     if probe:
         sample = max(videos, key=scan.size_of)
-        width, duration = core.video_info(sample)
+        width, duration, codec = core.video_info(sample)
         owned.quality = quality_of_width(width)
+        c = _CODEC.search(codec)
+        owned.codec = (HEVC if c.group(1) else AVC) if c else codec.split("/")[0]
         if duration:
             owned.bitrate = round(scan.size_of(sample) * 8 / duration / 1e6, 1)
     return owned

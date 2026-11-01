@@ -52,6 +52,7 @@ class TorrentsTab:
         self.with_english = False      # Knaben уже спрошен для этого тайтла
         self.in_qbit: set[str] = set() # хеши раздач в qBittorrent на момент поиска
         self.voice = ""
+        self.codec = ""                # фильтр кодека: HEVC / AVC / "" — все
         self.search_status = ""
 
     def start_background(self) -> None:
@@ -92,7 +93,8 @@ class TorrentsTab:
     def shown(self, prefs: search.Prefs | None = None) -> list[search.Release]:
         prefs = prefs or search.load_prefs()
         fit = [r for r in self.fitting(prefs) if search.quality_of(r) == prefs.quality
-               and (not self.voice or search.has_voice(r, self.voice))]
+               and (not self.voice or search.has_voice(r, self.voice))
+               and (not self.codec or r.codec == self.codec)]
         return search.rank(fit, self.title, prefs, self.seasons) if fit else []
 
     def refresh_in_qbit(self) -> None:
@@ -147,6 +149,10 @@ class TorrentsTab:
             voices.append(self.voice)
         per_quality = collections.Counter(
             search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
+        # Число раздач на кнопках кодека — в выбранном качестве и с выбранной озвучкой.
+        per_codec = collections.Counter(
+            r.codec for r in fit if search.quality_of(r) == prefs.quality
+            and (not self.voice or search.has_voice(r, self.voice)))
         ap = self.autopilot
         in_qbit = self.in_qbit | {h for h, i in ap.items.items() if i.seen >= ap.last_check - 1}
         watching = self.watcher.find(title.kind, title.tmdb_id) if title else None
@@ -176,6 +182,8 @@ class TorrentsTab:
             "qualities": [[q, per_quality.get(q, 0)] for q in search.QUALITIES],
             "voices": voices,
             "voice": self.voice,
+            "codecs": [[c, per_codec.get(c, 0)] for c in search.CODECS],
+            "codec": self.codec,
             "any_year": self.any_year,
             "prefs": {"quality": prefs.quality, "hdr": prefs.hdr, "dv": prefs.dv,
                       "english": prefs.english, "voices": prefs.voices},
@@ -233,7 +241,8 @@ def owned_text(owned: search.Owned | None, kind: str) -> str:
         return ""
     parts = [f"{owned.episodes} сер."] if kind == library.TV else []
     if owned.quality:
-        parts.append(search.QUALITY_NAMES.get(owned.quality, f"{owned.quality}p"))
+        parts.append(search.QUALITY_NAMES.get(owned.quality, f"{owned.quality}p")
+                     + (f" {owned.codec}" if owned.codec else ""))
     parts.append(autopilot.gb(owned.size) + (f" (≈ {autopilot.gb(owned.per_episode)} на серию)"
                                              if kind == library.TV and owned.episodes > 1 else ""))
     if owned.bitrate:
@@ -263,7 +272,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     t.library_dir, t.have = search.in_library(title, roots)
     t.numbering_note = search.numbering_note(title, t.library_dir)
     t.owned_version = search.library_version(hit.kind, t.library_dir, meta.extras_folder)
-    t.title, t.releases, t.voice, t.any_year = title, [], "", False
+    t.title, t.releases, t.voice, t.codec, t.any_year = title, [], "", "", False
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
     t.with_english = search.load_prefs().english
@@ -320,7 +329,7 @@ def search_select():
 
 @bp.post("/api/torrents/search/options")
 def search_options():
-    """Фильтры на лету: сезоны, год, озвучка, качество, HDR, Dolby Vision, английские."""
+    """Фильтры на лету: сезоны, год, озвучка, кодек, качество, HDR, Dolby Vision, английские."""
     t = tab()
     data = replies.body()
     if isinstance(data.get("seasons"), list) and t.title is not None:
@@ -330,6 +339,8 @@ def search_options():
         t.any_year = bool(data["any_year"])
     if "voice" in data:
         t.voice = str(data["voice"] or "")
+    if "codec" in data:
+        t.codec = data["codec"] if data["codec"] in search.CODECS else ""
     prefs = search.load_prefs()
     if data.get("quality") in search.QUALITIES:
         prefs.quality = int(data["quality"])

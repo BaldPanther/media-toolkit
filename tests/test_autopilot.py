@@ -516,8 +516,31 @@ def test_new_movie_version_moves_old_file_to_extras(env, monkeypatch):
     ap.tick()
     assert ap.items["uhd"].status == autopilot.DONE, ap.items["uhd"].error
     assert (old_dir / "Extras" / "Film (2021).mkv").read_bytes() == b"1080p"
-    # .edl и субтитры — при фильме; свои субтитры раздачи с тем же именем не качаются.
+    # .edl — при фильме; в раздаче свои субтитры — они встают под имя фильма, а прежние
+    # (к старой версии) — в Extras.
     assert (old_dir / "Film (2021).edl").exists()
-    assert (old_dir / "Film (2021).ru.srt").read_text(encoding="utf-8") == "мои"
-    assert fake.priorities == [("uhd", [1], 0)]
-    assert [new for _, new in fake.renamed] == ["Film (2021)/Film (2021).mkv"]
+    assert (old_dir / "Extras" / "Film (2021).ru.srt").read_text(encoding="utf-8") == "мои"
+    assert sorted(new for _, new in fake.renamed) == ["Film (2021)/Film (2021).mkv",
+                                                      "Film (2021)/Film (2021).ru.srt"]
+
+
+def test_new_movie_version_without_subs_keeps_old_subs(env, monkeypatch):
+    tv, fake, hits = env
+    movies = tv.parent / "movies"
+    movies.mkdir()
+    metaconf.save_settings(metaconf.Settings(tmdb_key="k", tv_roots=[str(tv)],
+                                             movies_roots=[str(movies)]))
+    fake.save, fake.remote_save, fake.category = movies, str(movies), "movies"
+    info = metadata.MediaInfo(kind=library.MOVIE, tmdb_id=9, title="Film", title_en="Film",
+                              original_title="Film", original_language="en", year=2021)
+    monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    old_dir = movies / "Film (2021)"
+    old_dir.mkdir()
+    (old_dir / "Film (2021).mkv").write_bytes(b"1080p")
+    (old_dir / "Film (2021).ru.srt").write_text("мои", encoding="utf-8")
+    fake.add("uhd", {"Film.2021.2160p/Film.2021.2160p.mkv": 100})
+    ap = autopilot.Autopilot()
+    ap.expect("uhd", library.MOVIE, 9, "Film 2160p")
+    ap.tick()
+    assert ap.items["uhd"].status == autopilot.DONE, ap.items["uhd"].error
+    assert (old_dir / "Film (2021).ru.srt").exists()           # своих нет — прежние остаются
