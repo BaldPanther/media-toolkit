@@ -53,6 +53,9 @@ INTERVAL = 30            # секунд между проверками
 # Сколько помнить раздачу, которой в qBittorrent уже нет: в списке её не видно
 # сразу, а сутки — на случай, если qBittorrent при запуске отдал список не целиком.
 KEEP_GONE = 86400
+# Сколько ждать список файлов у раздачи, добавленной программой: дольше — у ссылки
+# почти нет живых сидов (бывает у устаревшего magnet), берём двойника.
+STUCK = 300
 
 NEW, ASK, DONE, ERROR, SKIP = "new", "ask", "done", "error", "skip"
 STATUS_LABELS = {NEW: "в очереди", ASK: "ждёт выбора", DONE: "разложено",
@@ -76,6 +79,8 @@ class Item:
     seasons: list = field(default_factory=list)  # сезоны раздачи, как их пишет трекер
     hold: bool = False             # добавлена программой на паузе — запустить после раскладки
     warned: bool = False           # о паузе из-за ошибки уже предупредили
+    twins: list = field(default_factory=list)    # та же раздача по другим ссылкам (из поиска)
+    waiting_since: float = 0.0     # когда добавлена программой — ждём список файлов
     progress: float = 0.0
     seq_set: bool = False          # галки последовательной загрузки уже ставили
     done_notified: bool = False    # докачку уже отметили (журнал, скан Kodi)
@@ -278,17 +283,20 @@ class Autopilot:
         self._wake.set()
 
     def expect(self, torrent_hash: str, kind: str, tmdb_id: int, name: str,
-               wanted=(), pages=(), replaces: str = "", seasons=(), hold: bool = False) -> None:
+               wanted=(), pages=(), replaces: str = "", seasons=(), hold: bool = False,
+               twins=()) -> None:
         """Раздача добавлена из поиска: тайтл уже известен, опознавать не надо.
         `wanted` — какие сезоны нужны из сборника; файлам остальных — «не загружать».
         `pages` — её страницы на трекерах: по ним узнаётся следующая версия.
-        `seasons` — сезоны раздачи по трекеру, `hold` — она ждёт раскладки на паузе."""
+        `seasons` — сезоны раздачи по трекеру, `hold` — она ждёт раскладки на паузе.
+        `twins` — та же раздача по другим ссылкам ([{hash, magnet, title, pages, seasons}])."""
+        now = time.time()
         with self._lock:
             self.items[torrent_hash] = Item(torrent_hash, name, kind, tmdb_id=tmdb_id,
                                             wanted=sorted(set(wanted)),
                                             seasons=sorted(set(seasons)), hold=hold,
                                             pages=[p for p in pages if p], replaces=replaces,
-                                            seen=time.time())
+                                            twins=list(twins), waiting_since=now, seen=now)
         self.save()
         self._wake.set()
 
@@ -309,7 +317,7 @@ class Autopilot:
                          and i.status != SKIP and i.seen >= self.last_check - 1), None)
 
     def add(self, magnet: str, torrent_hash: str, kind: str, tmdb_id: int, name: str,
-            wanted=(), pages=(), seasons=()) -> str:
+            wanted=(), pages=(), seasons=(), twins=()) -> str:
         """Раздачу — в qBittorrent с категорией сериалов или фильмов, дальше её ведёт
         автоматика. Новая версия уже скачиваемой раздачи — обновление. → что сказать.
 
@@ -324,7 +332,7 @@ class Autopilot:
         qbit.connect(qs).add(magnet, category=category, stop_on_metadata=qs.auto)
         self.expect(torrent_hash, kind, tmdb_id, name, wanted, pages,
                     replaces=old.hash if old is not None else "", seasons=seasons,
-                    hold=qs.auto and old is None)
+                    hold=qs.auto and old is None, twins=twins)
         if old is None:
             return "Скачиваю"
         self.log(f"Автоматика: «{name}» — новая версия «{old.name}», обновляю")
@@ -392,6 +400,9 @@ class Autopilot:
                     and pmap.to_local(str(info.get("save_path") or "")) is None):
                 self._fail(item, "папка раздачи вне медиатеки программы — проверьте категорию "
                                  "в qBittorrent")
+            elif (item.hold and item.status == NEW and item.waiting_since
+                  and now - item.waiting_since > STUCK):
+                self._stuck(item, client)
             return
         if not is_video_torrent(torrent):
             item.status = SKIP
@@ -411,6 +422,39 @@ class Autopilot:
             item.done_notified = True
             self.log(f"Автоматика: скачано — {item.title}")
             self._kodi(item.root, roots)
+
+    def _stuck(self, item: Item, client) -> None:
+        """Раздача из программы STUCK секунд без списка файлов: у ссылки почти нет живых
+        сидов — так бывает с устаревшим magnet (раздачу перезалили, а источник знает
+        прежний). Есть двойник — та же раздача по другой ссылке: берём его, а застрявшую
+        убираем из qBittorrent (файлов у неё нет, терять нечего). Нет — предупреждаем раз."""
+        if not item.twins:
+            if not item.warned:
+                item.warned = True
+                text = (f"«{item.name}» уже {STUCK // 60} мин без списка файлов: у этой ссылки "
+                        f"почти нет живых сидов. Возьмите другую раздачу или скачайте .torrent "
+                        f"со страницы трекера")
+                item.error = text
+                self.log(f"⚠ Автоматика: {text}")
+                self.notify(f"⏳ {text}.")
+            return
+        twin = item.twins[0]
+        qs = qbit.load_settings()
+        category = qs.tv_category if item.kind == library.TV else qs.movies_category
+        try:
+            client.add(twin["magnet"], category=category, stop_on_metadata=True)
+        except qbit.QbitError as e:
+            self.log(f"⚠ Автоматика: «{item.name}» — двойник не добавился: {e}")
+            item.twins = item.twins[1:]
+            return
+        client.remove_keep_files(item.hash)
+        with self._lock:
+            self.items.pop(item.hash, None)
+        self.expect(twin["hash"], item.kind, item.tmdb_id, twin.get("title") or item.name,
+                    item.wanted, twin.get("pages") or (), seasons=twin.get("seasons") or item.seasons,
+                    hold=True, twins=item.twins[1:])
+        self.log(f"Автоматика: «{item.name}» — {STUCK // 60} мин без списка файлов, беру ту же "
+                 f"раздачу по другой ссылке: «{twin.get('title') or twin['hash']}»")
 
     def _settle(self, item: Item, client) -> None:
         """Добавленная программой раздача стоит на паузе, пока её не разложат.

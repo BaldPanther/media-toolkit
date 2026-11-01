@@ -362,7 +362,8 @@ class Watcher:
         прочих условий: её выбрали руками, даже если сейчас у неё нет сидов."""
         prefs = search.load_prefs()
         # Устаревший magnet (search.group) не предлагаем: скачалась бы прежняя версия.
-        fit = [r for r in search.find(title, log=self.log)
+        found = search.find(title, log=self.log)
+        fit = [r for r in found
                if search.fits(r, title, seasons) and not r.stale
                and (title.kind != library.TV or r.seasons or len(title.seasons) == 1)
                and (not full or search.complete(r, title, seasons))
@@ -390,7 +391,11 @@ class Watcher:
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,
                     "page": r.trackers[0][1] if r.trackers else "", "size": r.size,
-                    "pages": pages_of(r), "dub": search.has_voice(r, search.DUB)}
+                    "pages": pages_of(r), "dub": search.has_voice(r, search.DUB),
+                    # Та же раздача по другим ссылкам: не получит список файлов — возьмём их.
+                    "twins": [{"hash": t.hash, "magnet": t.magnet, "title": t.title,
+                               "pages": pages_of(t), "seasons": t.seasons}
+                              for t in search.twins(r, found)]}
                    for r in ranked[:OFFER]]
         w.offer_season = seasons[0] if seasons else 0
         return bool(w.offer)
@@ -437,7 +442,8 @@ class Watcher:
                     f"{autopilot.gb(free)}. Освободите место и нажмите ещё раз.")
         try:
             said = self.autopilot.add(offer["magnet"], offer["hash"], w.kind, w.tmdb_id,
-                                      offer["title"], wanted, pages, offer["seasons"])
+                                      offer["title"], wanted, pages, offer["seasons"],
+                                      offer.get("twins") or ())
         except qbit.QbitError as e:
             return False, f"qBittorrent не взял раздачу: {e}"
         self.log(f"Слежение: в qBittorrent добавлено — {w.title}: {offer['title']}")

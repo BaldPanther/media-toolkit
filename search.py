@@ -496,6 +496,19 @@ def _knaben(source: dict, title: Title) -> list[Release]:
     return out
 
 
+TWIN_MIN_SIZE = 100 * 1024 ** 2
+
+
+def twins(rel: Release, releases) -> list[Release]:
+    """Та же раздача по другой ссылке: размер до байта тот же, хеш другой. Так бывает,
+    когда раздачу перезалили, а у источника остался прежний magnet, или трекер завёл
+    свой торрент на те же файлы. Случайно до байта не совпадает. Свежие записи — первыми."""
+    if rel.size < TWIN_MIN_SIZE:
+        return []
+    found = [r for r in releases if r.size == rel.size and r.hash != rel.hash and not r.stale]
+    return sorted(found, key=lambda r: r.updated, reverse=True)
+
+
 def _same_size(a: Release, b: Release) -> bool:
     """Трекеры пишут размер по-разному: одна и та же раздача — 32.01 ГБ на rutracker и
     31.67 на bitru. До 3% — тот же размер; прежняя версия обновлённой — заметно другой."""

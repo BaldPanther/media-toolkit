@@ -552,3 +552,33 @@ def test_original_filename_kept_in_episode_nfo(env):
     autopilot.Autopilot().tick()
     text = (tv / "Show (2026)" / "Season 01" / "Show - S01E01 - Ep 1.nfo").read_text(encoding="utf-8")
     assert "<original_filename>Show.S01E01.1080p.mkv</original_filename>" in text
+
+
+def test_stuck_magnet_replaced_by_twin(env):
+    tv, fake, _ = env
+    fake.add("magnet:?xt=urn:btih:old")                  # список файлов так и не пришёл
+    ap = autopilot.Autopilot()
+    twin = {"hash": "new", "magnet": "magnet:?xt=urn:btih:new", "title": "Show S01 (kinozal)",
+            "pages": ["https://kinozal.guru/details.php?id=1"], "seasons": [1]}
+    ap.expect("old", library.TV, 1, "Show S01", hold=True, twins=[twin])
+    ap.tick()
+    assert "old" in fake.names and len(fake.magnets) == 1   # ещё ждём
+    ap.items["old"].waiting_since -= autopilot.STUCK + 1
+    ap.tick()
+    assert ("remove", "old") in fake.events
+    assert fake.magnets[-1] == ("magnet:?xt=urn:btih:new", "tv", True)
+    new = ap.items["new"]
+    assert new.hold and new.tmdb_id == 1 and new.twins == [] and "old" not in ap.items
+
+
+def test_stuck_magnet_without_twin_warns_once(env):
+    tv, fake, _ = env
+    said = []
+    fake.add("magnet:?xt=urn:btih:old")
+    ap = autopilot.Autopilot(notify=lambda text: said.append(text) or True)
+    ap.expect("old", library.TV, 1, "Show S01", hold=True)
+    ap.items["old"].waiting_since -= autopilot.STUCK + 1
+    ap.tick()
+    ap.tick()
+    assert len(said) == 1 and "без списка файлов" in said[0]
+    assert "old" in fake.names                           # без двойника — не убираем

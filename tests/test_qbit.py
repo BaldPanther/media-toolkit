@@ -28,7 +28,13 @@ class FakeClient:
         self.events: list[tuple[str, str]] = []
         self.added_on: dict[str, int] = {}
 
-    def add(self, h: str, files: dict[str, int]) -> None:
+    def add(self, h: str, files: dict[str, int] | None = None, category: str = "",
+            stop_on_metadata: bool = False) -> None:
+        """Раздача с файлами (для теста) или, как у настоящего, по magnet — тогда
+        без списка файлов, пока не придут метаданные."""
+        if files is None:
+            self.magnets = getattr(self, "magnets", []) + [(h, category, stop_on_metadata)]
+            h, files = h.split("btih:")[1].split("&")[0], {}
         self.names[h] = list(files)
         self.sizes[h] = dict(files)
         self.added_on[h] = self.added_on.get(h, 0) + 1
@@ -36,6 +42,12 @@ class FakeClient:
     def torrents(self):
         out = []
         for h, names in self.names.items():
+            if not names:                   # метаданных ещё нет
+                out.append({"hash": h, "name": h, "category": self.category, "progress": 0,
+                            "seq_dl": False, "f_l_piece_prio": False,
+                            "save_path": self.remote_save, "content_path": self.remote_save,
+                            "state": "metaDL", "added_on": self.added_on.get(h, 1)})
+                continue
             root = names[0].split("/")[0]
             content = f"{self.remote_save}/{root}" if "/" in names[0] else f"{self.remote_save}/{names[0]}"
             out.append({"hash": h, "name": root, "category": self.category,

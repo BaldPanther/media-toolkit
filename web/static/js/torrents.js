@@ -122,6 +122,16 @@ document.addEventListener("alpine:init", () => {
     // Заметно крупнее вашей — скорее всего, качество лучше; заметно мельче — хуже.
     // Отношение — с поправкой на кодек (HEVC мельче при том же качестве).
     vsClass(ratio) { return ratio >= 1.5 ? "ok-text" : ratio <= 0.67 ? "warn-text" : "faint"; },
+    // Сиды источник знает на момент последнего обхода трекера: у старых тем — месячной
+    // давности. Свежие (до двух суток) — без даты.
+    seedsAge(r) {
+      const t = Date.parse(r.updated || "");
+      if (!t || Date.now() - t < 2 * 86400 * 1000) return "";
+      const d = new Date(t);
+      const opts = { day: "numeric", month: "short" };
+      if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+      return "на " + d.toLocaleDateString("ru-RU", opts);
+    },
     voiceLabel(v) {
       return { "Дубляж": "дубляж (любой студии)", "Любая русская": "любая русская (дубляж — первым)" }[v] || v;
     },

@@ -153,6 +153,9 @@
                   <span class="badge accent plain" x-show="r.update"
                         title="Та же страница трекера, что у раздачи в qBittorrent: докачаются только новые серии">новая версия вашей раздачи</span>
                   <span class="badge plain" x-show="r.in_library">уже в медиатеке</span>
+                  <span class="badge plain" x-show="r.twins && r.twins.length"
+                        title="Размер до байта тот же, хеш другой: раздачу перезалили или трекер завёл свой торрент. Если эта ссылка 5 минут не даст списка файлов, автоматика возьмёт двойника"
+                        x-text="'та же раздача, другая ссылка: ' + (r.twins || []).join(', ')"></span>
                   <span class="badge danger plain" x-show="s.free && r.size > s.free">не хватит места</span>
                   <template x-for="n in r.notes" :key="n"><span class="badge warn plain" x-text="n"></span></template>
                   <template x-for="tr in r.trackers" :key="tr[0] + tr[1]">
@@ -179,8 +182,10 @@
                 <div class="small" x-show="r.vs_library" :class="vsClass(r.vs_library)" x-text="vsText(r)"
                      :title="vsHint(r)"></div>
               </td>
-              <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
-                  x-text="r.seeds"></td>
+              <td class="num" :title="'Сиды — на момент, когда источник последний раз смотрел трекер: ' + (r.updated || '?')">
+                <div :class="{ 'warn-text': r.seeds < 5 }" x-text="r.seeds"></div>
+                <div class="small faint nowrap" x-show="seedsAge(r)" x-text="seedsAge(r)"></div>
+              </td>
               <td class="nowrap">
                 <button type="button" class="btn btn-sm" :class="{ 'btn-primary': (r.recommended || r.update) && !r.in_qbit }"
                         @click="download(r)" :disabled="!t.qbit || r.in_qbit || r.stale"

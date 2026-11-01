@@ -130,6 +130,8 @@ class TorrentsTab:
         d["update"] = (not d["in_qbit"]
                        and self.autopilot.replaced_by(pages_of(rel), rel.hash) is not None)
         d["in_library"] = self.owned(rel)
+        # Та же раздача по другой ссылке — трекеры двойников для пометки.
+        d["twins"] = sorted({tr[0] for t in search.twins(rel, self.releases) for tr in t.trackers})
         # Неполная раздача сериала — за ней можно следить («Следить»).
         d["partial"] = (self.title is not None and self.title.kind == library.TV
                         and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
@@ -405,7 +407,7 @@ def search_download():
                         f"Раздача — {autopilot.gb(need)}, свободно на диске — "
                         f"{autopilot.gb(free)}. Всё равно скачать?", yes="Скачать")
     said = _add(t, rel.magnet, rel.hash, kind, t.title.tmdb_id, rel.title, wanted, pages_of(rel),
-                rel.seasons)
+                rel.seasons, twins_of(rel, t.releases))
     label = library.title_with_year(t.title.title, t.title.year)
     t.st.log.add(f"Поиск: в qBittorrent добавлено — {label}: {rel.title}")
     return jsonify({"ok": True, "text": said})
@@ -415,15 +417,21 @@ def pages_of(rel: search.Release) -> list[str]:
     return [tr[1] for tr in rel.trackers if tr[1]]
 
 
+def twins_of(rel: search.Release, releases) -> list[dict]:
+    """Двойники раздачи — для автоматики: не получит список файлов по этой ссылке, возьмёт их."""
+    return [{"hash": t.hash, "magnet": t.magnet, "title": t.title, "pages": pages_of(t),
+             "seasons": t.seasons} for t in search.twins(rel, releases)]
+
+
 def _add(t: TorrentsTab, magnet: str, h: str, kind: str, tmdb_id: int, name: str,
-         wanted=(), pages=(), seasons=()) -> str:
+         wanted=(), pages=(), seasons=(), twins=()) -> str:
     """В qBittorrent через автоматику. → что сказать; автоматика выключена — Info."""
     qs = qbit.load_settings()
     if not qs.configured():
         raise UserError("qBittorrent не подключён",
                         "Впишите его адрес в «Настройках» → «qBittorrent».")
     try:
-        said = t.autopilot.add(magnet, h, kind, tmdb_id, name, wanted, pages, seasons)
+        said = t.autopilot.add(magnet, h, kind, tmdb_id, name, wanted, pages, seasons, twins)
     except qbit.QbitError as e:
         raise UserError("qBittorrent не взял раздачу",
                         f"{e}\n\nВозможно, она уже есть в qBittorrent.") from e
@@ -451,7 +459,7 @@ def add_link():
     rel = next((r for r in t.releases if url in pages_of(r)), None)
     if rel is not None and t.title is not None:
         said = _add(t, rel.magnet, rel.hash, t.title.kind, t.title.tmdb_id, rel.title, (),
-                    pages_of(rel), rel.seasons)
+                    pages_of(rel), rel.seasons, twins_of(rel, t.releases))
         t.st.log.add(f"Ссылка: в qBittorrent добавлено — {rel.title}")
         return jsonify({"ok": True, "text": said})
     h = search.infohash(url)

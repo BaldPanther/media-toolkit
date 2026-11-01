@@ -569,3 +569,12 @@ def test_same_hash_rounded_sizes_still_merged():
                        trackers=[["bitru", "https://bitru.org/details.php?id=581862"]])
     out = search.group([a, b])
     assert len(out) == 1 and not out[0].stale and len(out[0].trackers) == 2
+
+
+def test_twins_same_size_other_hash():
+    a = search.Release("05bb" * 10, "rutracker", "m", size=34_370_475_786, updated="2026-02-04")
+    b = search.Release("24e4" * 10, "kinozal", "m", size=34_370_475_786, updated="2026-07-22")
+    c = search.Release("cccc" * 10, "другая", "m", size=34_370_475_000)
+    small = search.Release("dddd" * 10, "сэмпл", "m", size=1000)
+    assert [t.hash for t in search.twins(a, [a, b, c, small])] == [b.hash]
+    assert search.twins(small, [small, search.Release("e" * 40, "x", "m", size=1000)]) == []
