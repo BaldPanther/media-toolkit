@@ -9,7 +9,8 @@
   (The Pirate Bay, 1337x, Nyaa) — английские раздачи, под галкой в поиске.
 - Одна и та же раздача с разных трекеров склеивается по infohash: трекеры
   перечисляются, сиды берутся наибольшие (рой у неё общий), трекеры из всех
-  magnet-ссылок — в одну. Те же файлы под другим хешем (двойник: размер до байта) —
+  magnet-ссылок — в одну. Те же файлы под другим хешем (двойник: тот же размер и то же
+  содержание — сезоны, серии, качество, озвучка) —
   в ту же карточку: ссылки на сайты списком, «Скачать» одна (`group`).
 - Живы ли ссылки — у самих трекеров (`swarm.py`): мёртвая (трекер хеша не знает,
   сидов нет) уходит вниз, а в карточке с двойниками главной становится живая.
@@ -587,10 +588,31 @@ def _absorb(g: Release, r: Release) -> None:
         g.title = r.title
 
 
+def _same_content(a: Release, b: Release) -> bool:
+    """Размер у jac.red — из надписи на странице трекера («3.90 GB»), до сотых гигабайта:
+    так он совпадает и у разных раздач (1-й сезон HDRip и одна серия 4-го — обе по 3.90).
+    Поэтому двойник — ещё и то же содержание: у сериала — те же сезоны (и серии, если
+    они названы), у раздачи без сезона — фильм того же года. Серии без сезона в
+    названии («Настоящий детектив (Паутина любви)» — русский сериал, по 0.50 ГБ каждая)
+    не склеиваются: что внутри, не понять. Качество — то же, озвучка — хоть одна общая,
+    если они известны у обеих."""
+    if a.quality and b.quality and a.quality != b.quality:
+        return False
+    va, vb = {v.casefold() for v in a.voices}, {v.casefold() for v in b.voices}
+    if va and vb and not va & vb:
+        return False
+    if a.seasons or b.seasons:
+        if set(a.seasons) != set(b.seasons):
+            return False
+        return not (a.episodes or b.episodes) or a.episodes[:2] == b.episodes[:2]
+    return (bool(a.year) and a.year == b.year
+            and not set(a.types + b.types) & (TV_TYPES - MOVIE_TYPES))
+
+
 def _merge_twins(cards: list[Release]) -> list[Release]:
-    """Двойники — те же файлы под другим хешем: размер до байта тот же. Так бывает,
-    когда раздачу перезалили, а у источника остался прежний magnet, или трекер завёл
-    свой торрент на те же файлы. Случайно до байта не совпадает.
+    """Двойники — те же файлы под другим хешем: тот же размер и то же содержание
+    (`_same_content`). Так бывает, когда раздачу перезалили, а у источника остался
+    прежний magnet, или трекер завёл свой торрент на те же файлы.
 
     Это разные толпы — сложить их сиды BitTorrent не умеет, — но раздача для вас одна:
     одна карточка, ссылки на все сайты, одна кнопка. Главная — живая и с сидами
@@ -612,19 +634,28 @@ def _merge_twins(cards: list[Release]) -> list[Release]:
         if not members or len(members) == 1:
             out.append(c)
             continue
-        members = sorted(members, key=lambda m: m.updated, reverse=True)
-        members.sort(key=lambda m: (m.stale, m.dead, not m.alive, -m.seeds))
-        head = members[0]
-        known = {head.hash} | {a["hash"] for a in head.alts}
-        for m in members[1:]:
-            _absorb(head, m)
-            if m.stale:
-                continue
-            for alt in [{"hash": m.hash, "magnet": m.magnet, "dead": m.dead}] + m.alts:
-                if alt["hash"] not in known:
-                    known.add(alt["hash"])
-                    head.alts.append(alt)
-        out.append(head)
+        # Один размер — ещё не одна раздача: делим по содержанию.
+        sets: list[list[Release]] = []
+        for m in members:
+            twins = next((t for t in sets if all(_same_content(m, x) for x in t)), None)
+            if twins is None:
+                sets.append([m])
+            else:
+                twins.append(m)
+        for twins in sets:
+            twins.sort(key=lambda m: m.updated, reverse=True)
+            twins.sort(key=lambda m: (m.stale, m.dead, not m.alive, -m.seeds))
+            head = twins[0]
+            known = {head.hash} | {a["hash"] for a in head.alts}
+            for m in twins[1:]:
+                _absorb(head, m)
+                if m.stale:
+                    continue
+                for alt in [{"hash": m.hash, "magnet": m.magnet, "dead": m.dead}] + m.alts:
+                    if alt["hash"] not in known:
+                        known.add(alt["hash"])
+                        head.alts.append(alt)
+            out.append(head)
     return out
 
 

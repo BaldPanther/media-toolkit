@@ -581,9 +581,9 @@ OLD, NEW = "05bb" * 10, "24e4" * 10
 
 
 def test_twins_merged_into_one_card_alive_first():
-    rt = search.Release(OLD, "Сезон 4 rutracker", f"magnet:?xt=urn:btih:{OLD}", size=SIZE,
+    rt = search.Release(OLD, "Сезон 4 rutracker", f"magnet:?xt=urn:btih:{OLD}", size=SIZE, seasons=[4],
                         seeds=57, updated="2026-02-04", trackers=[["rutracker", "u1"]])
-    kz = search.Release(NEW, "4 сезон kinozal", f"magnet:?xt=urn:btih:{NEW}", size=SIZE,
+    kz = search.Release(NEW, "4 сезон kinozal", f"magnet:?xt=urn:btih:{NEW}", size=SIZE, seasons=[4],
                         seeds=3, updated="2026-07-22", trackers=[["kinozal", "u2"]],
                         voices=["Кубик в Кубе"])
     other = search.Release("cccc" * 10, "другая", "m", size=SIZE - 786)
@@ -604,15 +604,51 @@ def test_twins_merged_into_one_card_alive_first():
 
 
 def test_twins_without_liveness_by_seeds():
-    a = search.Release(OLD, "a", "ma", size=SIZE, seeds=5, trackers=[["rutracker", "u1"]])
-    b = search.Release(NEW, "b", "mb", size=SIZE, seeds=9, trackers=[["kinozal", "u2"]])
+    a = search.Release(OLD, "a", "ma", size=SIZE, seasons=[4], seeds=5, trackers=[["rutracker", "u1"]])
+    b = search.Release(NEW, "b", "mb", size=SIZE, seasons=[4], seeds=9, trackers=[["kinozal", "u2"]])
     card = search.group([a, b])[0]
     assert card.hash == NEW and search.alternatives(card) == [{"hash": OLD, "magnet": "ma"}]
 
 
+def test_same_rounded_size_other_content_not_twins():
+    # jac.red: «3.90 GB» → 4187593113 — у 1-го сезона в HDRip и у одной серии 4-го.
+    size = 4_187_593_113
+    s1 = search.Release("4f7b" * 10, "сезон 1, серии 1-8 из 8", "m1", size=size, quality=1080,
+                        seasons=[1], episodes=[1, 8, 8], trackers=[["nnmclub", "u1"]])
+    s4 = search.Release("6432" * 10, "[04x01 из 06] от NewComers", "m2", size=size, quality=1080,
+                        seasons=[4], episodes=[1, 1, 6], voices=["NewComers"],
+                        trackers=[["rutor", "u2"]])
+    lf = search.Release("7777" * 10, "[04x01 из 06] LostFilm", "m3", size=size, quality=1080,
+                        seasons=[4], episodes=[1, 1, 6], voices=["LostFilm"],
+                        trackers=[["lostfilm", "u3"]])
+    kz = search.Release("8888" * 10, "4 сезон: 1 серия из 6 (NewComers)", "m4", size=size,
+                        seasons=[4], episodes=[1, 1, 6], voices=["NewComers", "Original"],
+                        trackers=[["kinozal", "u4"]])
+    out = search.group([s1, s4, lf, kz])
+    assert len(out) == 3
+    card = next(r for r in out if r.hash in (s4.hash, kz.hash))
+    assert search.hashes(card) == {s4.hash, kz.hash} and card.seasons == [4]
+    first = next(r for r in out if r.hash == s1.hash)
+    assert first.alts == [] and first.seasons == [1] and len(first.trackers) == 1
+
+
+def test_twins_without_season_only_movies_of_same_year():
+    size = 536_870_912                                   # «0.50 GB»
+    ep = [search.Release(h * 40, f"Настоящий детектив ({name}) / 2025 / WEBRip", "m", size=size,
+                         year=2025, types=["serial"], trackers=[["kinozal", h]])
+          for h, name in (("1", "Паутина любви"), ("2", "Голос из преисподней"))]
+    assert len(search.group(ep)) == 2                    # серии без сезона — не двойники
+    film = [search.Release(h * 40, "Фильм", "m", size=8 * 2**30, year=y, types=["movie"],
+                           trackers=[[t, h]]) for h, y, t in (("3", 2024, "rutracker"),
+                                                              ("4", 2024, "kinozal"),
+                                                              ("5", 2021, "rutor"))]
+    out = search.group(film)
+    assert len(out) == 2 and search.hashes(out[0]) == {"3" * 40, "4" * 40}
+
+
 def test_dead_card_races_all_links():
-    a = search.Release(OLD, "a", "ma", size=SIZE, dead=True)
-    b = search.Release(NEW, "b", "mb", size=SIZE, dead=True)
+    a = search.Release(OLD, "a", "ma", size=SIZE, seasons=[4], dead=True)
+    b = search.Release(NEW, "b", "mb", size=SIZE, seasons=[4], dead=True)
     card = search.group([a, b])[0]
     assert card.dead and len(search.alternatives(card)) == 1
 
@@ -621,9 +657,9 @@ def test_stale_twin_gives_only_its_page():
     # kinozal: новое название и размер, но magnet прежней версии (хеш как у старой).
     old = search.Release(OLD, "Сезон 4 [1-5 из 6]", "m1", size=20 * 2**30, updated="2026-02-01",
                          trackers=[["rutracker", "u1"]])
-    stale = search.Release(OLD, "Сезон 4 [1-6 из 6]", "m2", size=SIZE, updated="2026-03-01",
+    stale = search.Release(OLD, "Сезон 4 [1-6 из 6]", "m2", size=SIZE, seasons=[4], updated="2026-03-01",
                            trackers=[["kinozal", "u2"]])
-    new = search.Release(NEW, "Сезон 4 [1-6 из 6]", "m3", size=SIZE, updated="2026-02-20",
+    new = search.Release(NEW, "Сезон 4 [1-6 из 6]", "m3", size=SIZE, seasons=[4], updated="2026-02-20",
                          trackers=[["rutracker", "u3"]])
     out = search.group([old, stale, new])
     card = next(r for r in out if r.hash == NEW)
