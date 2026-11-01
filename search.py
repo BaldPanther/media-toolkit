@@ -8,7 +8,11 @@
   публичный, а добавить источник — дописать строку, без пересборки. Плюс Knaben
   (The Pirate Bay, 1337x, Nyaa) — английские раздачи, под галкой в поиске.
 - Одна и та же раздача с разных трекеров склеивается по infohash: трекеры
-  перечисляются, сиды берутся наибольшие (рой у неё общий).
+  перечисляются, сиды берутся наибольшие (рой у неё общий), трекеры из всех
+  magnet-ссылок — в одну. Те же файлы под другим хешем (двойник: размер до байта) —
+  в ту же карточку: ссылки на сайты списком, «Скачать» одна (`group`).
+- Живы ли ссылки — у самих трекеров (`swarm.py`): мёртвая (трекер хеша не знает,
+  сидов нет) уходит вниз, а в карточке с двойниками главной становится живая.
 - Год: у сериала годится и год начала, и год выбранного сезона (±1) — трекеры
   пишут «(2026) Сезон 2» у сериала 2024-го.
 - Рекомендация: русские дорожки → все серии → качество → больше серий (у неполных) →
@@ -28,6 +32,7 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import core
@@ -36,6 +41,7 @@ import net
 import nfo
 import numbering
 import paths
+import swarm
 import tmdb
 
 _SOURCES_NAME = "search_sources.json"
@@ -265,6 +271,10 @@ class Release:
     episodes: list[int] = field(default_factory=list)          # [первая, последняя, всего]
     pack: bool = False                  # «S01» без серий — весь сезон (английская запись)
     stale: bool = False                 # magnet от прежней версии раздачи (см. group)
+    dead: bool = False                  # трекер хеша не знает, сидов нет (см. check_alive)
+    alive: bool = False                 # жива наверняка: сиды сейчас или rutracker её знает
+    seeds_live: bool = False            # сиды — у трекеров прямо сейчас, а не из памяти источника
+    alts: list[dict] = field(default_factory=list)   # те же файлы по другим хешам: [{hash, magnet, dead}]
     # Заполняет rank():
     score: tuple = ()
     recommended: bool = False
@@ -500,29 +510,22 @@ def _knaben(source: dict, title: Title) -> list[Release]:
 TWIN_MIN_SIZE = 100 * 1024 ** 2
 
 
-def twins(rel: Release, releases) -> list[Release]:
-    """Та же раздача по другой ссылке: размер до байта тот же, хеш другой. Так бывает,
-    когда раздачу перезалили, а у источника остался прежний magnet, или трекер завёл
-    свой торрент на те же файлы. Случайно до байта не совпадает. Свежие записи — первыми."""
-    if rel.size < TWIN_MIN_SIZE:
-        return []
-    found = [r for r in releases if r.size == rel.size and r.hash != rel.hash and not r.stale]
-    return sorted(found, key=lambda r: r.updated, reverse=True)
-
-
 def _same_size(a: Release, b: Release) -> bool:
     """Трекеры пишут размер по-разному: одна и та же раздача — 32.01 ГБ на rutracker и
     31.67 на bitru. До 3% — тот же размер; прежняя версия обновлённой — заметно другой."""
     return not a.size or not b.size or abs(a.size - b.size) <= max(a.size, b.size) * 0.03
 
 
-def group(items: list[Release]) -> list[Release]:
-    """Одна раздача на разных трекерах — одна строка: трекеры списком, сиды — наибольшие.
+def group(items: list[Release], live=None) -> list[Release]:
+    """Одна раздача — одна карточка: трекеры списком, сиды — наибольшие.
 
     Один хеш — один и тот же набор файлов, а значит, и размер. Разные размеры при
     одном хеше — трекер обновил раздачу (название и размер новые), а источник знает
     magnet прежней версии: так jac.red держит раздачи kinozal. Такую запись (более
     свежую) не склеиваем — она отдельной строкой, с пометкой: скачается старая версия.
+
+    Потом — двойники (`_merge_twins`); `live(cards)` перед этим отмечает живые и
+    мёртвые ссылки (`check_alive`), чтобы главной в карточке стала живая.
     """
     by_hash: dict[str, Release] = {}
     stale: list[Release] = []
@@ -537,34 +540,129 @@ def group(items: list[Release]) -> list[Release]:
             by_hash[r.hash] = old
             stale.append(new)
             continue
-        # Трекер — один раз, даже если раздача лежит у него в двух темах.
-        for tr in r.trackers:
-            if all(tr[0] != have[0] for have in g.trackers):
-                g.trackers.append(tr)
         if r.seeds > g.seeds:
             # Дата — от той же записи, что и число: «57» с nnm-club из февраля не станет
             # августовским оттого, что bitru обходили в августе.
             g.seeds, g.peers, g.seeds_at = r.seeds, max(g.peers, r.peers), r.seeds_at
-        g.updated = max(g.updated, r.updated)
-        g.quality = g.quality or r.quality
-        if r.quality > g.quality and r.quality in QUALITIES:
-            g.quality = r.quality
-        # «Только Dolby Vision» — пока ни один трекер не назвал рядом HDR10.
-        if r.dv:
-            g.dv_only = r.dv_only and (g.dv_only or not g.dv)
-        g.hdr, g.dv = g.hdr or r.hdr, g.dv or r.dv
-        g.codec = g.codec or r.codec
-        g.source = g.source or r.source
-        g.voices += [v for v in r.voices if v not in g.voices]
-        g.seasons = sorted(set(g.seasons) | set(r.seasons))
-        g.types += [t for t in r.types if t not in g.types]
-        g.year = g.year or r.year
-        g.episodes = g.episodes or r.episodes
-        g.pack = g.pack or r.pack
-        # Название — самое подробное: у rutracker в нём и сезон, и озвучки.
-        if len(r.title) > len(g.title):
-            g.title = r.title
-    return list(by_hash.values()) + stale
+        # Хеш тот же — толпа одна: трекеры всех сайтов в одну ссылку, больше участников.
+        g.magnet = swarm.with_trackers(g.magnet, swarm.trackers_of(r.magnet))
+        _absorb(g, r)
+    cards = list(by_hash.values()) + stale
+    if live is not None:
+        live(cards)
+    return _merge_twins(cards)
+
+
+def _absorb(g: Release, r: Release) -> None:
+    """Описание раздачи из второй записи о ней — в первую."""
+    # Трекер — один раз, даже если раздача лежит у него в двух темах.
+    for tr in r.trackers:
+        if all(tr[0] != have[0] for have in g.trackers):
+            g.trackers.append(tr)
+    g.updated = max(g.updated, r.updated)
+    g.quality = g.quality or r.quality
+    if r.quality > g.quality and r.quality in QUALITIES:
+        g.quality = r.quality
+    # «Только Dolby Vision» — пока ни один трекер не назвал рядом HDR10.
+    if r.dv:
+        g.dv_only = r.dv_only and (g.dv_only or not g.dv)
+    g.hdr, g.dv = g.hdr or r.hdr, g.dv or r.dv
+    g.codec = g.codec or r.codec
+    g.source = g.source or r.source
+    g.voices += [v for v in r.voices if v not in g.voices]
+    g.seasons = sorted(set(g.seasons) | set(r.seasons))
+    g.types += [t for t in r.types if t not in g.types]
+    g.year = g.year or r.year
+    g.episodes = g.episodes or r.episodes
+    g.pack = g.pack or r.pack
+    # Название — самое подробное: у rutracker в нём и сезон, и озвучки.
+    if len(r.title) > len(g.title):
+        g.title = r.title
+
+
+def _merge_twins(cards: list[Release]) -> list[Release]:
+    """Двойники — те же файлы под другим хешем: размер до байта тот же. Так бывает,
+    когда раздачу перезалили, а у источника остался прежний magnet, или трекер завёл
+    свой торрент на те же файлы. Случайно до байта не совпадает.
+
+    Это разные толпы — сложить их сиды BitTorrent не умеет, — но раздача для вас одна:
+    одна карточка, ссылки на все сайты, одна кнопка. Главная — живая и с сидами
+    побольше, остальные хеши — в `alts`: «Скачать» пускает их наперегонки
+    (autopilot). Запись со старым magnet (`stale`) даёт карточке только ссылку на сайт."""
+    buckets: dict[int, list[Release]] = {}
+    order: list[Release] = []
+    for c in cards:
+        if c.size < TWIN_MIN_SIZE:
+            order.append(c)
+            continue
+        bucket = buckets.setdefault(c.size, [])
+        if not bucket:
+            order.append(c)
+        bucket.append(c)
+    out = []
+    for c in order:
+        members = buckets.get(c.size) if c.size >= TWIN_MIN_SIZE else None
+        if not members or len(members) == 1:
+            out.append(c)
+            continue
+        members = sorted(members, key=lambda m: m.updated, reverse=True)
+        members.sort(key=lambda m: (m.stale, m.dead, not m.alive, -m.seeds))
+        head = members[0]
+        known = {head.hash} | {a["hash"] for a in head.alts}
+        for m in members[1:]:
+            _absorb(head, m)
+            if m.stale:
+                continue
+            for alt in [{"hash": m.hash, "magnet": m.magnet, "dead": m.dead}] + m.alts:
+                if alt["hash"] not in known:
+                    known.add(alt["hash"])
+                    head.alts.append(alt)
+        out.append(head)
+    return out
+
+
+# Закрытые трекеры: открытые их раздачи почти не видят, зато многие из них — те же
+# торренты, что на rutracker (kinozal и nnm-club перезаливают его раздачи).
+_CLOSED = {"rutracker", "kinozal", "nnmclub"}
+
+
+def check_alive(cards: list[Release]) -> None:
+    """Живы ли ссылки — у самих трекеров (`swarm`), а не по памяти источника.
+
+    Сиды с открытых трекеров заменяют число источника, если они больше, а у раздач
+    одного rutor — всегда, если ответил его трекер opentor: это и есть число rutor,
+    сегодняшнее. Мёртвая — rutracker хеша не знает и сидов сейчас ни у кого нет:
+    тему перезалили."""
+    by_seeds = sorted(cards, key=lambda c: -c.seeds)
+    rutor = [c for c in by_seeds if any(tr[0] == "rutor" for tr in c.trackers)]
+    closed = [c.hash for c in by_seeds
+              if {tr[0] for tr in c.trackers} & _CLOSED or "t-ru.org" in c.magnet]
+    # Оба вопроса разом. Раздачи rutor — первыми: opentor спрашивается об одной пачке.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        scraping = pool.submit(swarm.scrape, [c.hash for c in rutor] + [c.hash for c in by_seeds])
+        known = swarm.registered(closed)
+        answers = scraping.result()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for c in cards:
+        got, reg = answers.get(c.hash, {}), known.get(c.hash)
+        n = max(got.values(), default=None)
+        home = swarm.RUTOR in got and all(tr[0] == "rutor" for tr in c.trackers)
+        if n is not None and (n > c.seeds or home):
+            c.seeds, c.seeds_at, c.seeds_live = n, now, True
+        c.alive = bool(n) or reg is True
+        c.dead = reg is False and not n
+
+
+def hashes(rel: Release) -> set[str]:
+    """Все хеши карточки: главный и двойники."""
+    return {rel.hash} | {a["hash"] for a in rel.alts}
+
+
+def alternatives(rel: Release) -> list[dict]:
+    """Двойники для гонки (autopilot): живые; если мертва вся карточка — все."""
+    alive = [a for a in rel.alts if not a.get("dead")]
+    return [{"hash": a["hash"], "magnet": a["magnet"]}
+            for a in (rel.alts if rel.dead else alive)]
 
 
 def find(title: Title, sources=None, log=None) -> list[Release]:
@@ -590,7 +688,9 @@ def find(title: Title, sources=None, log=None) -> list[Release]:
     items = [r for part in parts for r in part]
     for r in items:
         r.seeds_at = r.seeds_at or r.updated
-    out = group(items)
+    # Живость — только у подходящих тайтлу (тип, год): остальные jac.red нашёл по
+    # созвучию, их не покажут.
+    out = group(items, live=lambda cards: check_alive([c for c in cards if fits(c, title)]))
     for r in out:
         count_in_season(r, title)
     return out
@@ -759,17 +859,21 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         full = complete(r, title, seasons)
         # После любимой озвучки — источник (Remux → BDRip → WEB-DL → WEBRip → HDTV),
         # и только при равном источнике HEVC/AV1: они мельче, но качества не добавляют.
-        # Устаревший magnet — в самый низ: скачалась бы не та версия, что в названии.
+        # Устаревший magnet и мёртвая ссылка — в самый низ: скачалась бы не та версия,
+        # что в названии, или не скачалось бы ничего.
         # Среди неполных — где больше серий (у сборника — в его последнем сезоне):
         # пять серий третьего сезона лучше сборника на 48 ГБ с одной.
         count = r.episodes[1] - r.episodes[0] + 1 if r.episodes and not full else 0
-        r.score = (1 if r.stale else 0, 0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
-                   -count, _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
+        r.score = (1 if r.stale or r.dead else 0, 0 if russian(r) else 1, 0 if full else 1,
+                   -quality_of(r), -count, _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
                    SOURCE_RANK.get(r.source, _UNKNOWN_SOURCE_RANK),
                    0 if r.codec in CODEC_FACTOR else 1, 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
         if r.stale:
             r.notes.append("старый magnet: скачается прежняя версия — качайте со страницы")
+        elif r.dead:
+            r.notes.append("мёртвая ссылка: трекер её больше не знает, сидов нет — "
+                           "качайте со страницы")
         if not russian(r):
             r.notes.append("украинская" if _UKRAINIAN.search(r.title) else "английская")
         if r.seeds < LOW_SEEDS:
@@ -784,7 +888,7 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         r.recommended = False
         r.why = _why(r, prefs)
     releases.sort(key=lambda r: r.score)
-    best = next((r for r in releases if r.seeds >= 1 and not r.stale), None)
+    best = next((r for r in releases if r.seeds >= 1 and not r.stale and not r.dead), None)
     if best is not None:
         best.recommended = True
     return releases

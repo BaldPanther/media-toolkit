@@ -123,14 +123,20 @@ document.addEventListener("alpine:init", () => {
     // Отношение — с поправкой на кодек (HEVC мельче при том же качестве).
     vsClass(ratio) { return ratio >= 1.5 ? "ok-text" : ratio <= 0.67 ? "warn-text" : "faint"; },
     // Сиды источник знает на момент последнего обхода трекера: у старых тем — месячной
-    // давности. Свежие (до двух суток) — без даты.
+    // давности. Свежие (до двух суток) — без даты; спрошенные у трекеров сейчас — «сейчас».
     seedsAge(r) {
+      if (r.seeds_live) return "сейчас";
       const t = Date.parse(r.seeds_at || r.updated || "");
       if (!t || Date.now() - t < 2 * 86400 * 1000) return "";
       const d = new Date(t);
       const opts = { day: "numeric", month: "short" };
       if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
       return "на " + d.toLocaleDateString("ru-RU", opts);
+    },
+    seedsHint(r) {
+      if (r.seeds_live) return "Сиды — у открытых трекеров прямо сейчас. Раздачи rutracker и kinozal они видят не все: там может быть больше";
+      const base = "Сиды — на момент, когда источник последний раз смотрел трекер: " + (r.seeds_at || r.updated || "?");
+      return r.alive ? base + ". Ссылка живая — проверено у трекеров сейчас" : base;
     },
     voiceLabel(v) {
       return { "Дубляж": "дубляж (любой студии)", "Любая русская": "любая русская (дубляж — первым)" }[v] || v;

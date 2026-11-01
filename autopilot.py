@@ -19,10 +19,15 @@
 программа предупреждает: в журнале, на вкладке и в Telegram. Больше автоматика
 в Telegram не пишет: туда — слежение (`watchlist.py`).
 
-Торренты программа не удаляет. Одно исключение — обновляемая раздача: на трекере
-добавили серии, у раздачи новый хеш. Новая версия получает имена уже скачанных
-файлов, qBittorrent их перепроверяет и докачивает только новое, а старая версия
-убирается из qBittorrent — файлы остаются на месте (`Autopilot._update`).
+Торренты программа не удаляет. Исключения:
+
+- обновляемая раздача: на трекере добавили серии, у раздачи новый хеш. Новая версия
+  получает имена уже скачанных файлов, qBittorrent их перепроверяет и докачивает
+  только новое, а старая версия убирается из qBittorrent — файлы остаются на месте
+  (`Autopilot._update`);
+- гонка ссылок: у раздачи из поиска есть двойники (те же файлы под другим хешем) —
+  они добавляются разом, качается та, что первой получила список файлов, остальные
+  убираются. Скачать они ничего не успели (`Autopilot._race`).
 
 Что уже сделано — в `autopilot_state.json`, чтобы перезапуск не начинал всё заново.
 """
@@ -47,15 +52,18 @@ import numbering
 import paths
 import qbit
 import search
+import swarm
 
 _STATE_NAME = "autopilot_state.json"
 INTERVAL = 30            # секунд между проверками
 # Сколько помнить раздачу, которой в qBittorrent уже нет: в списке её не видно
 # сразу, а сутки — на случай, если qBittorrent при запуске отдал список не целиком.
 KEEP_GONE = 86400
-# Сколько ждать список файлов у раздачи, добавленной программой: дольше — у ссылки
-# почти нет живых сидов (бывает у устаревшего magnet), берём двойника.
+# Сколько ждать список файлов у раздачи, добавленной программой: дольше — живых сидов
+# почти нет (бывает у устаревшего magnet), предупредить.
 STUCK = 300
+# Сколько ссылок на одну раздачу пускать наперегонки (главная и двойники, см. add).
+RACE = 4
 
 NEW, ASK, DONE, ERROR, SKIP = "new", "ask", "done", "error", "skip"
 STATUS_LABELS = {NEW: "в очереди", ASK: "ждёт выбора", DONE: "разложено",
@@ -79,8 +87,9 @@ class Item:
     seasons: list = field(default_factory=list)  # сезоны раздачи, как их пишет трекер
     hold: bool = False             # добавлена программой на паузе — запустить после раскладки
     warned: bool = False           # о паузе из-за ошибки уже предупредили
-    twins: list = field(default_factory=list)    # та же раздача по другим ссылкам (из поиска)
+    rivals: list = field(default_factory=list)   # гонка: хеши двойников, ждущих в qBittorrent
     waiting_since: float = 0.0     # когда добавлена программой — ждём список файлов
+    stuck: bool = False            # о долгом ожидании списка файлов уже предупредили
     progress: float = 0.0
     seq_set: bool = False          # галки последовательной загрузки уже ставили
     done_notified: bool = False    # докачку уже отметили (журнал, скан Kodi)
@@ -165,6 +174,15 @@ def is_video_torrent(torrent: qbit.Torrent) -> bool:
     """Самый большой файл — видео. Так игры, музыка и программы отсеиваются сами."""
     biggest = max(torrent.files, key=lambda f: f.size, default=None)
     return biggest is not None and library.is_video(torrent.local(biggest.rel))
+
+
+def _has_metadata(info: dict) -> bool:
+    """Список файлов у раздачи уже есть. `has_metadata` — в qBittorrent 5.x; раньше —
+    по состоянию: без метаданных она «metaDL» и размер у неё нулевой."""
+    if "has_metadata" in info:
+        return bool(info["has_metadata"])
+    return (not str(info.get("state", "")).endswith("metaDL")
+            and int(info.get("total_size") or info.get("size") or 0) > 0)
 
 
 def free_space(kind: str) -> int:
@@ -284,19 +302,19 @@ class Autopilot:
 
     def expect(self, torrent_hash: str, kind: str, tmdb_id: int, name: str,
                wanted=(), pages=(), replaces: str = "", seasons=(), hold: bool = False,
-               twins=()) -> None:
+               rivals=()) -> None:
         """Раздача добавлена из поиска: тайтл уже известен, опознавать не надо.
         `wanted` — какие сезоны нужны из сборника; файлам остальных — «не загружать».
         `pages` — её страницы на трекерах: по ним узнаётся следующая версия.
         `seasons` — сезоны раздачи по трекеру, `hold` — она ждёт раскладки на паузе.
-        `twins` — та же раздача по другим ссылкам ([{hash, magnet, title, pages, seasons}])."""
+        `rivals` — хеши двойников, добавленных с ней наперегонки (см. `_race`)."""
         now = time.time()
         with self._lock:
             self.items[torrent_hash] = Item(torrent_hash, name, kind, tmdb_id=tmdb_id,
                                             wanted=sorted(set(wanted)),
                                             seasons=sorted(set(seasons)), hold=hold,
                                             pages=[p for p in pages if p], replaces=replaces,
-                                            twins=list(twins), waiting_since=now, seen=now)
+                                            rivals=list(rivals), waiting_since=now, seen=now)
         self.save()
         self._wake.set()
 
@@ -317,22 +335,43 @@ class Autopilot:
                          and i.status != SKIP and i.seen >= self.last_check - 1), None)
 
     def add(self, magnet: str, torrent_hash: str, kind: str, tmdb_id: int, name: str,
-            wanted=(), pages=(), seasons=(), twins=()) -> str:
+            wanted=(), pages=(), seasons=(), alts=()) -> str:
         """Раздачу — в qBittorrent с категорией сериалов или фильмов, дальше её ведёт
         автоматика. Новая версия уже скачиваемой раздачи — обновление. → что сказать.
 
         qBittorrent получает список файлов и встаёт на паузу: пока ничего не скачано,
         автоматика отмечает уже имеющиеся серии «не загружать», переименовывает
-        остальные и запускает раздачу — лишнего на диске не появляется."""
+        остальные и запускает раздачу — лишнего на диске не появляется.
+
+        В magnet дописываются трекеры (`swarm.with_trackers`): у ссылок kinozal и
+        nnm-club их нет вовсе. `alts` — двойники ([{hash, magnet}]): те же файлы под
+        другим хешем. Они добавляются разом с главной — наперегонки (`_race`)."""
         qs = qbit.load_settings()
         if not qs.configured():
             raise qbit.QbitError("qBittorrent не подключён")
         category = qs.tv_category if kind == library.TV else qs.movies_category
         old = self.replaced_by(pages, torrent_hash) if qs.auto else None
-        qbit.connect(qs).add(magnet, category=category, stop_on_metadata=qs.auto)
+        client = qbit.connect(qs)
+        client.add(swarm.with_trackers(magnet), category=category, stop_on_metadata=qs.auto)
+        rivals = []
+        # Гонку рассудит только автоматика. Двойник, что уже был в qBittorrent, — не
+        # соперник: проигравших программа убирает, а чужую раздачу трогать нельзя.
+        if qs.auto and alts:
+            have = {str(i.get("hash", "")) for i in client.torrents()}
+            for alt in alts:
+                if len(rivals) + 1 >= RACE:
+                    break
+                if alt["hash"] in have or alt["hash"] == torrent_hash:
+                    continue
+                try:
+                    client.add(swarm.with_trackers(alt["magnet"]), category=category,
+                               stop_on_metadata=True)
+                except qbit.QbitError:
+                    continue
+                rivals.append(alt["hash"])
         self.expect(torrent_hash, kind, tmdb_id, name, wanted, pages,
                     replaces=old.hash if old is not None else "", seasons=seasons,
-                    hold=qs.auto and old is None, twins=twins)
+                    hold=qs.auto and old is None, rivals=rivals)
         if old is None:
             return "Скачиваю"
         self.log(f"Автоматика: «{name}» — новая версия «{old.name}», обновляю")
@@ -361,11 +400,17 @@ class Autopilot:
             answers, self._answers = self._answers, []
         infos = client.torrents()
         by_hash = {str(i.get("hash", "")): i for i in infos}
+        # Соперники в гонке и убранные из неё — не новые раздачи: их не опознавать.
+        gone = self._race(by_hash, client)
+        with self._lock:
+            racing = {h for i in self.items.values() for h in i.rivals}
         for item_info in infos:
             kind = qs.kind_of(str(item_info.get("category", "")))
             if kind is None:
                 continue
             h = str(item_info.get("hash", ""))
+            if h in gone or h in racing:
+                continue
             added = int(item_info.get("added_on") or 0)
             with self._lock:
                 item = self.items.get(h)
@@ -402,8 +447,10 @@ class Autopilot:
                                  "в qBittorrent")
             elif (item.hold and item.status == NEW and item.waiting_since
                   and now - item.waiting_since > STUCK):
-                self._stuck(item, client)
+                self._stuck(item)
             return
+        if item.stuck:
+            item.stuck, item.error = False, ""      # дождались
         if not is_video_torrent(torrent):
             item.status = SKIP
             return
@@ -423,38 +470,52 @@ class Autopilot:
             self.log(f"Автоматика: скачано — {item.title}")
             self._kodi(item.root, roots)
 
-    def _stuck(self, item: Item, client) -> None:
-        """Раздача из программы STUCK секунд без списка файлов: у ссылки почти нет живых
-        сидов — так бывает с устаревшим magnet (раздачу перезалили, а источник знает
-        прежний). Есть двойник — та же раздача по другой ссылке: берём его, а застрявшую
-        убираем из qBittorrent (файлов у неё нет, терять нечего). Нет — предупреждаем раз."""
-        if not item.twins:
-            if not item.warned:
-                item.warned = True
-                text = (f"«{item.name}» уже {STUCK // 60} мин без списка файлов: у этой ссылки "
-                        f"почти нет живых сидов. Возьмите другую раздачу или скачайте .torrent "
-                        f"со страницы трекера")
-                item.error = text
-                self.log(f"⚠ Автоматика: {text}")
-                self.notify(f"⏳ {text}.")
+    def _stuck(self, item: Item) -> None:
+        """Раздача из программы STUCK секунд без списка файлов — ни по одной ссылке, если
+        их было несколько: живых сидов почти нет. Так бывает с устаревшим magnet
+        (раздачу перезалили, а источник знает прежний). Предупредить раз и ждать дальше:
+        сид может и появиться."""
+        if item.stuck:
             return
-        twin = item.twins[0]
-        qs = qbit.load_settings()
-        category = qs.tv_category if item.kind == library.TV else qs.movies_category
-        try:
-            client.add(twin["magnet"], category=category, stop_on_metadata=True)
-        except qbit.QbitError as e:
-            self.log(f"⚠ Автоматика: «{item.name}» — двойник не добавился: {e}")
-            item.twins = item.twins[1:]
-            return
-        client.remove_keep_files(item.hash)
+        item.stuck = True
+        links = f" ни по одной из {len(item.rivals) + 1} ссылок" if item.rivals else ""
+        text = (f"«{item.name}» уже {STUCK // 60} мин без списка файлов{links}: живых сидов "
+                f"почти нет. Возьмите другую раздачу или скачайте .torrent со страницы трекера")
+        item.error = text
+        self.log(f"⚠ Автоматика: {text}")
+        self.notify(f"⏳ {text}.")
+
+    def _race(self, by_hash: dict, client) -> set[str]:
+        """Гонка ссылок одной раздачи (`add`): у какой первой пришёл список файлов, ту и
+        качаем, остальные — из qBittorrent. Скачать они ничего не успели: до списка
+        файлов качать нечего, а с ним раздача из программы сразу встаёт на паузу.
+        Пришёл сразу у нескольких — где больше сидов. → убранные хеши."""
+        gone: set[str] = set()
         with self._lock:
-            self.items.pop(item.hash, None)
-        self.expect(twin["hash"], item.kind, item.tmdb_id, twin.get("title") or item.name,
-                    item.wanted, twin.get("pages") or (), seasons=twin.get("seasons") or item.seasons,
-                    hold=True, twins=item.twins[1:])
-        self.log(f"Автоматика: «{item.name}» — {STUCK // 60} мин без списка файлов, беру ту же "
-                 f"раздачу по другой ссылке: «{twin.get('title') or twin['hash']}»")
+            racing = [i for i in self.items.values() if i.rivals]
+        for item in racing:
+            group = [item.hash] + item.rivals
+            ready = [h for h in group if h in by_hash and _has_metadata(by_hash[h])]
+            if not ready:
+                continue
+            win = max(ready, key=lambda h: (int(by_hash[h].get("num_seeds") or 0), h == item.hash))
+            losers = [h for h in group if h != win and h in by_hash]
+            for h in losers:
+                try:
+                    client.remove_keep_files(h)
+                except qbit.QbitError as e:
+                    self.log(f"⚠ Автоматика: «{item.name}» — лишняя ссылка не убралась: {e}")
+            gone |= set(losers)
+            with self._lock:
+                self.items.pop(item.hash, None)
+                # added_on — от новой раздачи: иначе проверка приняла бы её за добавленную заново.
+                self.items[win] = replace(item, hash=win, rivals=[],
+                                          added_on=item.added_on if win == item.hash else 0)
+            self.log(f"Автоматика: «{item.name}» — список файлов пришёл "
+                     + ("по основной ссылке" if win == item.hash
+                        else "по другой ссылке на ту же раздачу")
+                     + (f", остальные ({len(losers)}) убраны из qBittorrent" if losers else ""))
+        return gone
 
     def _settle(self, item: Item, client) -> None:
         """Добавленная программой раздача стоит на паузе, пока её не разложат.

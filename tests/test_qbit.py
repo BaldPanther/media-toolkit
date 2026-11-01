@@ -27,6 +27,7 @@ class FakeClient:
         self.states: dict[str, str] = {}
         self.events: list[tuple[str, str]] = []
         self.added_on: dict[str, int] = {}
+        self.seeds: dict[str, int] = {}
 
     def add(self, h: str, files: dict[str, int] | None = None, category: str = "",
             stop_on_metadata: bool = False) -> None:
@@ -46,7 +47,8 @@ class FakeClient:
                 out.append({"hash": h, "name": h, "category": self.category, "progress": 0,
                             "seq_dl": False, "f_l_piece_prio": False,
                             "save_path": self.remote_save, "content_path": self.remote_save,
-                            "state": "metaDL", "added_on": self.added_on.get(h, 1)})
+                            "state": "metaDL", "added_on": self.added_on.get(h, 1),
+                            "has_metadata": False, "num_seeds": self.seeds.get(h, 0)})
                 continue
             root = names[0].split("/")[0]
             content = f"{self.remote_save}/{root}" if "/" in names[0] else f"{self.remote_save}/{names[0]}"
@@ -54,7 +56,8 @@ class FakeClient:
                         "progress": self.progress, "seq_dl": False, "f_l_piece_prio": False,
                         "save_path": self.remote_save, "content_path": content,
                         "state": self.states.get(h, "stoppedDL"),
-                        "added_on": self.added_on.get(h, 1)})
+                        "added_on": self.added_on.get(h, 1),
+                        "has_metadata": True, "num_seeds": self.seeds.get(h, 0)})
         return out
 
     def recheck(self, h):

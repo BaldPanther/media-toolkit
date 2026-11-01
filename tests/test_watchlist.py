@@ -24,7 +24,7 @@ class FakeAutopilot:
     def __init__(self):
         self.expected, self.added = [], []
 
-    def add(self, magnet, h, kind, tmdb_id, name, wanted=(), pages=(), seasons=(), twins=()):
+    def add(self, magnet, h, kind, tmdb_id, name, wanted=(), pages=(), seasons=(), alts=()):
         self.added.append((magnet, list(pages)))
         self.seasons = list(seasons)
         self.expect(h, kind, tmdb_id, name, wanted)

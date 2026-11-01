@@ -361,10 +361,11 @@ class Watcher:
         Условия тайтла: качество и озвучка. Своя раздача (`pin`) — только она, без
         прочих условий: её выбрали руками, даже если сейчас у неё нет сидов."""
         prefs = search.load_prefs()
-        # Устаревший magnet (search.group) не предлагаем: скачалась бы прежняя версия.
+        # Устаревший magnet (search.group) не предлагаем: скачалась бы прежняя версия;
+        # мёртвую ссылку (search.check_alive) — тоже: не скачалось бы ничего.
         found = search.find(title, log=self.log)
         fit = [r for r in found
-               if search.fits(r, title, seasons) and not r.stale
+               if search.fits(r, title, seasons) and not r.stale and not r.dead
                and (title.kind != library.TV or r.seasons or len(title.seasons) == 1)
                and (not full or search.complete(r, title, seasons))
                and (more_than is None or (r.episodes and r.episodes[1] > more_than))]
@@ -382,8 +383,8 @@ class Watcher:
         # обещает новые серии, у источника ещё прежний magnet (бывает у kinozal на
         # jac.red): «Обновить» скачало бы то же самое. Ждём настоящую новую версию.
         present = self.autopilot.present() if self.autopilot is not None else set()
-        self.only_in_qbit = bool(fit) and all(r.hash in present for r in fit)
-        fit = [r for r in fit if r.hash not in present]
+        self.only_in_qbit = bool(fit) and all(search.hashes(r) & present for r in fit)
+        fit = [r for r in fit if not search.hashes(r) & present]
         if w.voice == search.RUS_VOICE:
             # «Любая русская»: годится любая озвучка, но дубляж — первым.
             prefs = replace(prefs, voices=[search.DUB] + prefs.voices)
@@ -392,10 +393,8 @@ class Watcher:
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,
                     "page": r.trackers[0][1] if r.trackers else "", "size": r.size,
                     "pages": pages_of(r), "dub": search.has_voice(r, search.DUB),
-                    # Та же раздача по другим ссылкам: не получит список файлов — возьмём их.
-                    "twins": [{"hash": t.hash, "magnet": t.magnet, "title": t.title,
-                               "pages": pages_of(t), "seasons": t.seasons}
-                              for t in search.twins(r, found)]}
+                    # Те же файлы под другими хешами — их пустят наперегонки с главной.
+                    "alts": search.alternatives(r)}
                    for r in ranked[:OFFER]]
         w.offer_season = seasons[0] if seasons else 0
         return bool(w.offer)
@@ -443,7 +442,7 @@ class Watcher:
         try:
             said = self.autopilot.add(offer["magnet"], offer["hash"], w.kind, w.tmdb_id,
                                       offer["title"], wanted, pages, offer["seasons"],
-                                      offer.get("twins") or ())
+                                      offer.get("alts") or ())
         except qbit.QbitError as e:
             return False, f"qBittorrent не взял раздачу: {e}"
         self.log(f"Слежение: в qBittorrent добавлено — {w.title}: {offer['title']}")

@@ -8,7 +8,9 @@ import search
 
 
 def _item(tracker, title, h="A" * 40, sid=10, quality=1080, seasons=(1,), year=2024,
-          voices=(), videotype="sdr", types=("serial",), size=10 ** 9):
+          voices=(), videotype="sdr", types=("serial",), size=0):
+    # Размер по умолчанию — свой у каждого хеша: одинаковый до байта — это двойники.
+    size = size or 10 ** 9 + sum(map(ord, h)) * 1000
     return {"tracker": tracker, "url": f"https://{tracker}/t/1", "title": title, "size": size,
             "sid": sid, "pir": 1, "magnet": f"magnet:?xt=urn:btih:{h}", "relased": year,
             "videotype": videotype, "quality": quality, "voices": list(voices),
@@ -220,7 +222,9 @@ def test_search_flow_select_filter_download(web):
     assert s["prefs"]["quality"] == 1080 and s["prefs"]["hdr"] is True
     # Скачать: в qBittorrent с категорией сериалов, автоматика ждёт раздачу с тайтлом.
     assert c.post("/api/torrents/search/download", json={"hash": "2" * 40}).get_json()["ok"]
-    assert added == [("magnet:?xt=urn:btih:" + "2" * 40, "tv")]
+    # В magnet дописаны трекеры: у ссылок kinozal и nnm-club их нет вовсе.
+    assert [(m.split("&")[0], cat) for m, cat in added] == [("magnet:?xt=urn:btih:" + "2" * 40, "tv")]
+    assert "tr=http%3A%2F%2Fbt4.t-ru.org" in added[0][0]
     item = st.tabs["torrents"].autopilot.items["2" * 40]
     assert item.tmdb_id == 1 and item.wanted == [2]
 
@@ -317,7 +321,8 @@ def test_paste_magnet_goes_to_qbit_with_chosen_category(web):
     st, c, added = web
     magnet = "magnet:?xt=urn:btih:" + "c" * 40 + "&dn=Some.Movie.2024.2160p"
     res = c.post("/api/torrents/add-link", json={"url": magnet, "kind": "movie"}).get_json()
-    assert res["ok"] and added == [(magnet, "movies")]
+    assert res["ok"] and len(added) == 1 and added[0][1] == "movies"
+    assert added[0][0].startswith(magnet + "&tr=")
     item = st.tabs["torrents"].autopilot.items["c" * 40]
     assert item.kind == library.MOVIE and item.name == "Some.Movie.2024.2160p"
     bad = c.post("/api/torrents/add-link", json={"url": "Тёмная материя"})
@@ -571,13 +576,109 @@ def test_same_hash_rounded_sizes_still_merged():
     assert len(out) == 1 and not out[0].stale and len(out[0].trackers) == 2
 
 
-def test_twins_same_size_other_hash():
-    a = search.Release("05bb" * 10, "rutracker", "m", size=34_370_475_786, updated="2026-02-04")
-    b = search.Release("24e4" * 10, "kinozal", "m", size=34_370_475_786, updated="2026-07-22")
-    c = search.Release("cccc" * 10, "другая", "m", size=34_370_475_000)
-    small = search.Release("dddd" * 10, "сэмпл", "m", size=1000)
-    assert [t.hash for t in search.twins(a, [a, b, c, small])] == [b.hash]
-    assert search.twins(small, [small, search.Release("e" * 40, "x", "m", size=1000)]) == []
+SIZE = 34_370_475_786
+OLD, NEW = "05bb" * 10, "24e4" * 10
+
+
+def test_twins_merged_into_one_card_alive_first():
+    rt = search.Release(OLD, "Сезон 4 rutracker", f"magnet:?xt=urn:btih:{OLD}", size=SIZE,
+                        seeds=57, updated="2026-02-04", trackers=[["rutracker", "u1"]])
+    kz = search.Release(NEW, "4 сезон kinozal", f"magnet:?xt=urn:btih:{NEW}", size=SIZE,
+                        seeds=3, updated="2026-07-22", trackers=[["kinozal", "u2"]],
+                        voices=["Кубик в Кубе"])
+    other = search.Release("cccc" * 10, "другая", "m", size=SIZE - 786)
+    small = [search.Release(h * 40, "сэмпл", "m", size=1000) for h in "de"]
+
+    def live(cards):
+        for c in cards:
+            c.dead, c.alive = c.hash == OLD, c.hash == NEW
+
+    out = search.group([rt, kz, other] + small, live=live)
+    assert len(out) == 4                                 # сэмплы по 1000 байт — не двойники
+    card = out[0]
+    assert card.hash == NEW and card.seeds == 3          # главная — живая, а не сидовая
+    assert [t[0] for t in card.trackers] == ["kinozal", "rutracker"]
+    assert card.alts == [{"hash": OLD, "magnet": f"magnet:?xt=urn:btih:{OLD}", "dead": True}]
+    assert search.alternatives(card) == []               # мёртвую наперегонки не пускаем
+    assert search.hashes(card) == {OLD, NEW} and card.voices == ["Кубик в Кубе"]
+
+
+def test_twins_without_liveness_by_seeds():
+    a = search.Release(OLD, "a", "ma", size=SIZE, seeds=5, trackers=[["rutracker", "u1"]])
+    b = search.Release(NEW, "b", "mb", size=SIZE, seeds=9, trackers=[["kinozal", "u2"]])
+    card = search.group([a, b])[0]
+    assert card.hash == NEW and search.alternatives(card) == [{"hash": OLD, "magnet": "ma"}]
+
+
+def test_dead_card_races_all_links():
+    a = search.Release(OLD, "a", "ma", size=SIZE, dead=True)
+    b = search.Release(NEW, "b", "mb", size=SIZE, dead=True)
+    card = search.group([a, b])[0]
+    assert card.dead and len(search.alternatives(card)) == 1
+
+
+def test_stale_twin_gives_only_its_page():
+    # kinozal: новое название и размер, но magnet прежней версии (хеш как у старой).
+    old = search.Release(OLD, "Сезон 4 [1-5 из 6]", "m1", size=20 * 2**30, updated="2026-02-01",
+                         trackers=[["rutracker", "u1"]])
+    stale = search.Release(OLD, "Сезон 4 [1-6 из 6]", "m2", size=SIZE, updated="2026-03-01",
+                           trackers=[["kinozal", "u2"]])
+    new = search.Release(NEW, "Сезон 4 [1-6 из 6]", "m3", size=SIZE, updated="2026-02-20",
+                         trackers=[["rutracker", "u3"]])
+    out = search.group([old, stale, new])
+    card = next(r for r in out if r.hash == NEW)
+    assert not card.stale and card.alts == [] and ["kinozal", "u2"] in card.trackers
+    assert len(out) == 2                                 # старая версия — своей строкой
+
+
+def test_same_hash_trackers_joined_in_magnet():
+    a = search.Release(OLD, "a", f"magnet:?xt=urn:btih:{OLD}&tr=udp%3A%2F%2Fopentor.net%3A6969",
+                       trackers=[["rutor", "u1"]])
+    b = search.Release(OLD, "b",
+                       f"magnet:?xt=urn:btih:{OLD}&tr=http%3A%2F%2Fbt4.t-ru.org%2Fann%3Fmagnet",
+                       trackers=[["rutracker", "u2"]])
+    card = search.group([a, b])[0]
+    assert search.swarm.trackers_of(card.magnet) == ["udp://opentor.net:6969",
+                                                     "http://bt4.t-ru.org/ann?magnet"]
+
+
+def test_check_alive(monkeypatch):
+    dead = search.Release("1" * 40, "rt", "m", seeds=845, trackers=[["rutracker", "u"]])
+    rutor = search.Release("2" * 40, "rutor", "m", seeds=103, trackers=[["rutor", "u"]])
+    known = search.Release("3" * 40, "kz", "m", seeds=3, trackers=[["kinozal", "u"]])
+    popular = search.Release("4" * 40, "korsars", "m", seeds=152, seeds_at="2026-08-18",
+                             trackers=[["korsars", "u"], ["rutracker", "u2"]])
+    quiet = search.Release("5" * 40, "rutor", "m", seeds=40, trackers=[["rutor", "u"]])
+    asked, scraped = [], []
+    ot, op = search.swarm.RUTOR, "tracker.opentrackr.org"
+
+    def scrape(hs):
+        scraped.extend(hs)
+        return {"1" * 40: {op: 0}, "2" * 40: {ot: 0, op: 1}, "3" * 40: {op: 0},
+                "4" * 40: {op: 50}, "5" * 40: {op: 0}}
+
+    monkeypatch.setattr(search.swarm, "scrape", scrape)
+    monkeypatch.setattr(search.swarm, "registered",
+                        lambda hs: asked.extend(hs) or {"1" * 40: False, "3" * 40: True})
+    search.check_alive([dead, rutor, known, popular, quiet])
+    assert scraped[:2] == ["2" * 40, "5" * 40]           # раздачи rutor — первыми (для opentor)
+    assert asked == ["1" * 40, "4" * 40, "3" * 40]       # закрытые, сидовые — первыми
+    assert dead.dead and not dead.alive and dead.seeds == 845
+    assert rutor.seeds == 1 and rutor.seeds_live and not rutor.dead   # opentor — его трекер
+    assert quiet.seeds == 40 and not quiet.seeds_live    # opentor промолчал — число источника
+    assert known.alive and known.seeds == 3 and not known.seeds_live
+    assert popular.seeds == 152 and not popular.seeds_live and popular.alive
+
+
+def test_dead_link_ranked_last_and_not_recommended():
+    t = _title()
+    dead = search.Release("1" * 40, "Тёмная материя [S01] 1080p", "m", seeds=845, quality=1080,
+                          seasons=[1], dead=True)
+    alive = search.Release("2" * 40, "Тёмная материя [S01] 1080p", "m", seeds=4, quality=1080,
+                           seasons=[1])
+    ranked = search.rank([dead, alive], t, search.Prefs(), [1])
+    assert ranked[0] is alive and alive.recommended and not dead.recommended
+    assert any("мёртвая ссылка" in n for n in dead.notes)
 
 
 def test_seeds_date_from_same_record():

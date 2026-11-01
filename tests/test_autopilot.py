@@ -554,21 +554,86 @@ def test_original_filename_kept_in_episode_nfo(env):
     assert "<original_filename>Show.S01E01.1080p.mkv</original_filename>" in text
 
 
-def test_stuck_magnet_replaced_by_twin(env):
+A, B, C = "a" * 40, "b" * 40, "c" * 40
+EPISODE = {"Show.S01.1080p/Show.S01E01.1080p.mkv": 100}
+
+
+def _metadata(fake, h, files=EPISODE):
+    """Список файлов пришёл — как у настоящего qBittorrent после метаданных."""
+    fake.names[h], fake.sizes[h] = list(files), dict(files)
+
+
+def test_add_races_twins_with_trackers_appended(env):
     tv, fake, _ = env
-    fake.add("magnet:?xt=urn:btih:old")                  # список файлов так и не пришёл
     ap = autopilot.Autopilot()
-    twin = {"hash": "new", "magnet": "magnet:?xt=urn:btih:new", "title": "Show S01 (kinozal)",
-            "pages": ["https://kinozal.guru/details.php?id=1"], "seasons": [1]}
-    ap.expect("old", library.TV, 1, "Show S01", hold=True, twins=[twin])
+    said = ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01",
+                  alts=[{"hash": B, "magnet": f"magnet:?xt=urn:btih:{B}"}])
+    assert said == "Скачиваю"
+    assert [m[0].split("btih:")[1][:40] for m in fake.magnets] == [A, B]
+    assert all("tr=http%3A%2F%2Fbt4.t-ru.org" in m[0] and m[2] for m in fake.magnets)
+    assert list(ap.items) == [A] and ap.items[A].rivals == [B]
     ap.tick()
-    assert "old" in fake.names and len(fake.magnets) == 1   # ещё ждём
-    ap.items["old"].waiting_since -= autopilot.STUCK + 1
+    assert A in fake.names and B in fake.names and list(ap.items) == [A]   # ждут оба
+
+
+def test_race_won_by_twin(env):
+    tv, fake, _ = env
+    ap = autopilot.Autopilot()
+    ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01",
+           alts=[{"hash": B, "magnet": f"magnet:?xt=urn:btih:{B}"},
+                 {"hash": C, "magnet": f"magnet:?xt=urn:btih:{C}"}])
+    _metadata(fake, B)
     ap.tick()
-    assert ("remove", "old") in fake.events
-    assert fake.magnets[-1] == ("magnet:?xt=urn:btih:new", "tv", True)
-    new = ap.items["new"]
-    assert new.hold and new.tmdb_id == 1 and new.twins == [] and "old" not in ap.items
+    assert ("remove", A) in fake.events and ("remove", C) in fake.events
+    assert list(ap.items) == [B]
+    item = ap.items[B]
+    assert item.tmdb_id == 1 and item.rivals == [] and item.status == autopilot.DONE, item.error
+    assert ("start", B) in fake.events
+
+
+def test_race_won_by_main_link(env):
+    tv, fake, _ = env
+    ap = autopilot.Autopilot()
+    ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01",
+           alts=[{"hash": B, "magnet": f"magnet:?xt=urn:btih:{B}"}])
+    _metadata(fake, A)
+    _metadata(fake, B)
+    fake.seeds = {A: 5, B: 2}                   # обе успели — где больше сидов
+    ap.tick()
+    assert ("remove", B) in fake.events and ("remove", A) not in fake.events
+    assert list(ap.items) == [A] and ap.items[A].rivals == []
+
+
+def test_twin_already_in_qbittorrent_is_not_a_rival(env):
+    tv, fake, _ = env
+    fake.add(B, EPISODE)                        # своя раздача пользователя
+    ap = autopilot.Autopilot()
+    ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01",
+           alts=[{"hash": B, "magnet": f"magnet:?xt=urn:btih:{B}"}])
+    assert len(fake.magnets) == 1 and ap.items[A].rivals == []
+
+
+def test_stuck_race_warns_once(env):
+    tv, fake, _ = env
+    said = []
+    ap = autopilot.Autopilot(notify=lambda text: said.append(text) or True)
+    ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01",
+           alts=[{"hash": B, "magnet": f"magnet:?xt=urn:btih:{B}"}])
+    ap.items[A].waiting_since -= autopilot.STUCK + 1
+    ap.tick()
+    ap.tick()
+    assert len(said) == 1 and "ни по одной из 2 ссылок" in said[0]
+    assert A in fake.names and B in fake.names           # ждём дальше, ничего не убираем
+    _metadata(fake, B)                                   # сид появился
+    ap.tick()
+    assert list(ap.items) == [B] and not ap.items[B].stuck and not ap.items[B].error
+
+
+def test_has_metadata_without_flag():
+    assert not autopilot._has_metadata({"state": "metaDL", "size": 0})
+    assert not autopilot._has_metadata({"state": "queuedDL", "total_size": -1})
+    assert autopilot._has_metadata({"state": "stoppedDL", "total_size": 10})
+    assert not autopilot._has_metadata({"has_metadata": False, "total_size": 10})
 
 
 def test_stuck_magnet_without_twin_warns_once(env):

@@ -4,3 +4,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pytest  # noqa: E402
+
+import swarm  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_swarm(monkeypatch):
+    """Живость раздач (swarm) в тестах — без сети: трекеры будто не ответили."""
+    monkeypatch.setattr(swarm, "scrape", lambda hashes: {})
+    monkeypatch.setattr(swarm, "registered", lambda hashes: {})
