@@ -535,3 +535,14 @@ def test_more_episodes_first_among_incomplete():
     five = search.Release("f" * 40, "[02x01-05 из 10] WEBRip", "m", quality=1080, seeds=2,
                           source="WEBRip", seasons=[2], episodes=[1, 5, 10])
     assert search.rank([pack, five], title, search.Prefs(), [2])[0] is five
+
+
+def test_dub_matches_any_studio():
+    def rel(title, voices=()):
+        return search.Release("d" * 40, title, "m", voices=list(voices))
+    assert search.has_voice(rel("Фильм / ДБ (DEEP), СТ / WEB-DL (1080p)"), "Дубляж")
+    assert search.has_voice(rel("Film (2026) WEB-DL 1080p | D, L | DEEP"), "Дубляж")
+    assert search.has_voice(rel("Film [2026, WEB-DL] Dub"), "Дубляж")
+    assert search.has_voice(rel("Фильм", ["Дубляж", "AniLibria"]), "Дубляж")
+    assert not search.has_voice(rel("Фильм / ЛМ (AniLibria) / WEB-DL"), "Дубляж")
+    assert not search.has_voice(rel("Film (2026) WEB-DL | L, P2 |"), "Дубляж")

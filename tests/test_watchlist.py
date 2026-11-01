@@ -286,3 +286,17 @@ def test_release_already_in_qbittorrent_not_offered_again(env):
     w.check_now()
     w.tick(now=10 ** 9 + 1)
     assert [o["hash"] for o in item.offer] == ["n" * 40] and len(bot.sent) == 1
+
+
+def test_watch_dub_condition_any_studio(env):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
+    amateur = _rel("a", [1, 10, 10], seeds=100)
+    amateur.title = "Тёмная материя / ЛМ (AniLibria)"
+    dub = _rel("d", [1, 10, 10], seeds=3)
+    dub.title = "Тёмная материя / ДБ (DEEP)"
+    state["releases"] = [amateur, dub]
+    item = w.add(library.TV, 5, "x")
+    w.set_filter(item.id, voice="Дубляж")
+    w.tick(now=10 ** 9)
+    assert [o["hash"] for o in item.offer] == ["d" * 40]

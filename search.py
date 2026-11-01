@@ -646,8 +646,16 @@ def fits(rel: Release, title: Title, seasons=(), any_year: bool = False) -> bool
     return True
 
 
+DUB = "Дубляж"
+# Дубляж любой студии — как его пишут трекеры: «ДБ (DEEP)» у kinozal, «| D, L |» у rutor,
+# «Дублированный», «Dub». jac.red обычно и сам кладёт «Дубляж» в озвучки.
+_DUB = re.compile(r"дубляж|дублир|\bдб\b|\bdub\b|\|\s*(?:[a-z]\s*,\s*)*d(?:\s*,\s*[a-z])*\s*\|", re.I)
+
+
 def has_voice(rel: Release, voice: str) -> bool:
     have = " ".join(rel.voices + [rel.title]).casefold().replace("ё", "е")
+    if voice == DUB:
+        return bool(_DUB.search(have))
     return voice.casefold().replace("ё", "е") in have
 
 
