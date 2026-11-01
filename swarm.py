@@ -8,8 +8,11 @@ jac.red помнит сиды на день, когда обходил тему,
   (scrape, BEP 15) — одним UDP-пакетом на десятки раздач, доли секунды. Раздачи
   rutracker и kinozal они видят плохо: ноль у них — ещё не «мёртвая».
 - Трекер rutracker (пускает без входа — им пользуются magnet-ссылки rutracker):
-  числа не говорит, но про устаревший хеш отвечает «Torrent not registered».
-  Запрос — «ушёл с раздачи» (event=stopped): в список участников нас не вносит.
+  числа сидов не говорит (scrape — 403), но про устаревший хеш отвечает «Torrent
+  not registered». «Ушёл с раздачи» (event=stopped) — только это, в список участников
+  нас не вносит. «Подключился» (started) — ещё и список участников, до 30 человек:
+  у раздачи поменьше это и есть их число (сиды и качающие вместе). Сразу за ним —
+  «ушёл»: в списке мы на долю секунды, как любой клиент.
 
 И трекеры для magnet: у kinozal и nnm-club на jac.red в ссылке нет ни одного, и
 qBittorrent ищет людей только через DHT — список файлов идёт минутами. Одна раздача
@@ -21,12 +24,14 @@ qBittorrent ищет людей только через DHT — список ф�
 from __future__ import annotations
 
 import random
+import re
 import socket
 import struct
 import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import net
 
@@ -47,6 +52,8 @@ _BATCH = 70              # хешей в одном пакете scrape — чт
 SCRAPE = ((RUTOR, 6969, _BATCH), ("tracker.opentrackr.org", 1337, 0), ("open.stealth.si", 80, 0))
 RUTRACKER = "http://bt4.t-ru.org/ann?magnet"
 RUTRACKER_MAX = 120      # хешей за один поиск: самые сидовые — остальные вряд ли нужны
+RUTRACKER_COUNT = 40     # у скольких из них (первых) узнавать участников — два запроса
+RUTRACKER_PEERS = 30     # больше участников трекер не присылает: 30 — это «30 и больше»
 TIMEOUT = 4
 UDP_TIMEOUT = 2          # открытые трекеры отвечают за доли секунды; молчат — пропуск
 CACHE = 600              # секунд: фильтры поиска и слежение спрашивают те же хеши
@@ -148,8 +155,18 @@ def scrape(hashes) -> dict[str, dict[str, int]]:
 
 
 # --------------------------------------------------------------------------- #
-# rutracker: знает ли он хеш
+# rutracker: знает ли он хеш, сколько участников
 # --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class Tracked:
+    """Что сказал трекер rutracker о хеше."""
+    known: bool                         # False — «Torrent not registered»: тему перезалили
+    peers: int | None = None            # участников сейчас (до RUTRACKER_PEERS); None — не спрашивали
+
+
+_PEERS = re.compile(rb"5:peers(\d+):")
+
 
 def _registered_reply(body: bytes) -> bool | None:
     if b"not registered" in body.lower():
@@ -159,24 +176,50 @@ def _registered_reply(body: bytes) -> bool | None:
     return True
 
 
-def _ask_rutracker(h: str) -> bool | None:
+def _peer_count(body: bytes) -> int | None:
+    """Участников в ответе: компактный список — по 6 байт на каждого."""
+    m = _PEERS.search(body)
+    return int(m.group(1)) // 6 if m else None
+
+
+def _announce(h: str, event: str, numwant: int) -> bytes:
     url = (f"{RUTRACKER}&info_hash={urllib.parse.quote(bytes.fromhex(h))}&peer_id={_PEER}"
-           f"&port=6881&uploaded=0&downloaded=0&left=0&numwant=0&compact=1&event=stopped")
+           f"&port=6881&uploaded=0&downloaded=0&left=1&numwant={numwant}&compact=1&event={event}")
+    return net.get_bytes(url, timeout=TIMEOUT)
+
+
+def _ask_rutracker(h: str, count: bool) -> Tracked | None:
     try:
-        return _registered_reply(net.get_bytes(url, timeout=TIMEOUT))
+        if not count:
+            known = _registered_reply(_announce(h, "stopped", 0))
+            return None if known is None else Tracked(known)
+        body = _announce(h, "started", 50)
+        known = _registered_reply(body)
+        if known:
+            try:
+                _announce(h, "stopped", 0)  # сразу «ушёл»: из списка участников — вон
+            except (net.NetError, OSError):
+                pass
+        return None if known is None else Tracked(known, _peer_count(body) if known else None)
     except (net.NetError, OSError, ValueError):
         return None
 
 
-def registered(hashes) -> dict[str, bool]:
-    """Знает ли раздачу трекер rutracker: False — «Torrent not registered» (тему
-    перезалили, хеш устарел), True — знает. Не ответил — хеша в ответе нет.
-    Спрашиваются первые RUTRACKER_MAX — порядок задаёт тот, кто зовёт."""
+def rutracker(hashes) -> dict[str, Tracked]:
+    """Трекер rutracker о раздачах: знает ли хеш и — у первых RUTRACKER_COUNT — сколько
+    у неё участников сейчас. Спрашиваются первые RUTRACKER_MAX: порядок задаёт тот,
+    кто зовёт. Не ответил — хеша в ответе нет."""
     hashes = [h for h in dict.fromkeys(hashes) if len(h) == 40][:RUTRACKER_MAX]
+    counted = set(hashes[:RUTRACKER_COUNT])
     out, todo = _cached("rutracker", hashes)
+    # Из кэша без числа участников не годится тому, у кого его теперь хотят знать.
+    todo += [h for h in list(out) if h in counted and out[h].known and out[h].peers is None]
+    for h in todo:
+        out.pop(h, None)
     if todo:
         with ThreadPoolExecutor(max_workers=12) as pool:
-            fresh = {h: r for h, r in zip(todo, pool.map(_ask_rutracker, todo)) if r is not None}
+            answers = pool.map(lambda h: _ask_rutracker(h, h in counted), todo)
+            fresh = {h: r for h, r in zip(todo, answers) if r is not None}
         _remember("rutracker", fresh)
         out.update(fresh)
     return out

@@ -3,7 +3,7 @@ import struct
 import pytest
 
 import swarm
-from swarm import registered as real_registered
+from swarm import rutracker as real_rutracker
 from swarm import scrape as real_scrape
 
 H1, H2 = "a" * 40, "b" * 40
@@ -56,6 +56,45 @@ def test_registered_reply():
     assert swarm._registered_reply(b"<html>blocked</html>") is None
 
 
-def test_registered_skips_unknown_answers(monkeypatch):
-    monkeypatch.setattr(swarm, "_ask_rutracker", lambda h: {H1: False, H2: None}[h])
-    assert real_registered([H1, H2]) == {H1: False}
+def test_peer_count_from_compact_list():
+    body = b"d8:intervali3266e12:min intervali3266e5:peers30:" + bytes(30) + b"e"
+    assert swarm._peer_count(body) == 5
+    assert swarm._peer_count(b"d8:intervali60ee") is None
+
+
+def test_rutracker_counts_first_and_caches(monkeypatch):
+    calls = []
+
+    def ask(h, count):
+        calls.append((h[0], count))
+        return {"a": swarm.Tracked(True, 5 if count else None), "b": swarm.Tracked(False),
+                "c": None}[h[0]]
+
+    monkeypatch.setattr(swarm, "_ask_rutracker", ask)
+    monkeypatch.setattr(swarm, "RUTRACKER_COUNT", 1)
+    H3 = "c" * 40
+    assert real_rutracker([H1, H2, H3]) == {H1: swarm.Tracked(True, 5), H2: swarm.Tracked(False)}
+    assert sorted(calls) == [("a", True), ("b", False), ("c", False)]
+    calls.clear()
+    real_rutracker([H1, H2])                             # из кэша, кроме неответившего
+    assert calls == []
+    # Знал только «знает ли» — а теперь нужно и число участников: спросить заново.
+    monkeypatch.setattr(swarm, "RUTRACKER_COUNT", 2)
+    swarm._remember("rutracker", {H2: swarm.Tracked(True)})
+    assert real_rutracker([H1, H2])[H2] == swarm.Tracked(False)
+    assert calls == [("b", True)]
+
+
+def test_announce_started_then_stopped(monkeypatch):
+    sent = []
+
+    def get(url, timeout=None):
+        sent.append(url.split("event=")[1])
+        return b"d8:intervali60e5:peers12:" + bytes(12) + b"e" if "started" in url else b"d8:intervali60ee"
+
+    monkeypatch.setattr(swarm.net, "get_bytes", get)
+    assert swarm._ask_rutracker(H1, True) == swarm.Tracked(True, 2)
+    assert sent == ["started", "stopped"]                # сразу «ушёл»
+    sent.clear()
+    assert swarm._ask_rutracker(H1, False) == swarm.Tracked(True)
+    assert sent == ["stopped"]                           # только «знает ли» — не подключаясь

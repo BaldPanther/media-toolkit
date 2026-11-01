@@ -274,6 +274,8 @@ class Release:
     dead: bool = False                  # трекер хеша не знает, сидов нет (см. check_alive)
     alive: bool = False                 # жива наверняка: сиды сейчас или rutracker её знает
     seeds_live: bool = False            # сиды — у трекеров прямо сейчас, а не из памяти источника
+    rutracker_peers: int | None = None  # участников у rutracker сейчас (30 — «30+»); None — не знаем
+    site_seeds: dict = field(default_factory=dict)   # трекер → [сиды, когда]: у каждого сайта свои
     alts: list[dict] = field(default_factory=list)   # те же файлы по другим хешам: [{hash, magnet, dead}]
     # Заполняет rank():
     score: tuple = ()
@@ -530,6 +532,8 @@ def group(items: list[Release], live=None) -> list[Release]:
     by_hash: dict[str, Release] = {}
     stale: list[Release] = []
     for r in items:
+        if not r.site_seeds and r.trackers:
+            r.site_seeds = {r.trackers[0][0]: [r.seeds, r.seeds_at]}
         g = by_hash.get(r.hash)
         if g is None:
             by_hash[r.hash] = r
@@ -544,6 +548,9 @@ def group(items: list[Release], live=None) -> list[Release]:
             # Дата — от той же записи, что и число: «57» с nnm-club из февраля не станет
             # августовским оттого, что bitru обходили в августе.
             g.seeds, g.peers, g.seeds_at = r.seeds, max(g.peers, r.peers), r.seeds_at
+        for site, (n, at) in r.site_seeds.items():
+            if n > g.site_seeds.get(site, [-1])[0]:
+                g.site_seeds[site] = [n, at]
         # Хеш тот же — толпа одна: трекеры всех сайтов в одну ссылку, больше участников.
         g.magnet = swarm.with_trackers(g.magnet, swarm.trackers_of(r.magnet))
         _absorb(g, r)
@@ -634,7 +641,12 @@ def check_alive(cards: list[Release]) -> None:
     сегодняшнее. Мёртвая — раздача rutracker, а он её хеша не знает, и сидов сейчас ни
     у кого нет: тему перезалили. «Знает» годится любой раздаче (kinozal и nnm-club
     часто держат торренты rutracker), «не знает» — только его собственной: у kinozal
-    бывают и свои торренты."""
+    бывают и свои торренты.
+
+    Участники у rutracker (до 30 — точно, см. `swarm.rutracker`): сидов у него не больше,
+    чем участников, так что его число в источнике, большее их, — устаревшее: вместо него
+    число участников (у других сайтов карточки — свои числа, их участники — у своих
+    трекеров). У раздачи одного rutracker ни одного участника — мёртвая."""
     by_seeds = sorted(cards, key=lambda c: -c.seeds)
     rutor = [c for c in by_seeds if any(tr[0] == "rutor" for tr in c.trackers)]
     closed = [c.hash for c in by_seeds
@@ -642,17 +654,26 @@ def check_alive(cards: list[Release]) -> None:
     # Оба вопроса разом. Раздачи rutor — первыми: opentor спрашивается об одной пачке.
     with ThreadPoolExecutor(max_workers=2) as pool:
         scraping = pool.submit(swarm.scrape, [c.hash for c in rutor] + [c.hash for c in by_seeds])
-        known = swarm.registered(closed)
+        known = swarm.rutracker(closed)
         answers = scraping.result()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for c in cards:
-        got, reg = answers.get(c.hash, {}), known.get(c.hash)
+        got, rt = answers.get(c.hash, {}), known.get(c.hash)
         n = max(got.values(), default=None)
         home = swarm.RUTOR in got and all(tr[0] == "rutor" for tr in c.trackers)
         if n is not None and (n > c.seeds or home):
             c.seeds, c.seeds_at, c.seeds_live = n, now, True
-        c.alive = bool(n) or reg is True
-        c.dead = reg is False and not n and any(tr[0] == "rutracker" for tr in c.trackers)
+        c.rutracker_peers = peers = rt.peers if rt is not None and rt.known else None
+        own = any(tr[0] == "rutracker" for tr in c.trackers)
+        only = own and all(tr[0] == "rutracker" for tr in c.trackers)
+        mine = c.site_seeds.get("rutracker")
+        if mine and peers is not None and peers < min(mine[0], swarm.RUTRACKER_PEERS):
+            c.site_seeds["rutracker"] = [peers, now]
+            top = max(c.site_seeds.values(), key=lambda v: v[0])
+            if not c.seeds_live and top[0] < c.seeds:   # число карточки было его
+                c.seeds, c.seeds_at = max(top[0], n or 0), top[1]
+        c.alive = bool(n) or (rt is not None and rt.known and peers != 0)
+        c.dead = not n and ((rt is not None and not rt.known and own) or (peers == 0 and only))
 
 
 def hashes(rel: Release) -> set[str]:

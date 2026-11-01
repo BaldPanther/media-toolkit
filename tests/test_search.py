@@ -658,10 +658,11 @@ def test_check_alive(monkeypatch):
         return {"1" * 40: {op: 0}, "2" * 40: {ot: 0, op: 1}, "3" * 40: {op: 0},
                 "4" * 40: {op: 50}, "5" * 40: {op: 0}, "6" * 40: {op: 0}}
 
+    T = search.swarm.Tracked
     monkeypatch.setattr(search.swarm, "scrape", scrape)
-    monkeypatch.setattr(search.swarm, "registered",
-                        lambda hs: asked.extend(hs) or {"1" * 40: False, "3" * 40: True,
-                                                        "6" * 40: False})
+    monkeypatch.setattr(search.swarm, "rutracker",
+                        lambda hs: asked.extend(hs) or {"1" * 40: T(False), "3" * 40: T(True),
+                                                        "4" * 40: T(True, 30), "6" * 40: T(False)})
     search.check_alive([dead, rutor, known, popular, quiet, own])
     assert scraped[:2] == ["2" * 40, "5" * 40]           # раздачи rutor — первыми (для opentor)
     assert asked == ["1" * 40, "4" * 40, "6" * 40, "3" * 40]   # закрытые, сидовые — первыми
@@ -670,7 +671,32 @@ def test_check_alive(monkeypatch):
     assert rutor.seeds == 1 and rutor.seeds_live and not rutor.dead   # opentor — его трекер
     assert quiet.seeds == 40 and not quiet.seeds_live    # opentor промолчал — число источника
     assert known.alive and known.seeds == 3 and not known.seeds_live
+    assert known.rutracker_peers is None                 # участников у него не спрашивали
     assert popular.seeds == 152 and not popular.seeds_live and popular.alive
+    assert popular.rutracker_peers == 30
+
+
+def test_rutracker_peers_cap_stale_seeds(monkeypatch):
+    def rt(h, **sites):
+        found = [search.Release(h * 40, h, "m", seeds=n, seeds_at="2026-02-04",
+                                trackers=[[site, f"u{site}"]]) for site, n in sites.items()]
+        return search.group(found)[0]
+
+    old = rt("1", rutracker=41)
+    empty = rt("2", rutracker=16)
+    mixed = rt("3", rutracker=41, kinozal=20)            # число карточки — от rutracker
+    kz = rt("5", rutracker=8, kinozal=35)                # число карточки — от kinozal
+    big = rt("4", rutracker=125)
+    T = search.swarm.Tracked
+    monkeypatch.setattr(search.swarm, "rutracker", lambda hs: {
+        "1" * 40: T(True, 13), "2" * 40: T(True, 0), "3" * 40: T(True, 0), "4" * 40: T(True, 30),
+        "5" * 40: T(True, 2)})
+    search.check_alive([old, empty, mixed, kz, big])
+    assert old.seeds == 13 and old.seeds_at != "2026-02-04" and old.alive   # 41 — устарело
+    assert empty.dead and not empty.alive                # у rutracker ни одного участника
+    assert mixed.seeds == 20 and mixed.seeds_at == "2026-02-04" and not mixed.dead
+    assert kz.seeds == 35                                # у kinozal свои участники
+    assert big.seeds == 125 and big.rutracker_peers == 30    # 30 — «30 и больше»
 
 
 def test_dead_link_ranked_last_and_not_recommended():

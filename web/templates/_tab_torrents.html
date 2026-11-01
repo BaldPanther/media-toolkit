@@ -185,6 +185,8 @@
               <td class="num" :title="seedsHint(r)">
                 <div :class="{ 'warn-text': r.seeds < 5 }" x-text="r.seeds"></div>
                 <div class="small faint nowrap" x-show="seedsAge(r)" x-text="seedsAge(r)"></div>
+                <div class="small faint nowrap" x-show="r.rutracker_peers != null"
+                     :class="{ 'warn-text': r.rutracker_peers === 0 }" x-text="'rutracker: ' + peersText(r)"></div>
               </td>
               <td class="nowrap">
                 <button type="button" class="btn btn-sm" :class="{ 'btn-primary': (r.recommended || r.update) && !r.in_qbit }"

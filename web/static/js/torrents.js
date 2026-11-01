@@ -134,10 +134,18 @@ document.addEventListener("alpine:init", () => {
       return "на " + d.toLocaleDateString("ru-RU", opts);
     },
     seedsHint(r) {
-      if (r.seeds_live) return "Сиды — у открытых трекеров прямо сейчас. Раздачи rutracker и kinozal они видят не все: там может быть больше";
-      const base = "Сиды — на момент, когда источник последний раз смотрел трекер: " + (r.seeds_at || r.updated || "?");
-      return r.alive ? base + ". Ссылка живая — проверено у трекеров сейчас" : base;
+      let text = r.seeds_live
+        ? "Сиды — у открытых трекеров прямо сейчас. Раздачи rutracker и kinozal они видят не все: там может быть больше"
+        : "Сиды — на момент, когда источник последний раз смотрел трекер: " + (r.seeds_at || r.updated || "?")
+          + (r.alive ? ". Ссылка живая — проверено у трекеров сейчас" : "");
+      if (r.rutracker_peers != null) {
+        text += `. У трекера rutracker сейчас участников: ${this.peersText(r)} — сиды и качающие вместе`
+          + " (больше 30 он не показывает). Сидов не бывает больше, чем участников";
+      }
+      return text;
     },
+    // Участники у rutracker: больше 30 он не присылает — 30 значит «30 и больше».
+    peersText(r) { return r.rutracker_peers >= 30 ? "30+" : String(r.rutracker_peers); },
     voiceLabel(v) {
       return { "Дубляж": "дубляж (любой студии)", "Любая русская": "любая русская (дубляж — первым)" }[v] || v;
     },
