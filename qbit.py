@@ -435,6 +435,14 @@ class TorrentFiles:
     def owns(self, path) -> bool:
         return path is not None and _key(path) in self._owner
 
+    def index_of(self, path) -> int | None:
+        """Номер файла в раздаче — для приоритета «не загружать»."""
+        owner = self._owner.get(_key(path))
+        if owner is None:
+            return None
+        torrent, rel = owner
+        return next((f.index for f in torrent.files if f.rel == rel), None)
+
     def describe(self) -> str:
         return ", ".join(f"«{t.name}» ({t.progress:.0%})" for t in self.torrents)
 

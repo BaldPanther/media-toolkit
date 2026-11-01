@@ -113,7 +113,9 @@ document.addEventListener("alpine:init", () => {
       }
       const [first, last, total] = r.episodes;
       if (!total) return first < last ? `${first}–${last}` : `серия ${last}`;   // «S01E07»: всего не знаем
-      return first > 1 ? `${first}–${last}/${total}` : `${last}/${total}`;
+      const text = first > 1 ? `${first}–${last}/${total}` : `${last}/${total}`;
+      // У сборника серии посчитаны в его последнем сезоне.
+      return r.seasons.length > 1 ? `сез. ${r.seasons[r.seasons.length - 1]}: ${text}` : text;
     },
     size(bytes) {
       if (!bytes) return "—";

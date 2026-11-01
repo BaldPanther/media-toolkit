@@ -13,6 +13,8 @@
   пишут «(2026) Сезон 2» у сериала 2024-го.
 - Рекомендация: русские дорожки → все серии → качество → любимая озвучка → сиды.
   Мало сидов — не повод убирать из списка: «для коллекции подожду неделю».
+- Сезоны — как у трекеров (`numbering.py`): у аниме, которое TMDb держит одним
+  сезоном со сквозной нумерацией, это деление из episode groups.
 
 Только stdlib.
 """
@@ -30,6 +32,7 @@ from pathlib import Path
 import library
 import net
 import nfo
+import numbering
 import paths
 import tmdb
 
@@ -112,6 +115,8 @@ class Title:
     status: str = ""                    # у сериала: «Returning Series», «Ended»
     last_aired: tuple[int, int] = (0, 0)     # (сезон, серия) последней вышедшей
     next_air: tuple[int, int, str] = (0, 0, "")  # следующая: (сезон, серия, дата)
+    # Сезоны выше, last_aired и next_air — в нумерации трекеров; это — её связь с TMDb.
+    numbering: numbering.Numbering = field(default_factory=numbering.Numbering)
 
     def season(self, number: int) -> Season | None:
         return next((s for s in self.seasons if s.number == number), None)
@@ -163,15 +168,16 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         if key and key not in seen:
             seen.add(key)
             t.names.append(n.strip())
+    if kind != library.TV:
+        return t
+    nb = t.numbering = numbering.load(d, tmdb_id, api_key)
+    t.seasons = [Season(s.season, s.count, s.year) for s in nb.spans]
     last, nxt = d.get("last_episode_to_air") or {}, d.get("next_episode_to_air") or {}
-    t.last_aired = (int(last.get("season_number") or 0), int(last.get("episode_number") or 0))
-    t.next_air = (int(nxt.get("season_number") or 0), int(nxt.get("episode_number") or 0),
-                  str(nxt.get("air_date") or ""))
-    for s in d.get("seasons") or []:
-        number = s.get("season_number")
-        if isinstance(number, int) and number > 0:
-            t.seasons.append(Season(number, int(s.get("episode_count") or 0),
-                                    _year(s.get("air_date"))))
+    if last.get("season_number"):
+        t.last_aired = nb.from_tmdb(int(last["season_number"]), int(last.get("episode_number") or 0))
+    if nxt.get("season_number"):
+        t.next_air = (*nb.from_tmdb(int(nxt["season_number"]), int(nxt.get("episode_number") or 0)),
+                      str(nxt.get("air_date") or ""))
     return t
 
 
@@ -222,6 +228,9 @@ _SEASON_RANGE = re.compile(r"(?:сезон[ыа]?|seasons?)\s*[:.]?\s*(\d{1,2})\
 # Английская запись: «S01», «S01E07», «S01E01-E08», «Season 1».
 _SCENE = re.compile(r"\bs(\d{1,2})(?:[ .]?e(\d{1,3})(?:-?e?(\d{1,3}))?)?\b", re.I)
 _SEASON_WORD = re.compile(r"\bseason[ .]?(\d{1,2})\b", re.I)
+# Аниме: «Записки аптекаря [ТВ-2]», «(TV-3, часть 1)», «Kusuriya no Hitorigoto 2nd Season».
+# Только вплотную или через дефис: «TV 24 эп.» — число серий, а не сезон.
+_TV_PART = re.compile(r"\b(?:тв|tv)-?(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)[\s.]+season\b", re.I)
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 _CYRILLIC = re.compile(r"[а-яё]", re.I)
 _RUS_TAG = re.compile(r"\brus\b", re.I)
@@ -270,6 +279,8 @@ def parse_title(text: str) -> dict:
     elif m := _SEASON_WORD.search(text or ""):
         out["seasons"] = [int(m.group(1))]
         out["pack"] = True
+    elif m := _TV_PART.search(text or ""):
+        out["seasons"] = [int(m.group(1) or m.group(2))]
     return out
 
 
@@ -453,7 +464,41 @@ def find(title: Title, sources=None, log=None) -> list[Release]:
 
     with ThreadPoolExecutor(max_workers=max(1, len(sources))) as pool:
         parts = list(pool.map(read, [s for s in sources if s.get("type") in readers]))
-    return group([r for part in parts for r in part])
+    out = group([r for part in parts for r in part])
+    for r in out:
+        count_in_season(r, title)
+    return out
+
+
+def count_in_season(rel: Release, title: Title) -> None:
+    """Серии раздачи — в счёт одного сезона, чтобы сравнивать с медиатекой.
+
+    Сборник «1-3 сезоны: 1-49 из 72» у сериала 24 + 24 + 12 — это первая серия
+    третьего сезона: [1, 1, 12]. Сквозной номер в раздаче одного сезона аниме
+    («3 сезон: 49-53») — тоже в счёт этого сезона: [1, 5, 12]. «Из 10» в сборнике,
+    где последний сезон — 10 серий, уже про него и не трогается.
+    """
+    if title.kind != library.TV or len(rel.episodes) != 3 or not rel.seasons:
+        return
+    first, last, total = rel.episodes
+    seasons = sorted(rel.seasons)
+    tail = title.season(seasons[-1])
+    if tail is None or not tail.episodes or (total and total <= tail.episodes):
+        return
+    nb = title.numbering if title.numbering.spans else numbering.regular(
+        [(s.number, s.episodes, s.year) for s in title.seasons])
+    if len(seasons) > 1:
+        pos = nb.from_absolute(last, start=seasons[0])
+        if pos is None:
+            return
+        start = nb.from_absolute(first, start=seasons[0])
+        first = start[1] if start and start[0] == seasons[-1] else 1
+        # Последнего сезона в сборнике ещё нет: «0 из 12».
+        rel.episodes = [first, pos[1] if pos[0] == seasons[-1] else 0, tail.episodes]
+        return
+    before = sum(s.episodes for s in title.seasons if 0 < s.number < seasons[0])
+    if nb.grouped and before < first and last - before <= tail.episodes:
+        rel.episodes = [first - before, last - before, tail.episodes]
 
 
 # --------------------------------------------------------------------------- #
@@ -556,7 +601,8 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         if title.kind == library.TV and seasons and r.seasons and not set(r.seasons) <= set(seasons):
             r.notes.append("сборник: сезоны " + _ranges(r.seasons))
         if title.kind == library.TV and r.episodes and not full:
-            r.notes.append("не все серии: " + _episodes_text(r))
+            r.notes.append("не все серии: " + (f"сезон {max(r.seasons)} — " if len(r.seasons) > 1 else "")
+                           + _episodes_text(r))
         r.recommended = False
         r.why = _why(r, prefs)
     releases.sort(key=lambda r: r.score)
@@ -585,7 +631,9 @@ def _why(r: Release, prefs: Prefs) -> str:
     elif not russian(r):
         parts.append("англ.")
     if r.episodes:
-        parts.append(f"{r.episodes[1]}/{r.episodes[2]}" if r.episodes[2] else _episodes_text(r))
+        text = f"{r.episodes[1]}/{r.episodes[2]}" if r.episodes[2] else _episodes_text(r)
+        # У сборника серии посчитаны в его последнем сезоне (`count_in_season`).
+        parts.append(f"сезон {max(r.seasons)}: {text}" if len(r.seasons) > 1 else text)
     parts.append(f"{r.seeds} сид.")
     return " · ".join(parts)
 
@@ -596,18 +644,40 @@ def in_library(title: Title, roots) -> tuple[str, dict[int, int]]:
     Папка ищется по номеру TMDb в .nfo тайтла — имя папки могло быть любым.
     У фильма словарь пустой: важен сам факт папки.
     """
-    name = "tvshow.nfo" if title.kind == library.TV else "movie.nfo"
+    folder = library_dir(title.kind, title.tmdb_id, roots)
+    if not folder or title.kind != library.TV:
+        return folder, {}
+    have: dict[int, int] = {}
+    for season, episode in library_episodes(Path(folder), title.numbering):
+        have[season] = have.get(season, 0) + 1
+    return folder, have
+
+
+def library_dir(kind: str, tmdb_id: int, roots) -> str:
+    """Папка тайтла в медиатеке — по номеру TMDb в его .nfo; нет — пустая строка."""
+    name = "tvshow.nfo" if kind == library.TV else "movie.nfo"
     for root in roots:
         try:
             dirs = [d for d in Path(root).iterdir() if d.is_dir()]
         except OSError:
             continue
         for d in dirs:
-            if nfo.read_tmdb_id(d / name) == title.tmdb_id:
-                if title.kind != library.TV:
-                    return str(d), {}
-                return str(d), library.scan_folder(d).season_sizes()
-    return "", {}
+            if nfo.read_tmdb_id(d / name) == tmdb_id:
+                return str(d)
+    return ""
+
+
+def library_episodes(folder: Path, nb: numbering.Numbering) -> set[tuple[int, int]]:
+    """Серии тайтла на диске — (сезон, серия) в нумерации трекеров. Сквозные номера
+    медиатеки (S01E50) пересчитываются в сезоны трекеров (3, 2)."""
+    scan = library.scan_folder(folder)
+    found = set()
+    for v in scan.videos:
+        season, numbers = scan.episodes_of(v)
+        if season is not None:
+            found.update((season, n) for n in numbers)
+    grouped_disk = numbering.library_grouped(nb, {s for s, _ in found})
+    return {numbering.from_library(nb, s, n, grouped_disk) for s, n in found}
 
 
 def tracker_search_links(names) -> list[list[str]]:

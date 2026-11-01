@@ -24,8 +24,9 @@ class FakeAutopilot:
     def __init__(self):
         self.expected, self.added = [], []
 
-    def add(self, magnet, h, kind, tmdb_id, name, wanted=(), pages=()):
+    def add(self, magnet, h, kind, tmdb_id, name, wanted=(), pages=(), seasons=()):
         self.added.append((magnet, list(pages)))
+        self.seasons = list(seasons)
         self.expect(h, kind, tmdb_id, name, wanted)
         return "Скачиваю"
 
@@ -156,6 +157,7 @@ def test_download_button_adds_and_hands_to_autopilot(env, monkeypatch):
     assert bot.handlers["wl"](f"{item.id}:{'g' * 12}") == "Скачиваю."
     assert ap.added == [("magnet:?xt=urn:btih:" + "g" * 40, ["http://rutor.info/t/g"])]
     assert ap.expected == [("g" * 40, library.TV, 5, [2])]    # из сборника — только сезон 2
+    assert ap.seasons == [1, 2]                                 # сезоны раздачи — для раскладки
     assert "устарело" in bot.handlers["wl"](f"{item.id}:zzz")
 
 

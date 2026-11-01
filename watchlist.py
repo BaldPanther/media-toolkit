@@ -210,7 +210,9 @@ class Watcher:
             w.status = f"сезон {number} вышел целиком — полной раздачи пока нет"
             return
         w.status = f"сезон {number}: есть полные раздачи — можно качать"
-        self._event(w, f"season:{number}",
+        # Число серий — в ключе: сезон аниме выходит частями («ТВ-3, часть 2» через
+        # полгода), и о дополненном сезоне надо сказать заново.
+        self._event(w, f"season:{number}:{s.episodes}",
                     f"🎬 <b>{telegram.esc(w.title)}</b>: сезон {number} вышел целиком, "
                     f"раздачи со всеми сериями есть", self._buttons(w))
 
@@ -240,18 +242,21 @@ class Watcher:
         self._event(w, f"movie:{w.offer[0]['hash']}",
                     f"🎬 <b>{telegram.esc(w.title)}</b>: появились раздачи", self._buttons(w))
 
-    def _offer(self, w: Watch, title, seasons, full: bool, more_than: int = 0,
+    def _offer(self, w: Watch, title, seasons, full: bool, more_than: int | None = None,
                min_quality: int = 0) -> bool:
         """Лучшие раздачи для сезонов → `w.offer`. → нашлось ли что-нибудь.
         Кнопка качества поиска сюда не относится: лучшее из 4K → 1080p → 720p.
         Только раздачи с русскими дорожками: иначе о сезоне сообщили бы по английской
-        раздаче, а о русской (событие то же) — уже нет."""
+        раздаче, а о русской (событие то же) — уже нет. Раздача без сезона в названии
+        у сериала из нескольких сезонов — неизвестно какого, не предлагается.
+        `more_than` — в раздаче больше серий сезона, чем в медиатеке."""
         prefs = search.load_prefs()
         fit = [r for r in search.find(title, log=self.log)
                if search.fits(r, title, seasons) and r.seeds >= 1 and search.picture_ok(r, prefs)
                and search.russian(r)
+               and (title.kind != library.TV or r.seasons or len(title.seasons) == 1)
                and (not full or search.complete(r, title, seasons))
-               and (not more_than or (r.episodes and r.episodes[1] > more_than))
+               and (more_than is None or (r.episodes and r.episodes[1] > more_than))
                and r.quality >= min_quality]
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
@@ -297,7 +302,7 @@ class Watcher:
                     f"{autopilot.gb(free)}. Освободите место и нажмите ещё раз.")
         try:
             said = self.autopilot.add(offer["magnet"], offer["hash"], w.kind, w.tmdb_id,
-                                      offer["title"], wanted, pages)
+                                      offer["title"], wanted, pages, offer["seasons"])
         except qbit.QbitError as e:
             return f"qBittorrent не взял раздачу: {e}"
         self.log(f"Слежение: в qBittorrent добавлено — {w.title}: {offer['title']}")

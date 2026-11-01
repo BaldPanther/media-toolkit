@@ -57,7 +57,7 @@ IGNORE_SUFFIX = ".ignore"
 IGNORE_FILE = "не обрабатывать.ignore"
 
 _SEASON_DIR_RE = re.compile(r"(?i)^season[\s._-]*(\d{1,3})$")
-_SPECIALS_DIR_RE = re.compile(r"(?i)^(specials?|season[\s._-]*0+)$")
+_SPECIALS_DIR_RE = re.compile(r"(?i)^(specials?|sps?|season[\s._-]*0+)$")
 
 # Токен, после которого в имени раздачи начинается техническая часть.
 _RELEASE_TOKEN = re.compile(
@@ -344,6 +344,8 @@ class Scan:
     sidecars: dict[Path, list[Path]] = field(default_factory=dict)
     # Размеры файлов, которых на диске может ещё не быть (см. `scan_folder`).
     sizes: dict[Path, int] = field(default_factory=dict)
+    # Номера серий без маркера, угаданные по соседям (`sibling_numbers`).
+    guessed: dict[Path, int] = field(default_factory=dict)
 
     def size_of(self, path: Path) -> int:
         if path in self.sizes:
@@ -353,16 +355,21 @@ class Scan:
         except OSError:
             return 0
 
-    def season_of(self, video: Path) -> int | None:
+    def episodes_of(self, video: Path) -> tuple[int | None, list[int]]:
+        """(сезон, серии) видео: из имени, номер — и по соседям, сезон — и по папке."""
         season, numbers = parse_episodes(video)
-        if season is not None:
-            return season
-        by_dir = self.season_dirs.get(video.parent)
-        if by_dir is not None:
-            return by_dir
-        # Номер серии есть, а сезона нет и папок сезонов в тайтле тоже нет —
-        # значит, это плоская раскладка одного сезона (обычное дело у аниме).
-        return 1 if numbers and not self.season_dirs else None
+        if not numbers and video in self.guessed:
+            numbers = [self.guessed[video]]
+        if season is None:
+            season = self.season_dirs.get(video.parent)
+        if season is None and numbers and not any(self.season_dirs.values()):
+            # Номер серии есть, а сезона нет и папок сезонов в тайтле тоже нет (папка
+            # спецвыпусков не в счёт) — плоская раскладка одного сезона, обычное дело у аниме.
+            season = 1
+        return season, numbers
+
+    def season_of(self, video: Path) -> int | None:
+        return self.episodes_of(video)[0]
 
     def seasons(self) -> list[int]:
         found = {s for s in (self.season_of(v) for v in self.videos) if s is not None}
@@ -377,11 +384,40 @@ class Scan:
         """
         sizes: dict[int, int] = {}
         for v in self.videos:
-            season = self.season_of(v)
+            season, numbers = self.episodes_of(v)
             if season is None:
                 continue
-            sizes[season] = sizes.get(season, 0) + max(len(parse_episodes(v)[1]), 1)
+            sizes[season] = sizes.get(season, 0) + max(len(numbers), 1)
         return sizes
+
+
+_DIGITS = re.compile(r"\d+")
+
+
+def sibling_numbers(videos) -> dict[Path, int]:
+    """Номер серии без маркера — «[VCB-Studio] Show 08 [BDRip 1080p x265 FLAC].mkv».
+
+    Одно такое имя ничего не говорит («Loaded Weapon 1 (1993)»), а у серий одной
+    папки всё одинаковое, кроме одного числа, — оно и есть номер серии. Файлы с
+    другим шаблоном имени (спецвыпуски, NCOP) образуют свою группу.
+    """
+    groups: dict[tuple, list[Path]] = {}
+    for v in videos:
+        v = Path(v)
+        if not parse_episodes(v)[1]:
+            groups.setdefault((v.parent, tuple(_DIGITS.split(v.stem))), []).append(v)
+    out: dict[Path, int] = {}
+    for vids in groups.values():
+        if len(vids) < 2:
+            continue
+        nums = [_DIGITS.findall(v.stem) for v in vids]
+        varying = [i for i in range(len(nums[0])) if len({n[i] for n in nums}) > 1]
+        if len(varying) != 1:
+            continue
+        values = [int(n[varying[0]]) for n in nums]
+        if len(set(values)) == len(values) and max(values) < 1000:
+            out.update(zip(vids, values))
+    return out
 
 
 def _list_tree(root: Path, extra: dict[Path, int], sizes: dict[Path, int]):
@@ -445,6 +481,7 @@ def scan_folder(folder, extra=None) -> Scan:
             scan.videos.append(path)
             scan.sidecars[path] = find_sidecars(path, by_dir[path.parent])
             sidecars.update(scan.sidecars[path])
+    scan.guessed = sibling_numbers(scan.videos)
     for path in dirs:
         s = season_of_dir(path.name)
         if s is not None:
@@ -771,9 +808,7 @@ def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
         if video in overrides:
             season, numbers = overrides[video][0], [overrides[video][1]]
         else:
-            season, numbers = parse_episodes(video)
-            if season is None:
-                season = scan.season_of(video)
+            season, numbers = scan.episodes_of(video)
         if season is None or not numbers:
             plan.rows.append(Row(video, None, A_SKIP, S_NOEP, "video",
                                  note="двойной клик — задать вручную"))

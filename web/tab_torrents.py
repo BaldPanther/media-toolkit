@@ -32,7 +32,8 @@ class TorrentsTab:
     def __init__(self, state):
         self.st = state
         self.bot = telegram.Service(log=state.log.add)
-        self.autopilot = autopilot.Autopilot(log=state.log.add, on_change=state.touch)
+        self.autopilot = autopilot.Autopilot(log=state.log.add, on_change=state.touch,
+                                             notify=lambda text: self.bot.notify(telegram.esc(text)))
         self.watcher = watchlist.Watcher(log=state.log.add, bot=self.bot,
                                          autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.
@@ -170,7 +171,9 @@ class TorrentsTab:
                 "kind": "сериал" if i.kind == library.TV else "фильм",
                 "status": i.status,
                 "status_label": (UPDATE_LABELS[i.update_step] if i.replaces
-                                 else autopilot.STATUS_LABELS.get(i.status, i.status)),
+                                 else autopilot.STATUS_LABELS.get(i.status, i.status)
+                                 + (" — на паузе" if i.hold and i.status in (autopilot.ERROR,
+                                                                             autopilot.ASK) else "")),
                 "title": i.title, "root": i.root, "error": i.error,
                 "candidates": [label for _, label in i.candidates],
                 "progress": i.progress,
@@ -320,7 +323,8 @@ def search_download():
         replies.confirm("space", "Места может не хватить",
                         f"Раздача — {autopilot.gb(need)}, свободно на диске — "
                         f"{autopilot.gb(free)}. Всё равно скачать?", yes="Скачать")
-    said = _add(t, rel.magnet, rel.hash, kind, t.title.tmdb_id, rel.title, wanted, pages_of(rel))
+    said = _add(t, rel.magnet, rel.hash, kind, t.title.tmdb_id, rel.title, wanted, pages_of(rel),
+                rel.seasons)
     label = library.title_with_year(t.title.title, t.title.year)
     t.st.log.add(f"Поиск: в qBittorrent добавлено — {label}: {rel.title}")
     return jsonify({"ok": True, "text": said})
@@ -331,14 +335,14 @@ def pages_of(rel: search.Release) -> list[str]:
 
 
 def _add(t: TorrentsTab, magnet: str, h: str, kind: str, tmdb_id: int, name: str,
-         wanted=(), pages=()) -> str:
+         wanted=(), pages=(), seasons=()) -> str:
     """В qBittorrent через автоматику. → что сказать; автоматика выключена — Info."""
     qs = qbit.load_settings()
     if not qs.configured():
         raise UserError("qBittorrent не подключён",
                         "Впишите его адрес в «Настройках» → «qBittorrent».")
     try:
-        said = t.autopilot.add(magnet, h, kind, tmdb_id, name, wanted, pages)
+        said = t.autopilot.add(magnet, h, kind, tmdb_id, name, wanted, pages, seasons)
     except qbit.QbitError as e:
         raise UserError("qBittorrent не взял раздачу",
                         f"{e}\n\nВозможно, она уже есть в qBittorrent.") from e
@@ -366,7 +370,7 @@ def add_link():
     rel = next((r for r in t.releases if url in pages_of(r)), None)
     if rel is not None and t.title is not None:
         said = _add(t, rel.magnet, rel.hash, t.title.kind, t.title.tmdb_id, rel.title, (),
-                    pages_of(rel))
+                    pages_of(rel), rel.seasons)
         t.st.log.add(f"Ссылка: в qBittorrent добавлено — {rel.title}")
         return jsonify({"ok": True, "text": said})
     h = search.infohash(url)

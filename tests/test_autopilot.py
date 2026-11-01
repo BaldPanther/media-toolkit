@@ -8,6 +8,7 @@ import kodi
 import library
 import metaconf
 import metadata
+import numbering
 import paths
 import qbit
 import telegram
@@ -36,6 +37,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(metadata, "search", lambda kind, q, s, year=None: list(hits))
     monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: _info(tmdb_id))
     monkeypatch.setattr(artwork, "download", lambda tasks, stop=None, progress=None: [])
+    monkeypatch.setattr(numbering, "for_title", lambda tmdb_id, key: numbering.Numbering())
     return tv, fake, hits
 
 
@@ -183,12 +185,106 @@ def test_removed_torrent_leaves_list_and_readded_is_arranged_again(env):
 def test_videos_without_episode_number_are_error_not_done(env):
     tv, fake, _ = env
     root = "[Group] Show [BDRip 1080p]"
-    fake.add("v", {f"{root}/[Group] Show 0{n} [BDRip 1080p].mkv": 100 for n in (1, 2)})
+    fake.add("v", {f"{root}/Show Opening.mkv": 100, f"{root}/Show Ending.mkv": 100})
     ap = autopilot.Autopilot()
     ap.tick()
     item = ap.items["v"]
     assert item.status == autopilot.ERROR and "нет номера серии: 2" in item.error
     assert fake.renamed == []
+
+
+def test_episode_number_without_marker_taken_from_siblings(env):
+    tv, fake, _ = env
+    root = "[VCB-Studio] Show [BDRip 1080p x265 FLAC]"
+    fake.add("v", {f"{root}/[VCB-Studio] Show 0{n} [BDRip 1080p x265 FLAC].mkv": 100 for n in (1, 2)})
+    ap = autopilot.Autopilot()
+    ap.tick()
+    assert ap.items["v"].status == autopilot.DONE, ap.items["v"].error
+    assert sorted(new for _, new in fake.renamed) == [
+        "Show (2026)/Season 01/Show - S01E01 - Ep 1.mkv",
+        "Show (2026)/Season 01/Show - S01E02 - Ep 2.mkv"]
+
+
+def test_episodes_already_in_library_are_not_downloaded(env):
+    tv, fake, _ = env
+    # В медиатеке уже есть первая серия — из другой раздачи, с другим названием.
+    have = tv / "Show (2026)" / "Season 01" / "Show - S01E01 - Пилот.mkv"
+    have.parent.mkdir(parents=True)
+    have.write_bytes(b"old")
+    fake.add("h1", {"Other.S01/Other.S01E01.mkv": 100, "Other.S01/Other.S01E02.mkv": 100,
+                    "Other.S01/Other.S01E01.srt": 1})
+    ap = autopilot.Autopilot()
+    ap.expect("h1", library.TV, 1, "Other S01", hold=True)
+    ap.tick()
+    item = ap.items["h1"]
+    assert item.status == autopilot.DONE, item.error
+    assert fake.priorities == [("h1", [0, 2], 0)]          # серия 1 и её субтитры
+    assert [new for _, new in fake.renamed] == ["Show (2026)/Season 01/Show - S01E02 - Ep 2.mkv"]
+    assert have.read_bytes() == b"old"
+    assert ("start", "h1") in fake.events and not item.hold
+
+
+def _anime(env, monkeypatch, layout):
+    """TMDb: один сезон из 6 серий, у трекеров — три сезона по две. В медиатеке —
+    первые 4 серии: сквозными номерами (S01E01–04) или по сезонам (S01, S02)."""
+    tv, fake, hits = env
+    hits.clear()
+    nb = numbering.Numbering([numbering.Span(n, 1, 2 * n - 1, 2) for n in (1, 2, 3)], grouped=True)
+    monkeypatch.setattr(numbering, "for_title", lambda tmdb_id, key: nb)
+    info = _info()
+    for n in range(1, 7):
+        info.episodes[(1, n)] = metadata.EpisodeInfo(1, n, title=f"Э{n}", title_en=f"Ep {n}")
+    monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    show = tv / "Show (2026)"
+    show.mkdir()
+    (show / "tvshow.nfo").write_text('<tvshow><uniqueid type="tmdb">1</uniqueid></tvshow>',
+                                     encoding="utf-8")
+    for season, episode in layout:
+        p = show / f"Season {season:02d}" / f"Show - S{season:02d}E{episode:02d} - old.mkv"
+        p.parent.mkdir(exist_ok=True)
+        p.write_bytes(b"old")
+    return tv, fake
+
+
+def test_anime_pack_downloads_only_new_season_with_absolute_numbers(env, monkeypatch):
+    tv, fake = _anime(env, monkeypatch, [(1, n) for n in range(1, 5)])
+    fake.add("pk", {f"Show.S01-03/Show.S0{s}E0{e}.mkv": 100 for s in (1, 2, 3) for e in (1, 2)})
+    ap = autopilot.Autopilot()
+    ap.expect("pk", library.TV, 1, "Show S01-03", seasons=[1, 2, 3])
+    ap.tick()
+    assert ap.items["pk"].status == autopilot.DONE, ap.items["pk"].error
+    assert fake.priorities == [("pk", [0, 1, 2, 3], 0)]     # сезоны 1–2 уже есть
+    assert sorted(new for _, new in fake.renamed) == [
+        "Show (2026)/Season 01/Show - S01E05 - Ep 5.mkv",
+        "Show (2026)/Season 01/Show - S01E06 - Ep 6.mkv"]
+
+
+def test_anime_single_season_release_keeps_library_layout(env, monkeypatch):
+    # В медиатеке тайтл уже по сезонам трекеров (как «Solo Leveling»), раздача — «ТВ-3»
+    # без сезона в именах файлов.
+    tv, fake = _anime(env, monkeypatch, [(1, 1), (1, 2), (2, 1), (2, 2)])
+    fake.add("t3", {"[ТВ-3] Show/Show - 01.mkv": 100, "[ТВ-3] Show/Show - 02.mkv": 100})
+    ap = autopilot.Autopilot()
+    ap.expect("t3", library.TV, 1, "[ТВ-3] Show")      # сезон — из имени раздачи
+    ap.tick()
+    assert ap.items["t3"].status == autopilot.DONE, ap.items["t3"].error
+    assert sorted(new for _, new in fake.renamed) == [
+        "Show (2026)/Season 03/Show - S03E01 - Ep 5.mkv",
+        "Show (2026)/Season 03/Show - S03E02 - Ep 6.mkv"]
+
+
+def test_held_torrent_that_failed_stays_paused_and_warns_once(env):
+    tv, fake, hits = env
+    said = []
+    fake.add("h1", {"Show.S01/Show Opening.mkv": 100, "Show.S01/Show Ending.mkv": 100})
+    ap = autopilot.Autopilot(notify=lambda text: said.append(text) or True)
+    ap.expect("h1", library.TV, 1, "Show S01", hold=True)
+    ap.tick()
+    ap.tick()
+    item = ap.items["h1"]
+    assert item.status == autopilot.ERROR and item.hold
+    assert ("start", "h1") not in fake.events
+    assert len(said) == 1 and "на паузе" in said[0] and "нет номера серии" in said[0]
 
 
 def test_ambiguous_title_asks_and_answer_arranges(env, monkeypatch):
