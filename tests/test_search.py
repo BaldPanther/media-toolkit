@@ -496,13 +496,13 @@ def test_owned_source_from_nfo_and_codec_aware_comparison(tmp_path, monkeypatch)
     assert search.library_version(library.MOVIE, str(tmm)).source == "BDRip"
 
 
-def test_av1_recognized_for_comparison_not_preferred():
+def test_av1_recognized_and_preferred_like_hevc():
     assert search.parse_title("Полдень (2026) WEBRip [AV1/1080p]")["codec"] == "AV1"
     assert search.codec_of("HEVC/H.265/MPEG-H") == "HEVC" and search.codec_of("AVC/H.264/MPEG-4p10") == "AVC"
     assert search.avc_equivalent(500, "AV1") == 1000
     title = _title()
-    av1 = search.Release("a" * 40, "S01 1080p WEBRip AV1", "m", quality=1080, seeds=50, codec="AV1",
+    av1 = search.Release("a" * 40, "S01 1080p WEBRip AV1", "m", quality=1080, seeds=5, codec="AV1",
                          source="WEBRip", seasons=[1], episodes=[1, 9, 9])
-    hevc = search.Release("h" * 40, "S01 1080p WEBRip HEVC", "m", quality=1080, seeds=5, codec="HEVC",
-                          source="WEBRip", seasons=[1], episodes=[1, 9, 9])
-    assert search.rank([av1, hevc], title, search.Prefs(), [1])[0] is hevc
+    avc = search.Release("c" * 40, "S01 1080p WEBRip", "m", quality=1080, seeds=50,
+                         source="WEBRip", seasons=[1], episodes=[1, 9, 9])
+    assert search.rank([avc, av1], title, search.Prefs(), [1])[0] is av1
