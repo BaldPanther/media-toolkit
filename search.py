@@ -263,6 +263,7 @@ class Release:
     trackers: list[list[str]] = field(default_factory=list)   # [[трекер, страница], …]
     episodes: list[int] = field(default_factory=list)          # [первая, последняя, всего]
     pack: bool = False                  # «S01» без серий — весь сезон (английская запись)
+    stale: bool = False                 # magnet от прежней версии раздачи (см. group)
     # Заполняет rank():
     score: tuple = ()
     recommended: bool = False
@@ -495,13 +496,30 @@ def _knaben(source: dict, title: Title) -> list[Release]:
     return out
 
 
+def _same_size(a: Release, b: Release) -> bool:
+    return not a.size or not b.size or abs(a.size - b.size) <= max(a.size, b.size) * 0.01
+
+
 def group(items: list[Release]) -> list[Release]:
-    """Одна раздача на разных трекерах — одна строка: трекеры списком, сиды — наибольшие."""
+    """Одна раздача на разных трекерах — одна строка: трекеры списком, сиды — наибольшие.
+
+    Один хеш — один и тот же набор файлов, а значит, и размер. Разные размеры при
+    одном хеше — трекер обновил раздачу (название и размер новые), а источник знает
+    magnet прежней версии: так jac.red держит раздачи kinozal. Такую запись (более
+    свежую) не склеиваем — она отдельной строкой, с пометкой: скачается старая версия.
+    """
     by_hash: dict[str, Release] = {}
+    stale: list[Release] = []
     for r in items:
         g = by_hash.get(r.hash)
         if g is None:
             by_hash[r.hash] = r
+            continue
+        if not _same_size(g, r):
+            old, new = (g, r) if g.updated <= r.updated else (r, g)
+            new.stale = True
+            by_hash[r.hash] = old
+            stale.append(new)
             continue
         # Трекер — один раз, даже если раздача лежит у него в двух темах.
         for tr in r.trackers:
@@ -528,7 +546,7 @@ def group(items: list[Release]) -> list[Release]:
         # Название — самое подробное: у rutracker в нём и сезон, и озвучки.
         if len(r.title) > len(g.title):
             g.title = r.title
-    return list(by_hash.values())
+    return list(by_hash.values()) + stale
 
 
 def find(title: Title, sources=None, log=None) -> list[Release]:
@@ -700,11 +718,14 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         full = complete(r, title, seasons)
         # После любимой озвучки — источник (Remux → BDRip → WEB-DL → WEBRip → HDTV),
         # и только при равном источнике HEVC/AV1: они мельче, но качества не добавляют.
-        r.score = (0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
+        # Устаревший magnet — в самый низ: скачалась бы не та версия, что в названии.
+        r.score = (1 if r.stale else 0, 0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
                    _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
                    SOURCE_RANK.get(r.source, _UNKNOWN_SOURCE_RANK),
                    0 if r.codec in CODEC_FACTOR else 1, 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
+        if r.stale:
+            r.notes.append("старый magnet: скачается прежняя версия — качайте со страницы")
         if not russian(r):
             r.notes.append("украинская" if _UKRAINIAN.search(r.title) else "английская")
         if r.seeds < LOW_SEEDS:
@@ -719,7 +740,7 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
         r.recommended = False
         r.why = _why(r, prefs)
     releases.sort(key=lambda r: r.score)
-    best = next((r for r in releases if r.seeds >= 1), None)
+    best = next((r for r in releases if r.seeds >= 1 and not r.stale), None)
     if best is not None:
         best.recommended = True
     return releases

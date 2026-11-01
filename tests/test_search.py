@@ -509,3 +509,20 @@ def test_av1_recognized_and_preferred_like_hevc():
     avc = search.Release("c" * 40, "S01 1080p WEBRip", "m", quality=1080, seeds=50,
                          source="WEBRip", seasons=[1], episodes=[1, 9, 9])
     assert search.rank([avc, av1], title, search.Prefs(), [1])[0] is av1
+
+
+def test_same_hash_different_size_is_stale_magnet_not_merged():
+    # torrent.by: 4 серии, 1.64 ГБ; kinozal обновил раздачу до 5 серий (2.09 ГБ), а
+    # jac.red держит его magnet от прежней версии — тот же хеш.
+    tby = search.Release("6ad3" * 10, "[03x01-04 из 24]", "m", size=1_640_000_000, seeds=6,
+                         updated="2026-10-25", episodes=[1, 4, 24], seasons=[3],
+                         trackers=[["torrentby", "https://torrent.by/219936/x"]])
+    kz = search.Release("6ad3" * 10, "(3 сезон: 1-5 серии из 24)", "m", size=2_090_000_000, seeds=6,
+                        updated="2026-10-31", episodes=[1, 5, 24], seasons=[3],
+                        trackers=[["kinozal", "https://kinozal.guru/details.php?id=2155642"]])
+    out = search.group([tby, kz])
+    assert len(out) == 2 and not out[0].stale and out[1].stale
+    assert (out[0].size, out[0].title) == (1_640_000_000, "[03x01-04 из 24]")
+    ranked = search.rank(out, _title(), search.Prefs(), [3])
+    assert ranked[0] is tby and tby.recommended and not kz.recommended
+    assert any("старый magnet" in n for n in kz.notes)

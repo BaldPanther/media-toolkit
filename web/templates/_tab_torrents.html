@@ -183,7 +183,8 @@
                   x-text="r.seeds"></td>
               <td class="nowrap">
                 <button type="button" class="btn btn-sm" :class="{ 'btn-primary': (r.recommended || r.update) && !r.in_qbit }"
-                        @click="download(r)" :disabled="!t.qbit || r.in_qbit">
+                        @click="download(r)" :disabled="!t.qbit || r.in_qbit || r.stale"
+                        :title="r.stale ? 'У источника старый magnet этой раздачи — скачайте её со страницы трекера' : ''">
                   <svg class="icon" x-show="!r.in_qbit"><use href="#i-download"/></svg>
                   <svg class="icon" x-show="r.in_qbit"><use href="#i-check"/></svg>
                   <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить' : 'Скачать')"></span></button>

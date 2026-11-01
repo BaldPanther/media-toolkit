@@ -342,8 +342,9 @@ class Watcher:
         Условия тайтла: качество и озвучка. Своя раздача (`pin`) — только она, без
         прочих условий: её выбрали руками, даже если сейчас у неё нет сидов."""
         prefs = search.load_prefs()
+        # Устаревший magnet (search.group) не предлагаем: скачалась бы прежняя версия.
         fit = [r for r in search.find(title, log=self.log)
-               if search.fits(r, title, seasons)
+               if search.fits(r, title, seasons) and not r.stale
                and (title.kind != library.TV or r.seasons or len(title.seasons) == 1)
                and (not full or search.complete(r, title, seasons))
                and (more_than is None or (r.episodes and r.episodes[1] > more_than))]
