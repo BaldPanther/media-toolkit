@@ -85,8 +85,12 @@ document.addEventListener("alpine:init", () => {
       if (res && res.job) await this.$store.app.waitJob(res.job);
       await this.$store.app.loadState();
     },
-    toggleSeason(n) {
+    // Клик — только этот сезон; Ctrl/Shift+клик — добавить к выбранным (или убрать).
+    // Раньше клик добавлял: сразу отмеченный первый сезон оставался, и раздачи 1-го
+    // сезона попадали в список, когда хотели 4-й.
+    toggleSeason(n, ev) {
       const now = (this.s.seasons || []).filter((x) => x.selected).map((x) => x.number);
+      if (!(ev && (ev.ctrlKey || ev.metaKey || ev.shiftKey))) return this.opt({ seasons: [n] });
       const next = now.includes(n) ? now.filter((x) => x !== n) : [...now, n];
       this.opt({ seasons: next });
     },
@@ -98,7 +102,7 @@ document.addEventListener("alpine:init", () => {
     },
     seasonHint(se) {
       return `Серий: ${se.episodes || "?"}, год: ${se.year || "?"}, в медиатеке: ${se.have}`
-        + (se.tmdb ? `; в TMDb — ${se.tmdb}` : "");
+        + (se.tmdb ? `; в TMDb — ${se.tmdb}` : "") + ". Ctrl+клик — выбрать несколько сезонов";
     },
     async download(r) {
       const res = await api.post("/api/torrents/search/download", { hash: r.hash });
@@ -108,16 +112,17 @@ document.addEventListener("alpine:init", () => {
       }
     },
     qualityLabel(q) { return q >= 2160 ? "4K" : q > 480 ? `${q}p` : q ? "SD" : "?"; },
+    // Сезон — всегда на виду: «8/8» без него не отличить 1-й сезон от 4-го.
     episodes(r) {
+      const season = r.seasons.length ? `сез. ${r.seasons[r.seasons.length - 1]}: ` : "";
       if (!r.episodes || !r.episodes.length) {
         if (r.seasons.length > 1) return `сез. ${r.seasons[0]}–${r.seasons[r.seasons.length - 1]}`;
-        return r.pack ? "сезон" : "—";
+        return r.pack ? (season ? `сез. ${r.seasons[0]}` : "сезон") : "—";
       }
       const [first, last, total] = r.episodes;
-      if (!total) return first < last ? `${first}–${last}` : `серия ${last}`;   // «S01E07»: всего не знаем
-      const text = first > 1 ? `${first}–${last}/${total}` : `${last}/${total}`;
+      if (!total) return season + (first < last ? `${first}–${last}` : `серия ${last}`);   // «S01E07»: всего не знаем
       // У сборника серии посчитаны в его последнем сезоне.
-      return r.seasons.length > 1 ? `сез. ${r.seasons[r.seasons.length - 1]}: ${text}` : text;
+      return season + (first > 1 ? `${first}–${last}/${total}` : `${last}/${total}`);
     },
     // Заметно крупнее вашей — скорее всего, качество лучше; заметно мельче — хуже.
     // Отношение — с поправкой на кодек (HEVC мельче при том же качестве).
