@@ -135,7 +135,7 @@ document.addEventListener("alpine:init", () => {
     },
     seedsHint(r) {
       let text = r.seeds_live
-        ? "Сиды — у открытых трекеров прямо сейчас. Раздачи rutracker и kinozal они видят не все: там может быть больше"
+        ? "Сиды — у трекеров прямо сейчас (rutor, nnm-club, открытые). Раздачи rutracker и kinozal так не посчитать: там может быть больше"
         : "Сиды — на момент, когда источник последний раз смотрел трекер: " + (r.seeds_at || r.updated || "?")
           + (r.alive ? ". Ссылка живая — проверено у трекеров сейчас" : "");
       if (r.rutracker_peers != null) {

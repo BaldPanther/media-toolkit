@@ -277,7 +277,7 @@ class Release:
     alive: bool = False                 # жива наверняка: сиды сейчас или rutracker её знает
     seeds_live: bool = False            # сиды — у трекеров прямо сейчас, а не из памяти источника
     rutracker_peers: int | None = None  # участников у rutracker сейчас (30 — «30+»); None — не знаем
-    site_seeds: dict = field(default_factory=dict)   # трекер → [сиды, когда]: у каждого сайта свои
+    site_seeds: dict = field(default_factory=dict)   # трекер → [сиды, когда, сейчас ли]: у каждого свои
     alts: list[dict] = field(default_factory=list)   # те же файлы по другим хешам: [{hash, magnet, dead}]
     # Заполняет rank():
     score: tuple = ()
@@ -405,7 +405,10 @@ def _from_jacred(item: dict) -> Release | None:
         source=parsed["source"], voices=[str(v) for v in item.get("voices") or []],
         seasons=[int(s) for s in item.get("seasons") or [] if str(s).isdigit()]
         or parsed.get("seasons", []),
-        year=int(item["relased"]) if str(item.get("relased") or "").isdigit() else None,
+        # Год источник знает не всегда («relased»: 0 у выпусков телепередачи) — тогда из
+        # названия: «… (Паутина любви) / 2025 / РУ», «(24.05.2026)».
+        year=(int(item["relased"]) if str(item.get("relased") or "").isdigit()
+              else int(m.group(1)) if (m := _YEAR.search(title)) else None),
         types=[str(t) for t in item.get("types") or []],
         trackers=[[str(item.get("tracker") or "?"), str(item.get("url") or "")]],
         episodes=parsed.get("episodes", []),
@@ -557,7 +560,7 @@ def group(items: list[Release], live=None) -> list[Release]:
     stale: list[Release] = []
     for r in items:
         if not r.site_seeds and r.trackers:
-            r.site_seeds = {r.trackers[0][0]: [r.seeds, r.seeds_at]}
+            r.site_seeds = {r.trackers[0][0]: [r.seeds, r.seeds_at, False]}
         g = by_hash.get(r.hash)
         if g is None:
             by_hash[r.hash] = r
@@ -572,9 +575,9 @@ def group(items: list[Release], live=None) -> list[Release]:
             # Дата — от той же записи, что и число: «57» с nnm-club из февраля не станет
             # августовским оттого, что bitru обходили в августе.
             g.seeds, g.peers, g.seeds_at = r.seeds, max(g.peers, r.peers), r.seeds_at
-        for site, (n, at) in r.site_seeds.items():
-            if n > g.site_seeds.get(site, [-1])[0]:
-                g.site_seeds[site] = [n, at]
+        for site, value in r.site_seeds.items():
+            if value[0] > g.site_seeds.get(site, [-1])[0]:
+                g.site_seeds[site] = list(value)
         # Хеш тот же — толпа одна: трекеры всех сайтов в одну ссылку, больше участников.
         g.magnet = swarm.with_trackers(g.magnet, swarm.trackers_of(r.magnet))
         _absorb(g, r)
@@ -687,47 +690,64 @@ def _merge_twins(cards: list[Release]) -> list[Release]:
 _CLOSED = {"rutracker", "kinozal", "nnmclub"}
 
 
-def check_alive(cards: list[Release]) -> None:
+def check_alive(cards: list[Release], seasons=()) -> None:
     """Живы ли ссылки — у самих трекеров (`swarm`), а не по памяти источника.
 
-    Сиды с открытых трекеров заменяют число источника, если они больше, а у раздач
-    одного rutor — всегда, если ответил его трекер opentor: это и есть число rutor,
-    сегодняшнее. Мёртвая — раздача rutracker, а он её хеша не знает, и сидов сейчас ни
-    у кого нет: тему перезалили. «Знает» годится любой раздаче (kinozal и nnm-club
-    часто держат торренты rutracker), «не знает» — только его собственной: у kinozal
-    бывают и свои торренты.
+    Сиды считаются по каждому сайту карточки (`site_seeds`), потом берётся наибольшее:
+    - rutor — у его трекера opentor, nnm-club — у его трекера: их сегодняшнее число
+      заменяет число источника, и большее, и меньшее;
+    - rutracker числа сидов не говорит, но участников (до 30) — да, а сидов не бывает
+      больше, чем участников: его число в источнике, большее их, — устаревшее;
+    - kinozal и прочие — как в источнике;
+    - открытые трекеры видят сидов всех сайтов сразу: их число, если оно больше.
 
-    Участники у rutracker (до 30 — точно, см. `swarm.rutracker`): сидов у него не больше,
-    чем участников, так что его число в источнике, большее их, — устаревшее: вместо него
-    число участников (у других сайтов карточки — свои числа, их участники — у своих
-    трекеров). У раздачи одного rutracker ни одного участника — мёртвая."""
-    by_seeds = sorted(cards, key=lambda c: -c.seeds)
-    rutor = [c for c in by_seeds if any(tr[0] == "rutor" for tr in c.trackers)]
-    closed = [c.hash for c in by_seeds
+    Мёртвая — когда каждый сайт карточки проверен и сказал «нет»: rutracker хеша не
+    знает или участников ноль, nnm-club не знает или сидов ноль, у opentor ноль, — и
+    открытые трекеры сидов не видят. Сайт, который не проверить (kinozal), мёртвой
+    карточку не делает: там могут и раздавать.
+
+    `seasons` — выбранные сезоны: их раздачи спрашиваются первыми (участников rutracker
+    программа узнаёт не у всех, см. `swarm.RUTRACKER_COUNT`)."""
+    wanted = set(seasons)
+    order = sorted(cards, key=lambda c: (bool(wanted and c.seasons and not wanted & set(c.seasons)),
+                                         -c.seeds))
+    everything = [c.hash for c in order]
+    rutor = [c.hash for c in order if any(tr[0] == "rutor" for tr in c.trackers)]
+    closed = [c.hash for c in order
               if {tr[0] for tr in c.trackers} & _CLOSED or "t-ru.org" in c.magnet]
-    # Оба вопроса разом. Раздачи rutor — первыми: opentor спрашивается об одной пачке.
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        scraping = pool.submit(swarm.scrape, [c.hash for c in rutor] + [c.hash for c in by_seeds])
+    # Все вопросы разом. Раздачи rutor — первыми: opentor спрашивается об одной пачке.
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        scraping = pool.submit(swarm.scrape, rutor + everything)
+        asking_nnm = pool.submit(swarm.nnm, everything)
         known = swarm.rutracker(closed)
-        answers = scraping.result()
+        answers, on_nnm = scraping.result(), asking_nnm.result()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for c in cards:
         got, rt = answers.get(c.hash, {}), known.get(c.hash)
         n = max(got.values(), default=None)
-        home = swarm.RUTOR in got and all(tr[0] == "rutor" for tr in c.trackers)
-        if n is not None and (n > c.seeds or home):
-            c.seeds, c.seeds_at, c.seeds_live = n, now, True
+        nn = on_nnm.get(c.hash) if c.hash in on_nnm else -1      # -1 — nnm-club не ответил
+        sites = ({k: list(v) for k, v in c.site_seeds.items()}
+                 or {(c.trackers[0][0] if c.trackers else ""): [c.seeds, c.seeds_at, False]})
+        if swarm.RUTOR in got and any(tr[0] == "rutor" for tr in c.trackers):
+            sites["rutor"] = [got[swarm.RUTOR], now, True]
+        if nn is not None and nn >= 0:
+            sites["nnmclub"] = [nn, now, True]
         c.rutracker_peers = peers = rt.peers if rt is not None and rt.known else None
-        own = any(tr[0] == "rutracker" for tr in c.trackers)
-        only = own and all(tr[0] == "rutracker" for tr in c.trackers)
-        mine = c.site_seeds.get("rutracker")
-        if mine and peers is not None and peers < min(mine[0], swarm.RUTRACKER_PEERS):
-            c.site_seeds["rutracker"] = [peers, now]
-            top = max(c.site_seeds.values(), key=lambda v: v[0])
-            if not c.seeds_live and top[0] < c.seeds:   # число карточки было его
-                c.seeds, c.seeds_at = max(top[0], n or 0), top[1]
-        c.alive = bool(n) or (rt is not None and rt.known and peers != 0)
-        c.dead = not n and ((rt is not None and not rt.known and own) or (peers == 0 and only))
+        if "rutracker" in sites and peers is not None                 and peers < min(sites["rutracker"][0], swarm.RUTRACKER_PEERS):
+            sites["rutracker"] = [peers, now, False]
+        gone = {"rutracker": rt is not None and (not rt.known or peers == 0),
+                "nnmclub": nn is None or nn == 0,
+                "rutor": got.get(swarm.RUTOR) == 0}
+        for site in sites:
+            if gone.get(site):
+                sites[site] = [0, now, True]          # трекер раздачи не знает — сидов там нет
+        c.site_seeds = sites
+        c.seeds, c.seeds_at, c.seeds_live = max(sites.values(), key=lambda v: (v[0], v[2]))
+        if n is not None and n > c.seeds:
+            c.seeds, c.seeds_at, c.seeds_live = n, now, True
+        c.alive = bool(n) or bool(nn and nn > 0) or (rt is not None and rt.known and peers != 0)
+        mine = {tr[0] for tr in c.trackers}
+        c.dead = not c.alive and bool(mine) and all(gone.get(site, False) for site in mine)
 
 
 def hashes(rel: Release) -> set[str]:
@@ -742,11 +762,12 @@ def alternatives(rel: Release) -> list[dict]:
             for a in (rel.alts if rel.dead else alive)]
 
 
-def find(title: Title, sources=None, log=None) -> list[Release]:
+def find(title: Title, sources=None, log=None, seasons=()) -> list[Release]:
     """Все раздачи со всех источников, склеенные. Источник, который не ответил, — в журнал.
 
     Без явного списка — источники из файла и, если стоит галка «и английские»,
     Knaben. Источники опрашиваются разом — общее ожидание по самому медленному.
+    `seasons` — выбранные сезоны: живость их раздач проверяется первой.
     """
     log = log or (lambda text: None)
     if sources is None:
@@ -767,7 +788,7 @@ def find(title: Title, sources=None, log=None) -> list[Release]:
         r.seeds_at = r.seeds_at or r.updated
     # Живость — только у подходящих тайтлу (тип, год): остальные jac.red нашёл по
     # созвучию, их не покажут.
-    out = group(items, live=lambda cards: check_alive([c for c in cards if fits(c, title)]))
+    out = group(items, live=lambda cards: check_alive([c for c in cards if fits(c, title)], seasons))
     for r in out:
         count_in_season(r, title)
     return out

@@ -63,7 +63,7 @@ def env(tmp_path, monkeypatch):
     metaconf.save_settings(metaconf.Settings(tmdb_key="k", tv_roots=[str(tmp_path / "tv")]))
     state = {"title": _title(), "releases": [], "have": {1: 9}}
     monkeypatch.setattr(search, "title_info", lambda kind, tmdb_id, key: state["title"])
-    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None: list(state["releases"]))
+    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None, seasons=(): list(state["releases"]))
     monkeypatch.setattr(search, "in_library", lambda title, roots: ("/tv/x", dict(state["have"])))
     bot, ap = FakeBot(), FakeAutopilot()
     w = watchlist.Watcher(bot=bot, autopilot=ap)

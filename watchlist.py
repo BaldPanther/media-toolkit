@@ -363,7 +363,7 @@ class Watcher:
         prefs = search.load_prefs()
         # Устаревший magnet (search.group) не предлагаем: скачалась бы прежняя версия;
         # мёртвую ссылку (search.check_alive) — тоже: не скачалось бы ничего.
-        found = search.find(title, log=self.log)
+        found = search.find(title, log=self.log, seasons=seasons)
         fit = [r for r in found
                if search.fits(r, title, seasons) and not r.stale and not r.dead
                and (title.kind != library.TV or r.seasons or len(title.seasons) == 1)

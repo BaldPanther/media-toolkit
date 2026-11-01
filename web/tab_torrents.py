@@ -226,6 +226,7 @@ class TorrentsTab:
                 "kind": "сериал" if i.kind == library.TV else "фильм",
                 "status": i.status,
                 "status_label": (UPDATE_LABELS[i.update_step] if i.replaces
+                                 else f"ищу живую ссылку (из {len(i.rivals) + 1})" if i.rivals
                                  else autopilot.STATUS_LABELS.get(i.status, i.status)
                                  + (" — на паузе" if i.hold and i.status in (autopilot.ERROR,
                                                                              autopilot.ASK) else "")),
@@ -296,7 +297,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
     t.with_english = search.load_prefs().english
-    t.releases = search.find(title, log=t.st.log.add)
+    t.releases = search.find(title, log=t.st.log.add, seasons=t.seasons)
     t.refresh_in_qbit()
     t.search_status = (f"Найдено раздач: {len(t.releases)}"
                        + (f" — в медиатеке: {t.library_dir}" if t.library_dir else ""))
@@ -352,9 +353,11 @@ def search_options():
     """Фильтры на лету: сезоны, год, озвучка, кодек, качество, HDR, Dolby Vision, английские."""
     t = tab()
     data = replies.body()
+    recheck = False
     if isinstance(data.get("seasons"), list) and t.title is not None:
         known = {s.number for s in t.title.seasons}
         t.seasons = sorted({int(n) for n in data["seasons"] if str(n).isdigit() and int(n) in known})
+        recheck = True
     if "any_year" in data:
         t.any_year = bool(data["any_year"])
     if "voice" in data:
@@ -385,6 +388,18 @@ def search_options():
             job.summary = f"Английских раздач: {len(more)}"
 
         return jsonify({"job": t.st.jobs.start("Поиск раздач", work).to_dict()})
+    # Другой сезон — участников rutracker у его раздач могли не спросить (их узнают не у
+    # всех, а у первых по выбранным сезонам): дозапросить, остальное — из кэша.
+    unchecked = [r for r in t.shown(prefs) if r.rutracker_peers is None
+                 and any(tr[0] == "rutracker" for tr in r.trackers)] if recheck else []
+    if unchecked:
+        t.st.jobs.ensure_idle()
+
+        def check(job):
+            job.progress(0, 0, "сиды у трекеров…")
+            search.check_alive(t.shown(prefs), t.seasons)
+
+        return jsonify({"job": t.st.jobs.start("Поиск раздач", check).to_dict()})
     return jsonify({"ok": True})
 
 

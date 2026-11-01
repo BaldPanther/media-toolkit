@@ -3,6 +3,7 @@ import struct
 import pytest
 
 import swarm
+from swarm import nnm as real_nnm
 from swarm import rutracker as real_rutracker
 from swarm import scrape as real_scrape
 
@@ -98,3 +99,23 @@ def test_announce_started_then_stopped(monkeypatch):
     sent.clear()
     assert swarm._ask_rutracker(H1, False) == swarm.Tracked(True)
     assert sent == ["stopped"]                           # только «знает ли» — не подключаясь
+
+
+def test_nnm_reply_unknown_hash_is_none():
+    body = (b"d5:filesd20:" + bytes.fromhex(H1) + b"d8:completei12e10:downloadedi99e"
+            b"10:incompletei2eeee")
+    assert swarm._nnm_reply(body, [H1, H2]) == {H1: 12, H2: None}
+    assert swarm._bdecode(b"l4:spami-3ee") == ([b"spam", -3], 12)
+
+
+def test_nnm_batches_and_skips_failed(monkeypatch):
+    asked = []
+
+    def ask(part):
+        asked.append(len(part))
+        return {} if part[0] == "c" * 40 else {h: 1 for h in part}
+
+    monkeypatch.setattr(swarm, "_ask_nnm", ask)
+    monkeypatch.setattr(swarm, "NNM_BATCH", 2)
+    got = real_nnm([H1, H2, "c" * 40])
+    assert sorted(asked) == [1, 2] and got == {H1: 1, H2: 1}     # пачка «c» не ответила

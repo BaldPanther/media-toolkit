@@ -142,6 +142,16 @@ def test_find_uses_sources_and_reports_failures(monkeypatch):
     assert logged and "broken" in logged[0]
 
 
+def test_year_from_title_when_source_has_none():
+    item = {"magnet": "magnet:?xt=urn:btih:" + "a" * 40, "relased": 0, "types": ["docuserial"],
+            "title": "Настояший детектив (Паутина любви) / 2025 / РУ / WEBRip"}
+    rel = search._from_jacred(item)
+    assert rel.year == 2025
+    t = search.Title(kind=library.TV, tmdb_id=1, title="Детектив", year=2014,
+                     seasons=[search.Season(1, 8, 2014), search.Season(2, 8, 2015)])
+    assert not search.fits(rel, t, [1])                  # без года прошла бы под любым сезоном
+
+
 def test_other_title_with_same_russian_name_dropped():
     t = search.Title(kind=library.TV, tmdb_id=46648, title="Настоящий детектив", year=2014,
                      original="True Detective", names=["Настоящий детектив", "True Detective"])
@@ -192,7 +202,7 @@ def web(tmp_path, monkeypatch):
     monkeypatch.setattr(metadata, "search_any", lambda q, s:
                         [metadata.SearchHit(library.TV, 1, "Dark Matter", 2024)])
     monkeypatch.setattr(search, "title_info", lambda kind, tmdb_id, key: _title())
-    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None: _releases([
+    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None, seasons=(): _releases([
         _item("rutor", "Тёмная материя (1 сезон: 1-9 серии из 9)", h="1" * 40, seasons=[1]),
         _item("rutor", "Тёмная материя [S01-02]", h="2" * 40, seasons=[1, 2], year=2026),
         _item("rutor", "Тёмная материя (1 сезон: 1-9 серии из 9) HDR10", h="3" * 40, seasons=[1],
@@ -722,7 +732,7 @@ def test_check_alive(monkeypatch):
     assert scraped[:2] == ["2" * 40, "5" * 40]           # раздачи rutor — первыми (для opentor)
     assert asked == ["1" * 40, "4" * 40, "6" * 40, "3" * 40]   # закрытые, сидовые — первыми
     assert not own.dead and not own.alive                # rutracker не обязан знать чужой торрент
-    assert dead.dead and not dead.alive and dead.seeds == 845
+    assert dead.dead and not dead.alive and (dead.seeds, dead.seeds_live) == (0, True)   # не 845
     assert rutor.seeds == 1 and rutor.seeds_live and not rutor.dead   # opentor — его трекер
     assert quiet.seeds == 40 and not quiet.seeds_live    # opentor промолчал — число источника
     assert known.alive and known.seeds == 3 and not known.seeds_live
@@ -752,6 +762,35 @@ def test_rutracker_peers_cap_stale_seeds(monkeypatch):
     assert mixed.seeds == 20 and mixed.seeds_at == "2026-02-04" and not mixed.dead
     assert kz.seeds == 35                                # у kinozal свои участники
     assert big.seeds == 125 and big.rutracker_peers == 30    # 30 — «30 и больше»
+
+
+def test_nnm_seeds_now_and_dead_only_when_every_site_checked(monkeypatch):
+    def card(h, **sites):
+        return search.group([search.Release(h * 40, h, "m", seeds=n, seeds_at="2026-02-04",
+                                            trackers=[[site, f"u{site}"]]) for site, n in sites.items()])[0]
+
+    old = card("1", nnmclub=20)                          # у nnm-club сейчас 12
+    gone = card("2", nnmclub=20, rutracker=24)           # nnm-club не знает, rutracker — тоже
+    kz = card("3", nnmclub=20, kinozal=5)                # kinozal не проверить — не мёртвая
+    stale_rt = card("4", rutracker=24, nnmclub=3)        # 05bb: rutracker забыл, у nnm-club 2 сида
+    T = search.swarm.Tracked
+    monkeypatch.setattr(search.swarm, "nnm", lambda hs: {"1" * 40: 12, "2" * 40: None,
+                                                         "3" * 40: 0, "4" * 40: 2})
+    monkeypatch.setattr(search.swarm, "rutracker", lambda hs: {"2" * 40: T(False), "4" * 40: T(False)})
+    search.check_alive([old, gone, kz, stale_rt])
+    assert (old.seeds, old.seeds_live, old.alive) == (12, True, True)
+    assert gone.dead
+    assert not kz.dead and kz.seeds == 5 and not kz.seeds_live
+    assert stale_rt.alive and not stale_rt.dead and stale_rt.seeds == 2
+
+
+def test_selected_seasons_checked_first(monkeypatch):
+    asked = []
+    monkeypatch.setattr(search.swarm, "rutracker", lambda hs: asked.extend(hs) or {})
+    rels = [search.Release(h * 40, h, "m", seeds=n, seasons=[s], trackers=[["rutracker", h]])
+            for h, n, s in (("1", 100, 1), ("2", 5, 3), ("3", 50, 2))]
+    search.check_alive(rels, seasons=[3])
+    assert asked == ["2" * 40, "1" * 40, "3" * 40]
 
 
 def test_dead_link_ranked_last_and_not_recommended():

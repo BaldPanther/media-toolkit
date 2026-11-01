@@ -1,8 +1,8 @@
 """Живы ли раздачи: сиды прямо сейчас — у самих трекеров, а не из памяти источника.
 
 jac.red помнит сиды на день, когда обходил тему, — у старых тем это месяцы назад,
-а magnet за это время мог устареть (тему перезалили, хеш у раздачи новый). Два
-быстрых вопроса, без логинов:
+а magnet за это время мог устареть (тему перезалили, хеш у раздачи новый). Быстрые
+вопросы, без логинов:
 
 - Открытые трекеры (opentor — трекер rutor, opentrackr, stealth): «сколько сидов»
   (scrape, BEP 15) — одним UDP-пакетом на десятки раздач, доли секунды. Раздачи
@@ -13,6 +13,9 @@ jac.red помнит сиды на день, когда обходил тему,
   нас не вносит. «Подключился» (started) — ещё и список участников, до 30 человек:
   у раздачи поменьше это и есть их число (сиды и качающие вместе). Сразу за ним —
   «ушёл»: в списке мы на долю секунды, как любой клиент.
+- Трекер nnm-club (без входа — «ffff…» вместо личного ключа, как в его magnet):
+  scrape отвечает точным числом сидов, до сотни раздач одним запросом. Хешей, которых
+  он не знает, в ответе нет. Трекер kinozal без личного ключа не пускает.
 
 И трекеры для magnet: у kinozal и nnm-club на jac.red в ссылке нет ни одного, и
 qBittorrent ищет людей только через DHT — список файлов идёт минутами. Одна раздача
@@ -37,9 +40,11 @@ import net
 
 # Дописываются в каждую magnet-ссылку, что программа отдаёт qBittorrent. rutracker —
 # анонимный вход его magnet-ссылок: kinozal и nnm-club часто держат те же торренты.
+NNM = "http://bt02.nnm-club.cc:2710/ffffffffffffffffffffffffffffffff"
 EXTRA_TRACKERS = (
     "http://bt4.t-ru.org/ann?magnet",
     "http://bt2.t-ru.org/ann?magnet",
+    f"{NNM}/announce",
     "udp://opentor.net:6969",
     "udp://tracker.opentrackr.org:1337/announce",
     "udp://open.stealth.si:80/announce",
@@ -54,8 +59,10 @@ RUTRACKER = "http://bt4.t-ru.org/ann?magnet"
 RUTRACKER_MAX = 120      # хешей за один поиск: самые сидовые — остальные вряд ли нужны
 RUTRACKER_COUNT = 40     # у скольких из них (первых) узнавать участников — два запроса
 RUTRACKER_PEERS = 30     # больше участников трекер не присылает: 30 — это «30 и больше»
-TIMEOUT = 4
-UDP_TIMEOUT = 2          # открытые трекеры отвечают за доли секунды; молчат — пропуск
+NNM_BATCH = 70           # хешей в одном scrape nnm-club: 200 он уже не принимает
+# Трекеры отвечают за 0,1–0,4 с; кто молчит дольше — не ответит и вовсе.
+TIMEOUT = 2
+UDP_TIMEOUT = 1
 CACHE = 600              # секунд: фильтры поиска и слежение спрашивают те же хеши
 _PEER = "-MT0100-" + "".join(random.choice("0123456789") for _ in range(12))
 
@@ -221,6 +228,62 @@ def rutracker(hashes) -> dict[str, Tracked]:
             answers = pool.map(lambda h: _ask_rutracker(h, h in counted), todo)
             fresh = {h: r for h, r in zip(todo, answers) if r is not None}
         _remember("rutracker", fresh)
+        out.update(fresh)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# nnm-club: сиды по scrape
+# --------------------------------------------------------------------------- #
+
+def _bdecode(data: bytes, i: int = 0):
+    """Bencode → (значение, где кончилось). Хватает для ответа трекера."""
+    c = data[i:i + 1]
+    if c == b"i":
+        end = data.index(b"e", i)
+        return int(data[i + 1:end]), end + 1
+    if c in (b"l", b"d"):
+        items, i = [], i + 1
+        while data[i:i + 1] != b"e":
+            value, i = _bdecode(data, i)
+            items.append(value)
+        return (dict(zip(items[::2], items[1::2])) if c == b"d" else items), i + 1
+    colon = data.index(b":", i)
+    end = colon + 1 + int(data[i:colon])
+    return data[colon + 1:end], end
+
+
+def _nnm_reply(body: bytes, hashes: list[str]) -> dict[str, int | None]:
+    """Ответ scrape → хеш → сиды; None — трекер хеша не знает (в ответе его нет)."""
+    files = _bdecode(body)[0].get(b"files", {})
+    out: dict[str, int | None] = {}
+    for h in hashes:
+        stats = files.get(bytes.fromhex(h))
+        out[h] = int(stats.get(b"complete", 0)) if isinstance(stats, dict) else None
+    return out
+
+
+def _ask_nnm(hashes: list[str]) -> dict[str, int | None]:
+    url = f"{NNM}/scrape?" + "&".join(f"info_hash={urllib.parse.quote(bytes.fromhex(h))}"
+                                      for h in hashes)
+    try:
+        return _nnm_reply(net.get_bytes(url, timeout=TIMEOUT), hashes)
+    except (net.NetError, OSError, ValueError, IndexError, AttributeError):
+        return {}
+
+
+def nnm(hashes) -> dict[str, int | None]:
+    """Сиды на трекере nnm-club сейчас: хеш → число; None — такой раздачи он не знает.
+    Не ответил — хеша в ответе нет."""
+    hashes = [h for h in dict.fromkeys(hashes) if len(h) == 40]
+    out, todo = _cached("nnm", hashes)
+    if todo:
+        parts = [todo[i:i + NNM_BATCH] for i in range(0, len(todo), NNM_BATCH)]
+        fresh: dict[str, int | None] = {}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for part in pool.map(_ask_nnm, parts):
+                fresh.update(part)
+        _remember("nnm", fresh)
         out.update(fresh)
     return out
 

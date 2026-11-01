@@ -15,3 +15,4 @@ def _no_swarm(monkeypatch):
     """Живость раздач (swarm) в тестах — без сети: трекеры будто не ответили."""
     monkeypatch.setattr(swarm, "scrape", lambda hashes: {})
     monkeypatch.setattr(swarm, "rutracker", lambda hashes: {})
+    monkeypatch.setattr(swarm, "nnm", lambda hashes: {})
