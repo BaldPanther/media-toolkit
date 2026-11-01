@@ -156,12 +156,15 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         if tr.get("iso_639_1") in ("en", "ru"):
             data = tr.get("data") or {}
             names.append(data.get("title") or data.get("name") or "")
-    # Альтернативные — только российские: американские бывают рабочими
-    # названиями («Durango 60623»), по которым трекеры тайтл не знают.
+    # Альтернативные — российские и запись оригинала латиницей («Kusuriya no
+    # Hitorigoto» — так аниме пишут почти все трекеры, а Nyaa — только так).
+    # Американские бывают рабочими названиями («Durango 60623»), по которым
+    # трекеры тайтл не знают. Ромадзи — вперёд: запросов по названиям немного.
     alt = d.get("alternative_titles") or {}
-    for a in alt.get("titles") or alt.get("results") or []:
-        if a.get("iso_3166_1") == "RU":
-            names.append(a.get("title") or "")
+    alts = alt.get("titles") or alt.get("results") or []
+    names += [a.get("title") or "" for a in alts
+              if str(a.get("type") or "").casefold() == "romaji"]
+    names += [a.get("title") or "" for a in alts if a.get("iso_3166_1") == "RU"]
     seen = set()
     for n in names:
         key = n.strip().casefold()
@@ -233,6 +236,7 @@ _SEASON_WORD = re.compile(r"\bseason[ .]?(\d{1,2})\b", re.I)
 _TV_PART = re.compile(r"\b(?:тв|tv)-?(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)[\s.]+season\b", re.I)
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 _CYRILLIC = re.compile(r"[а-яё]", re.I)
+_LATIN = re.compile(r"[a-z]", re.I)
 _RUS_TAG = re.compile(r"\brus\b", re.I)
 
 
@@ -382,7 +386,10 @@ def _knaben(source: dict, title: Title) -> list[Release]:
     url = str(source.get("url") or KNABEN["url"])
     cat = _KNABEN_CATEGORY[title.kind]
     out = []
-    for name in [n for n in title.names if not _CYRILLIC.search(n)][:2]:
+    # Латиница — вперёд: английское и ромадзи находят больше, чем иероглифы.
+    names = sorted((n for n in title.names if not _CYRILLIC.search(n)),
+                   key=lambda n: not _LATIN.search(n))
+    for name in names[:2]:
         data = net.post_json(url, {"search_type": "100%", "search_field": "title", "query": name,
                                    "order_by": "seeders", "order_direction": "desc", "size": 300,
                                    "hide_unsafe": True, "hide_xxx": True}, timeout=30)

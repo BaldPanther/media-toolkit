@@ -353,3 +353,21 @@ def test_scan_of_title_folder_fills_search_field(web, tmp_path):
     season.mkdir(parents=True)
     c.post("/api/scan", json={"path": str(season)})       # сканирование может и не начаться
     assert _search(c)["query"] == "The Apothecary Diaries"
+
+
+def test_title_names_include_romaji(monkeypatch):
+    import tmdb
+    monkeypatch.setattr(tmdb, "titles", lambda kind, tid, key: {
+        "name": "Монолог фармацевта", "original_name": "薬屋のひとりごと",
+        "first_air_date": "2023-10-22",
+        "translations": {"translations": [{"iso_639_1": "en", "data": {"name": "The Apothecary Diaries"}}]},
+        "alternative_titles": {"results": [
+            {"iso_3166_1": "JP", "title": "Kusuriya no Hitorigoto", "type": "Romaji"},
+            {"iso_3166_1": "JP", "title": "Kusuriya no Hitorigoto 2nd Season", "type": ""},
+            {"iso_3166_1": "JP", "title": "Ore dake S2", "type": "season 2 romaji"},
+            {"iso_3166_1": "RU", "title": "Записки аптекаря", "type": ""}]},
+        "seasons": [{"season_number": 1, "episode_count": 60}]})
+    monkeypatch.setattr(tmdb, "episode_groups", lambda tid, key: [])
+    t = search.title_info(library.TV, 220542, "k")
+    assert t.names == ["Монолог фармацевта", "薬屋のひとりごと", "The Apothecary Diaries",
+                       "Kusuriya no Hitorigoto", "Записки аптекаря"]
