@@ -182,7 +182,7 @@
                 <div class="small" x-show="r.vs_library" :class="vsClass(r.vs_library)" x-text="vsText(r)"
                      :title="vsHint(r)"></div>
               </td>
-              <td class="num" :title="'Сиды — на момент, когда источник последний раз смотрел трекер: ' + (r.updated || '?')">
+              <td class="num" :title="'Сиды — на момент, когда источник последний раз смотрел трекер: ' + (r.seeds_at || r.updated || '?')">
                 <div :class="{ 'warn-text': r.seeds < 5 }" x-text="r.seeds"></div>
                 <div class="small faint nowrap" x-show="seedsAge(r)" x-text="seedsAge(r)"></div>
               </td>

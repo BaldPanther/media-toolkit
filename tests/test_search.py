@@ -578,3 +578,14 @@ def test_twins_same_size_other_hash():
     small = search.Release("dddd" * 10, "сэмпл", "m", size=1000)
     assert [t.hash for t in search.twins(a, [a, b, c, small])] == [b.hash]
     assert search.twins(small, [small, search.Release("e" * 40, "x", "m", size=1000)]) == []
+
+
+def test_seeds_date_from_same_record():
+    rt = search.Release("05bb" * 10, "rutracker", "m", seeds=24, updated="2026-02-04",
+                        seeds_at="2026-02-04", trackers=[["rutracker", "u1"]])
+    nnm = search.Release("05bb" * 10, "nnmclub", "m", seeds=57, updated="2026-02-04",
+                         seeds_at="2026-02-04", trackers=[["nnmclub", "u2"]])
+    bit = search.Release("05bb" * 10, "bitru", "m", seeds=4, updated="2026-08-11",
+                         seeds_at="2026-08-11", trackers=[["bitru", "u3"]])
+    g = search.group([rt, nnm, bit])[0]
+    assert (g.seeds, g.seeds_at, g.updated) == (57, "2026-02-04", "2026-08-11")

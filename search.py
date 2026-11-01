@@ -250,6 +250,7 @@ class Release:
     seeds: int = 0
     peers: int = 0
     updated: str = ""
+    seeds_at: str = ""                  # когда источник видел столько сидов (у склеенной — свой)
     quality: int = 0
     hdr: bool = False
     dv: bool = False
@@ -541,7 +542,9 @@ def group(items: list[Release]) -> list[Release]:
             if all(tr[0] != have[0] for have in g.trackers):
                 g.trackers.append(tr)
         if r.seeds > g.seeds:
-            g.seeds, g.peers = r.seeds, max(g.peers, r.peers)
+            # Дата — от той же записи, что и число: «57» с nnm-club из февраля не станет
+            # августовским оттого, что bitru обходили в августе.
+            g.seeds, g.peers, g.seeds_at = r.seeds, max(g.peers, r.peers), r.seeds_at
         g.updated = max(g.updated, r.updated)
         g.quality = g.quality or r.quality
         if r.quality > g.quality and r.quality in QUALITIES:
@@ -584,7 +587,10 @@ def find(title: Title, sources=None, log=None) -> list[Release]:
 
     with ThreadPoolExecutor(max_workers=max(1, len(sources))) as pool:
         parts = list(pool.map(read, [s for s in sources if s.get("type") in readers]))
-    out = group([r for part in parts for r in part])
+    items = [r for part in parts for r in part]
+    for r in items:
+        r.seeds_at = r.seeds_at or r.updated
+    out = group(items)
     for r in out:
         count_in_season(r, title)
     return out

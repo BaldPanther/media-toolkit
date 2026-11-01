@@ -125,7 +125,7 @@ document.addEventListener("alpine:init", () => {
     // Сиды источник знает на момент последнего обхода трекера: у старых тем — месячной
     // давности. Свежие (до двух суток) — без даты.
     seedsAge(r) {
-      const t = Date.parse(r.updated || "");
+      const t = Date.parse(r.seeds_at || r.updated || "");
       if (!t || Date.now() - t < 2 * 86400 * 1000) return "";
       const d = new Date(t);
       const opts = { day: "numeric", month: "short" };
