@@ -26,10 +26,12 @@ class FakeClient:
         self.progress = 0.25
         self.states: dict[str, str] = {}
         self.events: list[tuple[str, str]] = []
+        self.added_on: dict[str, int] = {}
 
     def add(self, h: str, files: dict[str, int]) -> None:
         self.names[h] = list(files)
         self.sizes[h] = dict(files)
+        self.added_on[h] = self.added_on.get(h, 0) + 1
 
     def torrents(self):
         out = []
@@ -39,7 +41,8 @@ class FakeClient:
             out.append({"hash": h, "name": root, "category": self.category,
                         "progress": self.progress, "seq_dl": False, "f_l_piece_prio": False,
                         "save_path": self.remote_save, "content_path": content,
-                        "state": self.states.get(h, "stoppedDL")})
+                        "state": self.states.get(h, "stoppedDL"),
+                        "added_on": self.added_on.get(h, 1)})
         return out
 
     def recheck(self, h):

@@ -23,6 +23,7 @@
 """
 from __future__ import annotations
 
+import collections
 import re
 import shutil
 import threading
@@ -42,7 +43,9 @@ import qbit
 
 _STATE_NAME = "autopilot_state.json"
 INTERVAL = 30            # секунд между проверками
-KEEP_DAYS = 30           # сколько помнить раздачи, которых в qBittorrent уже нет
+# Сколько помнить раздачу, которой в qBittorrent уже нет: в списке её не видно
+# сразу, а сутки — на случай, если qBittorrent при запуске отдал список не целиком.
+KEEP_GONE = 86400
 
 NEW, ASK, DONE, ERROR, SKIP = "new", "ask", "done", "error", "skip"
 STATUS_LABELS = {NEW: "в очереди", ASK: "ждёт выбора", DONE: "разложено",
@@ -66,6 +69,7 @@ class Item:
     seq_set: bool = False          # галки последовательной загрузки уже ставили
     done_notified: bool = False    # докачку уже отметили (журнал, скан Kodi)
     seen: float = 0.0              # когда последний раз была в qBittorrent
+    added_on: int = 0              # когда добавлена в qBittorrent (его added_on)
     pages: list = field(default_factory=list)    # страницы раздачи на трекерах (из поиска)
     replaces: str = ""             # хеш старой версии, которую эта обновляет
     update_step: str = ""          # шаг обновления: "" → «rename» → «check»
@@ -221,8 +225,11 @@ class Autopilot:
             self.log(f"⚠ Автоматика: не сохранилось состояние: {e}")
 
     def recent(self, limit: int = 50) -> list[Item]:
+        """Раздачи, что есть в qBittorrent сейчас (на последней проверке), свежие сверху.
+        Удалённые из qBittorrent не показываются — история остаётся в журнале."""
         with self._lock:
-            return sorted(self.items.values(), key=lambda i: i.seen, reverse=True)[:limit]
+            present = [i for i in self.items.values() if i.seen >= self.last_check]
+            return sorted(present, key=lambda i: i.added_on or i.seen, reverse=True)[:limit]
 
     # ------------------------------------------------------------ поток --
     def start(self) -> None:
@@ -324,10 +331,19 @@ class Autopilot:
             if kind is None:
                 continue
             h = str(item_info.get("hash", ""))
+            added = int(item_info.get("added_on") or 0)
             with self._lock:
-                item = self.items.get(h) or Item(h, str(item_info.get("name", "")), kind)
+                item = self.items.get(h)
+                if item is not None and item.added_on and added and added != item.added_on:
+                    # Удалили из qBittorrent и добавили снова — файлы у неё опять с
+                    # именами из раздачи, раскладывать заново. Тайтл и нужные сезоны
+                    # от прошлого раза годятся: раздача та же.
+                    item = Item(h, item.name, kind, tmdb_id=item.tmdb_id, wanted=item.wanted,
+                                pages=item.pages)
+                item = item or Item(h, str(item_info.get("name", "")), kind)
                 self.items[h] = item
             item.seen = now
+            item.added_on = added or item.added_on
             item.progress = float(item_info.get("progress") or 0)
             if item.status == SKIP:
                 continue
@@ -353,7 +369,7 @@ class Autopilot:
                 self.log(f"Автоматика: скачано — {item.title}")
                 self._kodi(item.root, roots)
         with self._lock:
-            for h in [h for h, i in self.items.items() if now - i.seen > KEEP_DAYS * 86400]:
+            for h in [h for h, i in self.items.items() if now - i.seen > KEEP_GONE]:
                 del self.items[h]
         self.last_check = now
         self.save()
@@ -468,6 +484,14 @@ class Autopilot:
             self.log(f"✗ Автоматика: {e}")
         if out.failed:
             self._fail(item, f"не переименовано файлов: {len(out.failed)} — см. журнал")
+            return
+        # Видео, которое план оставил как есть (нет номера серии, два файла на одно
+        # имя), — не «разложено»: раздача качалась бы под своими именами мимо медиатеки.
+        stuck = collections.Counter(r.status for r in plan.rows
+                                    if r.what == "video" and r.action == library.A_SKIP)
+        if stuck:
+            why = ", ".join(f"{status}: {n}" for status, n in stuck.items())
+            self._fail(item, f"не разложено видео — {why}; разложите на вкладке «Медиатека»")
             return
         item.status, item.error = DONE, ""
         self.log(f"Автоматика: разложено — {item.title} ({plan.root}), "

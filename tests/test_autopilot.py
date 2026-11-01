@@ -156,6 +156,41 @@ def test_tick_skips_non_video(env):
     assert ap.items["g"].status == autopilot.SKIP and fake.toggled == []
 
 
+def test_removed_torrent_leaves_list_and_readded_is_arranged_again(env):
+    tv, fake, _ = env
+    _add(tv, fake, on_disk=())
+    ap = autopilot.Autopilot()
+    ap.tick()
+    assert [i.hash for i in ap.recent()] == ["h1"]
+    names = list(fake.names["h1"])
+    # Удалили в qBittorrent — из списка пропала сразу, а помнится ещё сутки.
+    del fake.names["h1"], fake.sizes["h1"]
+    ap.tick()
+    assert ap.recent() == [] and "h1" in ap.items
+    # Добавили снова — имена опять из раздачи, раскладывается заново.
+    fake.add("h1", {f"Show.S01.1080p/Show.S01E0{n}.1080p.mkv": 100 for n in (1, 2)})
+    assert fake.names["h1"] != names
+    fake.renamed.clear()
+    ap.tick()
+    assert ap.items["h1"].status == autopilot.DONE and len(fake.renamed) == 2
+    # Удалили насовсем — через сутки забыта.
+    del fake.names["h1"], fake.sizes["h1"]
+    ap.items["h1"].seen -= autopilot.KEEP_GONE + 1
+    ap.tick()
+    assert "h1" not in ap.items
+
+
+def test_videos_without_episode_number_are_error_not_done(env):
+    tv, fake, _ = env
+    root = "[Group] Show [BDRip 1080p]"
+    fake.add("v", {f"{root}/[Group] Show 0{n} [BDRip 1080p].mkv": 100 for n in (1, 2)})
+    ap = autopilot.Autopilot()
+    ap.tick()
+    item = ap.items["v"]
+    assert item.status == autopilot.ERROR and "нет номера серии: 2" in item.error
+    assert fake.renamed == []
+
+
 def test_ambiguous_title_asks_and_answer_arranges(env, monkeypatch):
     tv, fake, hits = env
     hits[:] = [metadata.SearchHit(library.TV, 1, "Show", 2026),
