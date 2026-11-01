@@ -91,6 +91,7 @@ class Watcher:
         self.bot = bot
         self.autopilot = autopilot
         self.on_change = on_change or (lambda: None)
+        self.only_in_qbit = False       # последний _offer: все подходящие уже в qBittorrent
         self.items: dict[str, Watch] = {}
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -297,7 +298,9 @@ class Watcher:
                             min_size=min_size)
         where = "в вашей раздаче" if w.pin else "в раздаче"
         if not found:
-            w.status = (f"вышла серия {episode} сезона {number} — {where} её пока нет"
+            w.status = (f"сезон {number}: раздача уже в qBittorrent — сообщу, когда на трекере "
+                        f"будет её новая версия" if self.only_in_qbit else
+                        f"вышла серия {episode} сезона {number} — {where} её пока нет"
                         f"{self._wanted(w)}")
             return
         top = w.offer[0]
@@ -358,6 +361,12 @@ class Watcher:
                    and (not w.voice or search.has_voice(r, w.voice))
                    and (not min_size
                         or search.avc_equivalent(_per_episode(r, title), r.codec) >= min_size)]
+        # Раздача уже в qBittorrent — качать её снова незачем. Если название при этом
+        # обещает новые серии, у источника ещё прежний magnet (бывает у kinozal на
+        # jac.red): «Обновить» скачало бы то же самое. Ждём настоящую новую версию.
+        present = self.autopilot.present() if self.autopilot is not None else set()
+        self.only_in_qbit = bool(fit) and all(r.hash in present for r in fit)
+        fit = [r for r in fit if r.hash not in present]
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,

@@ -292,6 +292,11 @@ class Autopilot:
         self.save()
         self._wake.set()
 
+    def present(self) -> set[str]:
+        """Хеши раздач сериалов и фильмов, что сейчас в qBittorrent (на последней проверке)."""
+        with self._lock:
+            return {h for h, i in self.items.items() if i.seen >= self.last_check - 1}
+
     def replaced_by(self, pages, new_hash: str) -> Item | None:
         """Раздача с той же страницы трекера, что ещё в qBittorrent, — старая версия."""
         pages = {search.page_key(p) for p in pages if p}

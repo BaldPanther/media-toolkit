@@ -33,6 +33,9 @@ class FakeAutopilot:
     def replaced_by(self, pages, h):
         return None
 
+    def present(self):
+        return getattr(self, "hashes", set())
+
     def expect(self, h, kind, tmdb_id, name, wanted=()):
         self.expected.append((h, kind, tmdb_id, list(wanted)))
 
@@ -262,3 +265,24 @@ def test_condition_bigger_than_library(env, monkeypatch):
     w.set_filter(item.id, bigger=True)
     w.tick(now=10 ** 9)
     assert [o["hash"] for o in item.offer] == ["b" * 40]
+
+
+def test_release_already_in_qbittorrent_not_offered_again(env):
+    state, w, bot, ap = env
+    state["title"] = _title(last=(2, 6))
+    state["have"] = {1: 9, 2: 4}
+    # На трекере название уже «1-5», а magnet у источника прежний — тот, что качается.
+    mine = _rel("m", [1, 5, 10])
+    state["releases"] = [mine]
+    ap.hashes = {mine.hash}
+    item = w.pin_release(library.TV, 5, "Тёмная материя (2024)", "", 1,
+                         ["http://rutor.info/t/m"], mine.title)
+    w.tick(now=10 ** 9)
+    assert item.offer == [] and bot.sent == []
+    assert "уже в qBittorrent" in item.status
+    # Пришла настоящая новая версия — другой хеш: сообщение и «Обновить».
+    state["releases"] = [_rel("n", [1, 5, 10])]
+    state["releases"][0].trackers = [["rutor", "http://rutor.info/t/m"]]
+    w.check_now()
+    w.tick(now=10 ** 9 + 1)
+    assert [o["hash"] for o in item.offer] == ["n" * 40] and len(bot.sent) == 1

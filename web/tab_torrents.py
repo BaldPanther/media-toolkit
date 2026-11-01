@@ -168,7 +168,7 @@ class TorrentsTab:
             r.codec for r in fit if search.quality_of(r) == prefs.quality
             and (not self.voice or search.has_voice(r, self.voice)))
         ap = self.autopilot
-        in_qbit = self.in_qbit | {h for h, i in ap.items.items() if i.seen >= ap.last_check - 1}
+        in_qbit = self.in_qbit | ap.present()
         watching = self.watcher.find(title.kind, title.tmdb_id) if title else None
         pinned = set(watching.pin) if watching else set()
         return {
