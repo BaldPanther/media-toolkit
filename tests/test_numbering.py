@@ -94,6 +94,23 @@ def test_pack_episodes_counted_in_its_last_season(monkeypatch):
     assert one.episodes == [1, 5, 12]
 
 
+def test_release_without_season_checked_by_season_year(monkeypatch):
+    title = _title(monkeypatch)
+    tv1 = search.Release("d" * 40, "Монолог фармацевта / 2023 / [WEBRip 1080p][1-24]", "m", year=2023)
+    tv3 = search.Release("e" * 40, "Монолог фармацевта [03x01-04 из 24] (2026)", "m", year=2026,
+                         seasons=[3], episodes=[1, 4, 24])
+    assert not search.fits(tv1, title, [3]) and search.fits(tv1, title, [1])
+    assert search.fits(tv3, title, [3])
+
+
+def test_season_released_in_parts_is_complete_by_tmdb(monkeypatch):
+    title = _title(monkeypatch)      # в TMDb у сезона 3 пока 12 серий, у трекера «из 24»
+    part = search.Release("f" * 40, "[03x01-12 из 24]", "m", seasons=[3], episodes=[1, 12, 24])
+    assert search.complete(part, title, [3])
+    part.episodes = [1, 11, 24]
+    assert not search.complete(part, title, [3])
+
+
 def test_in_library_counts_absolute_episodes_by_tracker_seasons(tmp_path, monkeypatch):
     title = _title(monkeypatch)
     show = tmp_path / "tv" / "The Apothecary Diaries (2023)"

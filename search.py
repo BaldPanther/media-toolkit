@@ -516,7 +516,11 @@ def fits(rel: Release, title: Title, seasons=(), any_year: bool = False) -> bool
             # Год выбранных сезонов и сезонов внутри раздачи: сборник «S01-02»
             # трекеры подписывают годом последнего.
             inside = set(seasons) | set(rel.seasons)
-            years |= {s.year for s in title.seasons if s.year and (not inside or s.number in inside)}
+            inner = {s.year for s in title.seasons if s.year and (not inside or s.number in inside)}
+            # Сезон в названии не указан, а сезонов несколько — какой это, подскажет
+            # только год: «[1-24] 2023» у аниме — первый сезон, а не третий (2026).
+            years = inner if not rel.seasons and seasons and len(title.seasons) > 1 and inner \
+                else years | inner
         if all(abs(rel.year - y) > 1 for y in years):
             return False
     if title.kind == library.TV and seasons and rel.seasons and not set(rel.seasons) & set(seasons):
@@ -567,6 +571,12 @@ def complete(rel: Release, title: Title, seasons=()) -> bool:
             rel.episodes = [rel.episodes[0], rel.episodes[1], s.episodes]
     if rel.episodes:
         first, last, total = rel.episodes
+        if first <= 1 and len(rel.seasons) == 1:
+            # Сезон аниме выходит частями: трекер пишет «1-12 из 24», а TMDb пока
+            # знает 12 — все вышедшие серии сезона в раздаче есть.
+            s = title.season(rel.seasons[0])
+            if s is not None and s.episodes and last >= s.episodes:
+                return True
         return bool(total) and last >= total and first <= 1
     if rel.pack and rel.seasons:
         return (set(seasons or rel.seasons) <= set(rel.seasons)
