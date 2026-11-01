@@ -45,6 +45,9 @@ MODE_LABELS = {SEASON: "весь сезон", EPISODE: "каждая серия"
                MOVIE: "появится раздача"}
 # Условие на качество: 0 — лучшее, что есть (4K → 1080p → 720p).
 QUALITY_LABELS = {0: "лучшее, что есть", 1080: "не хуже 1080p", 2160: "только 4K"}
+# «Заметно крупнее моей»: во столько раз больше (у сериала — на серию). 7,0 и 7,3 ГБ —
+# одна и та же раздача с разных трекеров, а 15 вместо 7 — уже другое качество.
+BIGGER = 1.5
 
 
 @dataclass
@@ -65,6 +68,7 @@ class Watch:
     notified: list = field(default_factory=list)    # ключи событий, о которых уже писали
     quality: int = 0                    # условие: QUALITY_LABELS
     voice: str = ""                     # условие: только раздачи с этой озвучкой
+    bigger: bool = False                # условие: заметно крупнее того, что в медиатеке
     pin: list = field(default_factory=list)         # своя раздача: ключи страниц (search.page_key)
     pin_title: str = ""
     voices: list = field(default_factory=list)      # озвучки в раздачах тайтла — для выбора
@@ -72,6 +76,12 @@ class Watch:
 
 def pages_of(rel: search.Release) -> list[str]:
     return [tr[1] for tr in rel.trackers if tr[1]]
+
+
+def _per_episode(rel: search.Release, title) -> int:
+    """Размер раздачи на серию (у фильма — весь); серий не узнать — 0."""
+    n = search.episode_count(rel, title)
+    return rel.size // n if n else 0
 
 
 class Watcher:
@@ -137,8 +147,9 @@ class Watcher:
         self.save()
         self._wake.set()
 
-    def set_filter(self, watch_id: str, quality: int | None = None, voice: str | None = None) -> None:
-        """Условия: качество (QUALITY_LABELS) и озвучка; «» — любая."""
+    def set_filter(self, watch_id: str, quality: int | None = None, voice: str | None = None,
+                   bigger: bool | None = None) -> None:
+        """Условия: качество (QUALITY_LABELS), озвучка («» — любая), крупнее медиатеки."""
         with self._lock:
             w = self.items.get(watch_id)
             if w is None:
@@ -147,6 +158,8 @@ class Watcher:
                 w.quality = quality
             if voice is not None:
                 w.voice = voice.strip()
+            if bigger is not None:
+                w.bigger = bigger
             w.last_check = 0.0
         self.save()
         self._wake.set()
@@ -221,8 +234,12 @@ class Watcher:
         w.title = library.title_with_year(title.title, title.year)
         roots = meta.tv_roots if w.kind == library.TV else meta.movies_roots
         folder, have = search.in_library(title, roots)
+        # «Заметно крупнее моей»: порог — размер того, что лежит (у сериала — на серию).
+        owned = (search.library_version(w.kind, folder, meta.extras_folder, probe=False)
+                 if w.bigger else None)
+        min_size = int(owned.per_episode * BIGGER) if owned else 0
         if w.kind == library.MOVIE:
-            self._check_movie(w, title, bool(folder))
+            self._check_movie(w, title, bool(folder), min_size)
             return
         if w.mode == NEW_SEASONS and w.seasons_known and len(title.seasons) > w.seasons_known:
             new = title.seasons[-1]
@@ -230,9 +247,9 @@ class Watcher:
                         f"📣 <b>{telegram.esc(w.title)}</b>: анонсирован сезон {new.number}")
         w.seasons_known = len(title.seasons)
         if w.mode == EPISODE:
-            self._check_episode(w, title, have)
+            self._check_episode(w, title, have, min_size)
         else:
-            self._check_season(w, title, have)
+            self._check_season(w, title, have, min_size)
 
     def _target_season(self, w: Watch, title, have) -> int:
         """Первый сезон, которого нет в медиатеке целиком (для «новых» — новее известных)."""
@@ -243,7 +260,7 @@ class Watcher:
                 return s.number
         return 0
 
-    def _check_season(self, w: Watch, title, have) -> None:
+    def _check_season(self, w: Watch, title, have, min_size: int = 0) -> None:
         number = self._target_season(w, title, have)
         if not number:
             w.status, w.offer = "все сезоны уже в медиатеке — жду новых", []
@@ -257,7 +274,7 @@ class Watcher:
                         else f"жду сезон {number}: ещё не начался")
             w.offer = []
             return
-        found = self._offer(w, title, [number], full=True)
+        found = self._offer(w, title, [number], full=True, min_size=min_size)
         if not found:
             w.status = f"сезон {number} вышел целиком — полной раздачи пока нет{self._wanted(w)}"
             return
@@ -268,7 +285,7 @@ class Watcher:
                     f"🎬 <b>{telegram.esc(w.title)}</b>: сезон {number} вышел целиком, "
                     f"раздачи со всеми сериями есть", self._buttons(w))
 
-    def _check_episode(self, w: Watch, title, have) -> None:
+    def _check_episode(self, w: Watch, title, have, min_size: int = 0) -> None:
         number, episode = title.last_aired
         if not number:
             w.status, w.offer = "ещё не начался", []
@@ -276,7 +293,8 @@ class Watcher:
         if have.get(number, 0) >= title.aired(number):
             w.status, w.offer = f"сезон {number}: все вышедшие серии ({episode}) уже есть", []
             return
-        found = self._offer(w, title, [number], full=False, more_than=have.get(number, 0))
+        found = self._offer(w, title, [number], full=False, more_than=have.get(number, 0),
+                            min_size=min_size)
         where = "в вашей раздаче" if w.pin else "в раздаче"
         if not found:
             w.status = (f"вышла серия {episode} сезона {number} — {where} её пока нет"
@@ -288,13 +306,13 @@ class Watcher:
                     f"🆕 <b>{telegram.esc(w.title)}</b>: сезон {number}, {where} уже "
                     f"{top['episodes']} сер. (у вас {have.get(number, 0)})", self._buttons(w))
 
-    def _check_movie(self, w: Watch, title, owned: bool) -> None:
-        if owned and not (w.quality or w.voice or w.pin):
+    def _check_movie(self, w: Watch, title, owned: bool, min_size: int = 0) -> None:
+        if owned and not (w.quality or w.voice or w.pin or w.bigger):
             # Уже скачан, и ждать нечего: о любой раздаче сообщать незачем.
             w.status, w.offer = ("уже в медиатеке — выберите, чего ждать: качество или "
                                  "озвучку"), []
             return
-        if not self._offer(w, title, [], full=False, min_quality=1080):
+        if not self._offer(w, title, [], full=False, min_quality=1080, min_size=min_size):
             wanted = self._wanted(w, bare=True)
             w.status = f"жду: {wanted} — пока нет" if wanted else "раздач в хорошем качестве пока нет"
             return
@@ -306,18 +324,20 @@ class Watcher:
     def _wanted(self, w: Watch, bare: bool = False) -> str:
         """Условия словами: «4K · Дубляж», «ваша раздача». bare=False — « (…)» для хвоста."""
         parts = (["ваша раздача"] if w.pin else
-                 [p for p in ({1080: "от 1080p", 2160: "4K"}.get(w.quality, ""), w.voice) if p])
+                 [p for p in ({1080: "от 1080p", 2160: "4K"}.get(w.quality, ""), w.voice,
+                              "крупнее вашей" if w.bigger else "") if p])
         text = " · ".join(parts)
         return text if bare or not text else f" ({text})"
 
     def _offer(self, w: Watch, title, seasons, full: bool, more_than: int | None = None,
-               min_quality: int = 0) -> bool:
+               min_quality: int = 0, min_size: int = 0) -> bool:
         """Лучшие раздачи для сезонов → `w.offer`. → нашлось ли что-нибудь.
         Кнопка качества поиска сюда не относится: лучшее из 4K → 1080p → 720p.
         Только раздачи с русскими дорожками: иначе о сезоне сообщили бы по английской
         раздаче, а о русской (событие то же) — уже нет. Раздача без сезона в названии
         у сериала из нескольких сезонов — неизвестно какого, не предлагается.
-        `more_than` — в раздаче больше серий сезона, чем в медиатеке.
+        `more_than` — в раздаче больше серий сезона, чем в медиатеке; `min_size` — не
+        меньше этого на серию (у фильма — весь файл).
 
         Условия тайтла: качество и озвучка. Своя раздача (`pin`) — только она, без
         прочих условий: её выбрали руками, даже если сейчас у неё нет сидов."""
@@ -334,7 +354,8 @@ class Watcher:
             fit = [r for r in fit
                    if r.seeds >= 1 and search.picture_ok(r, prefs) and search.russian(r)
                    and r.quality >= max(min_quality, w.quality)
-                   and (not w.voice or search.has_voice(r, w.voice))]
+                   and (not w.voice or search.has_voice(r, w.voice))
+                   and (not min_size or _per_episode(r, title) >= min_size)]
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,

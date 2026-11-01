@@ -44,6 +44,7 @@ class TorrentsTab:
         self.title: search.Title | None = None
         self.library_dir = ""
         self.numbering_note = ""       # нумерация трекеров и TMDb разная — как связаны
+        self.owned_version: search.Owned | None = None   # что лежит в медиатеке
         self.have: dict[int, int] = {}
         self.seasons: list[int] = []
         self.releases: list[search.Release] = []
@@ -125,6 +126,12 @@ class TorrentsTab:
         d["partial"] = (self.title is not None and self.title.kind == library.TV
                         and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
         d["pinned"] = bool({search.page_key(p) for p in pages_of(rel)} & pinned)
+        # Сравнение с медиатекой: у сериала — на серию, у фильма — файл целиком.
+        n = search.episode_count(rel, self.title) if self.title else 0
+        per = rel.size // n if n else 0
+        d["bitrate"] = search.bitrate(per, self.title.runtime) if self.title else 0.0
+        mine = self.owned_version.per_episode if self.owned_version else 0
+        d["vs_library"] = round(per / mine, 1) if per and mine else 0.0
         return d
 
     def search_dict(self) -> dict:
@@ -154,6 +161,7 @@ class TorrentsTab:
                        "poster": self.hit.poster_url if self.hit else "",
                        "library": self.library_dir,
                        "numbering": self.numbering_note,
+                       "owned": owned_text(self.owned_version, title.kind),
                        "watching": watching is not None}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,
@@ -208,7 +216,7 @@ class TorrentsTab:
                 "last_check": w.last_check,
                 "modes": [[m, label] for m, label in watchlist.MODE_LABELS.items()
                           if (m == watchlist.MOVIE) == (w.kind == library.MOVIE)],
-                "quality": w.quality, "voice": w.voice,
+                "quality": w.quality, "voice": w.voice, "bigger": w.bigger,
                 "qualities": [[q, label] for q, label in watchlist.QUALITY_LABELS.items()],
                 "voices": sorted(set(w.voices) | set(prefs.voices) | ({w.voice} - {""})),
                 "pin_title": w.pin_title,
@@ -217,6 +225,20 @@ class TorrentsTab:
                           for o in w.offer],
             } for w in sorted(self.watcher.items.values(), key=lambda w: w.title)],
         }
+
+
+def owned_text(owned: search.Owned | None, kind: str) -> str:
+    """«1080p · 7.0 ГБ · ≈ 9.6 Мбит/с»; у сериала — ещё число серий и размер на серию."""
+    if owned is None:
+        return ""
+    parts = [f"{owned.episodes} сер."] if kind == library.TV else []
+    if owned.quality:
+        parts.append(search.QUALITY_NAMES.get(owned.quality, f"{owned.quality}p"))
+    parts.append(autopilot.gb(owned.size) + (f" (≈ {autopilot.gb(owned.per_episode)} на серию)"
+                                             if kind == library.TV and owned.episodes > 1 else ""))
+    if owned.bitrate:
+        parts.append(f"≈ {owned.bitrate:g} Мбит/с")
+    return " · ".join(parts)
 
 
 UPDATE_LABELS = {"": "обновление: жду список файлов", "rename": "обновление: сверяю файлы",
@@ -240,6 +262,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     roots = meta.tv_roots if hit.kind == library.TV else meta.movies_roots
     t.library_dir, t.have = search.in_library(title, roots)
     t.numbering_note = search.numbering_note(title, t.library_dir)
+    t.owned_version = search.library_version(hit.kind, t.library_dir, meta.extras_folder)
     t.title, t.releases, t.voice, t.any_year = title, [], "", False
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
@@ -493,7 +516,8 @@ def watch_filter():
     data = replies.body()
     quality = data.get("quality")
     t.watcher.set_filter(_watch_id(), quality=int(quality) if str(quality).isdigit() else None,
-                         voice=str(data["voice"]) if "voice" in data else None)
+                         voice=str(data["voice"]) if "voice" in data else None,
+                         bigger=bool(data["bigger"]) if "bigger" in data else None)
     t.st.touch()
     return jsonify({"ok": True})
 

@@ -56,6 +56,7 @@
         <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
+        <div class="small" x-show="s.title && s.title.owned" x-text="s.title && 'У вас: ' + s.title.owned"></div>
         <div class="small warn-text" x-show="s.title && s.title.numbering" x-text="s.title && s.title.numbering"></div>
       </div>
     </div>
@@ -157,7 +158,13 @@
                       :title="r.dv_only ? 'Только Dolby Vision: экран без DV покажет блёклую картинку' : 'Dolby Vision поверх HDR: экран без DV покажет HDR'">DV</span>
               </td>
               <td class="num" x-text="episodes(r)"></td>
-              <td class="num nowrap" x-text="size(r.size)"></td>
+              <td class="num nowrap">
+                <div x-text="size(r.size)"></div>
+                <div class="small faint" x-show="r.bitrate" x-text="'≈ ' + r.bitrate + ' Мбит/с'"
+                     title="Примерно: размер на длительность из TMDb, со звуком"></div>
+                <div class="small" x-show="r.vs_library" :class="vsClass(r.vs_library)" x-text="'×' + r.vs_library + ' к вашей'"
+                     :title="'Во столько раз больше (на серию у сериала), чем то, что лежит в медиатеке'"></div>
+              </td>
               <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
                   x-text="r.seeds"></td>
               <td class="nowrap">
@@ -225,6 +232,12 @@
                         <template x-for="v in w.voices" :key="v">
                           <option :value="v" x-text="v" :selected="v === w.voice"></option>
                         </template>
+                      </select>
+                      <select class="input" style="width: 190px"
+                              title="Размер: «крупнее моей» — в полтора раза и больше того, что лежит в медиатеке (у сериала — на серию)"
+                              @change="watchFilter(w.id, { bigger: $event.target.value === '1' })">
+                        <option value="" :selected="!w.bigger">любой размер</option>
+                        <option value="1" :selected="w.bigger">заметно крупнее моей</option>
                       </select>
                     </div>
                   </template>

@@ -409,3 +409,26 @@ def test_pin_release_and_watch_conditions(web):
     c.post("/api/torrents/watch/unpin", json={"id": w["id"]})
     w = c.get("/api/state").get_json()["tabs"]["torrents"]["watch"][0]
     assert (w["quality"], w["voice"], w["pin_title"]) == (2160, "LostFilm", "")
+
+
+def test_library_version_and_comparison(tmp_path, monkeypatch):
+    import core
+    monkeypatch.setattr(core, "video_info", lambda path: (1920, 1000.0))
+    movie = tmp_path / "Film (2021)"
+    (movie / "Extras").mkdir(parents=True)
+    (movie / "Film (2021).mkv").write_bytes(b"x" * 1_000_000)
+    (movie / "Extras" / "Film (2021).mkv").write_bytes(b"x" * 5_000_000)   # отложенная — не в счёт
+    owned = search.library_version(library.MOVIE, str(movie))
+    assert (owned.size, owned.quality, owned.bitrate) == (1_000_000, 1080, 0.0)   # 8 Мбит / 1000 с
+    show = tmp_path / "Show"
+    (show / "Season 01").mkdir(parents=True)
+    (show / "Specials").mkdir()
+    for n in (1, 2):
+        (show / "Season 01" / f"Show - S01E0{n} - x.mkv").write_bytes(b"x" * 300)
+    (show / "Specials" / "Show - S00E01 - x.mkv").write_bytes(b"x" * 999)
+    owned = search.library_version(library.TV, str(show), probe=False)
+    assert (owned.size, owned.episodes, owned.per_episode) == (600, 2, 300)
+    title = _title()
+    pack = search.Release("p" * 40, "S01-02", "m", seasons=[1, 2], episodes=[1, 4, 10], size=1300)
+    assert search.episode_count(pack, title) == 13          # 9 серий первого + 4 второго
+    assert search.bitrate(3_000_000_000, 50) == 8.0

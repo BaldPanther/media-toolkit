@@ -119,6 +119,8 @@ document.addEventListener("alpine:init", () => {
       // У сборника серии посчитаны в его последнем сезоне.
       return r.seasons.length > 1 ? `сез. ${r.seasons[r.seasons.length - 1]}: ${text}` : text;
     },
+    // Заметно крупнее вашей — скорее всего, качество лучше; заметно мельче — хуже.
+    vsClass(ratio) { return ratio >= 1.5 ? "ok-text" : ratio <= 0.67 ? "warn-text" : "faint"; },
     size(bytes) {
       if (!bytes) return "—";
       const gb = bytes / 1024 ** 3;

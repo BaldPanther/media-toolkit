@@ -246,3 +246,19 @@ def test_movie_in_library_waits_only_for_conditions(env):
     w.set_filter(item.id, quality=2160)
     w.tick(now=10 ** 9 + 1)
     assert [o["hash"] for o in item.offer] == ["u" * 40] and "(4K)" in item.status
+
+
+def test_condition_bigger_than_library(env, monkeypatch):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
+    monkeypatch.setattr(search, "library_version",
+                        lambda kind, folder, extras="Extras", probe=True: search.Owned(size=1000, episodes=1))
+    small = _rel("s", [1, 10, 10], seeds=100)
+    small.size = 12_000                  # 1200 на серию — как у вас
+    big = _rel("b", [1, 10, 10], seeds=5)
+    big.size = 20_000                    # 2000 на серию — вдвое крупнее
+    state["releases"] = [small, big]
+    item = w.add(library.TV, 5, "x")
+    w.set_filter(item.id, bigger=True)
+    w.tick(now=10 ** 9)
+    assert [o["hash"] for o in item.offer] == ["b" * 40]

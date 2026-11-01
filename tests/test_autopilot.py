@@ -508,11 +508,16 @@ def test_new_movie_version_moves_old_file_to_extras(env, monkeypatch):
     old_dir.mkdir()
     (old_dir / "Film (2021).mkv").write_bytes(b"1080p")
     (old_dir / "Film (2021).edl").write_text("1 2 3", encoding="utf-8")
-    fake.add("uhd", {"Film.2021.2160p/Film.2021.2160p.mkv": 100})
+    (old_dir / "Film (2021).ru.srt").write_text("мои", encoding="utf-8")
+    fake.add("uhd", {"Film.2021.2160p/Film.2021.2160p.mkv": 100,
+                     "Film.2021.2160p/Film.2021.2160p.ru.srt": 1})
     ap = autopilot.Autopilot()
     ap.expect("uhd", library.MOVIE, 9, "Film 2160p", hold=True)
     ap.tick()
     assert ap.items["uhd"].status == autopilot.DONE, ap.items["uhd"].error
     assert (old_dir / "Extras" / "Film (2021).mkv").read_bytes() == b"1080p"
-    assert (old_dir / "Extras" / "Film (2021).edl").exists()
+    # .edl и субтитры — при фильме; свои субтитры раздачи с тем же именем не качаются.
+    assert (old_dir / "Film (2021).edl").exists()
+    assert (old_dir / "Film (2021).ru.srt").read_text(encoding="utf-8") == "мои"
+    assert fake.priorities == [("uhd", [1], 0)]
     assert [new for _, new in fake.renamed] == ["Film (2021)/Film (2021).mkv"]

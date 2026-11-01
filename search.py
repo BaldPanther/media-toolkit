@@ -29,6 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import core
 import library
 import net
 import nfo
@@ -41,6 +42,7 @@ _PREFS_NAME = "search_settings.json"
 DEFAULT_SOURCES = [{"type": "jacred", "url": "https://jac.red"}]
 KNABEN = {"type": "knaben", "url": "https://api.knaben.org/v1"}
 QUALITIES = (2160, 1080, 720, 480)
+QUALITY_NAMES = {2160: "4K", 1080: "1080p", 720: "720p", 480: "SD"}
 LOW_SEEDS = 5
 
 TV_TYPES = {"serial", "multserial", "docuserial", "anime", "tvshow"}
@@ -117,6 +119,7 @@ class Title:
     next_air: tuple[int, int, str] = (0, 0, "")  # следующая: (сезон, серия, дата)
     # Сезоны выше, last_aired и next_air — в нумерации трекеров; это — её связь с TMDb.
     numbering: numbering.Numbering = field(default_factory=numbering.Numbering)
+    runtime: int = 0                    # минут: фильм или серия — для битрейта раздач
 
     def season(self, number: int) -> Season | None:
         return next((s for s in self.seasons if s.number == number), None)
@@ -172,7 +175,10 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
             seen.add(key)
             t.names.append(n.strip())
     if kind != library.TV:
+        t.runtime = int(d.get("runtime") or 0)
         return t
+    t.runtime = int(next(iter(d.get("episode_run_time") or []), 0)
+                    or (d.get("last_episode_to_air") or {}).get("runtime") or 0)
     nb = t.numbering = numbering.load(d, tmdb_id, api_key)
     t.seasons = [Season(s.season, s.count, s.year) for s in nb.spans]
     last, nxt = d.get("last_episode_to_air") or {}, d.get("next_episode_to_air") or {}
@@ -734,6 +740,71 @@ def numbering_note(title: Title, folder: str = "") -> str:
                  f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
                  f"S{tmdb_season:02d}E{first:02d} и дальше.")
     return text
+
+
+@dataclass
+class Owned:
+    """Версия тайтла в медиатеке — с ней сравниваются раздачи."""
+    size: int = 0                       # фильм — файл, сериал — все серии
+    episodes: int = 1
+    quality: int = 0                    # 2160 / 1080 / 720 / 480; 0 — не прочитать
+    bitrate: float = 0.0                # Мбит/с, вместе со звуком
+
+    @property
+    def per_episode(self) -> int:
+        return self.size // max(self.episodes, 1)
+
+
+def quality_of_width(width: int) -> int:
+    """По ширине кадра, а не высоте: у широкоэкранных фильмов 1920×800 — это 1080p."""
+    if not width:
+        return 0
+    return 2160 if width >= 3200 else 1080 if width >= 1800 else 720 if width >= 1200 else 480
+
+
+def library_version(kind: str, folder: str, extras: str = "Extras", probe: bool = True) -> Owned | None:
+    """Что лежит в медиатеке: фильм — самый большой видеофайл, сериал — все серии
+    (спецвыпуски и Extras не в счёт). `probe` — читать качество и длительность
+    (mkvmerge, у сериала — одна серия); без него — только размеры, это мгновенно."""
+    if not folder:
+        return None
+    root = Path(folder)
+    scan = library.scan_folder(root)
+    videos = [v for v in scan.videos if extras not in v.relative_to(root).parts[:-1]]
+    if kind == library.TV:
+        videos = [v for v in videos if scan.season_of(v) != 0]
+    if not videos:
+        return None
+    if kind == library.TV:
+        owned = Owned(sum(scan.size_of(v) for v in videos),
+                      sum(max(len(scan.episodes_of(v)[1]), 1) for v in videos))
+    else:
+        owned = Owned(max(scan.size_of(v) for v in videos))
+    if probe:
+        sample = max(videos, key=scan.size_of)
+        width, duration = core.video_info(sample)
+        owned.quality = quality_of_width(width)
+        if duration:
+            owned.bitrate = round(scan.size_of(sample) * 8 / duration / 1e6, 1)
+    return owned
+
+
+def episode_count(rel: Release, title: Title) -> int:
+    """Сколько серий в раздаче — чтобы сравнивать размер «на серию». 0 — неизвестно.
+    У сборника серии посчитаны в последнем сезоне (`count_in_season`), прежние — целиком."""
+    if title.kind != library.TV:
+        return 1
+    seasons = sorted(rel.seasons)
+    counts = [title.season(s).episodes if title.season(s) else 0 for s in seasons]
+    if rel.episodes:
+        first, last, _ = rel.episodes
+        return sum(counts[:-1]) + max(last - first + 1, 0)
+    return sum(counts) if counts and all(counts) else 0
+
+
+def bitrate(size: int, minutes: int) -> float:
+    """Примерный битрейт раздачи, Мбит/с: размер на длительность из TMDb."""
+    return round(size * 8 / (minutes * 60) / 1e6, 1) if size and minutes else 0.0
 
 
 def library_dir(kind: str, tmdb_id: int, roots) -> str:

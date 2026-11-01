@@ -203,6 +203,26 @@ def scan_file(mkvmerge: str, path: Path) -> MkvFile:
     return MkvFile(path, tracks, duration=duration, chapters=chapters)
 
 
+def video_info(path) -> tuple[int, float | None]:
+    """Ширина кадра и длительность в секундах — какое качество лежит в медиатеке,
+    чтобы сравнить с раздачами. (0, None) — не прочитать: нет MKVToolNix или не видео."""
+    mkvmerge = find_tool("mkvmerge")
+    if mkvmerge is None:
+        return 0, None
+    try:
+        data = json.loads(_decode(_run([mkvmerge, "-J", str(path)]).stdout))
+    except (OSError, json.JSONDecodeError):
+        return 0, None
+    width = 0
+    for t in data.get("tracks", []):
+        dims = str((t.get("properties") or {}).get("pixel_dimensions") or "")
+        if t.get("type") == "video" and "x" in dims:
+            width = int(dims.split("x")[0]) if dims.split("x")[0].isdigit() else 0
+            break
+    dur_ns = ((data.get("container") or {}).get("properties") or {}).get("duration")
+    return width, (dur_ns / 1e9 if isinstance(dur_ns, (int, float)) else None)
+
+
 def list_mkv(folder, recursive: bool) -> list[Path]:
     """Список MKV по пути. Путь может быть и одним файлом — вернётся он сам.
 

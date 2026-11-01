@@ -668,31 +668,38 @@ class Autopilot:
         return owned
 
     def _retire_old_movie(self, item: Item, plan, files, meta, roots) -> None:
-        """Новая версия фильма (4K вместо Full HD): прежний файл со спутниками (.edl,
-        субтитры — они к той версии) — в Extras фильма. Kodi его фильмом не покажет,
-        удалите сами, когда убедитесь в новой: программа файлы не удаляет. Если
-        прежний ещё раздаёт старая раздача — переносит qBittorrent, чтобы она не сломалась."""
+        """Новая версия фильма (4K вместо Full HD): прежний видеофайл — в Extras фильма.
+        Kodi его фильмом не покажет, удалите сами, когда убедитесь в новой: программа
+        файлы не удаляет. Если его ещё раздаёт старая раздача — переносит qBittorrent,
+        чтобы она не сломалась. .edl и субтитры остаются: фильм тот же, а .edl проще
+        подогнать, чем делать заново. Свои субтитры раздачи с тем же именем — «не загружать»."""
         row = next((r for r in plan.rows if r.what == "video" and r.action == library.A_RENAME
                     and r.dst is not None and files.owns(r.src)), None)
         if row is None or not row.dst.exists() or files.owns(row.dst):
             return
-        extras = plan.root / meta.extras_folder
+        old = row.dst
+        target, n = plan.root / meta.extras_folder / old.name, 2
+        while target.exists():
+            target, n = target.with_name(f"{old.stem} ({n}){old.suffix}"), n + 1
         owners = qbit.torrents_in(plan.root, qbit.load_settings(), roots)
-        moved = []
-        for old in [row.dst] + library.find_sidecars(row.dst):
-            target, n = extras / old.name, 2
-            while target.exists():
-                target, n = extras / f"{old.stem} ({n}){old.suffix}", n + 1
-            if owners is not None and owners.owns(old):
-                owners.rename(old, target)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                old.rename(target)
-            moved.append(target.name)
-        if owners is not None:
+        if owners is not None and owners.owns(old):
+            owners.rename(old, target)
             owners.wait()
-        self.log(f"Автоматика: «{item.name}» — новая версия фильма, прежняя отложена в "
-                 f"{meta.extras_folder}: {', '.join(moved)}")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            old.rename(target)
+        ids = []
+        for r in plan.rows:
+            if (r.what == "sidecar" and r.action == library.A_RENAME and files.owns(r.src)
+                    and r.dst is not None and r.dst.exists()):
+                r.action, r.status, r.note = library.A_SKIP, S_OWNED, "у вас уже есть — не загружать"
+                index = files.index_of(r.src)
+                if index is not None:
+                    ids.append(index)
+        if ids:
+            files.client.set_file_priority(item.hash, ids, 0)
+        self.log(f"Автоматика: «{item.name}» — новая версия фильма, прежний файл отложен в "
+                 f"{meta.extras_folder}/{target.name} (.edl и субтитры остались)")
 
     def _fail(self, item: Item, error: str) -> None:
         item.status, item.error = ERROR, error
