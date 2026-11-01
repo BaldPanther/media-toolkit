@@ -629,6 +629,20 @@ def test_stuck_race_warns_once(env):
     assert list(ap.items) == [B] and not ap.items[B].stuck and not ap.items[B].error
 
 
+def test_fast_checks_while_waiting_for_file_list(env):
+    tv, fake, _ = env
+    ap = autopilot.Autopilot()
+    assert not ap.waiting()
+    ap.add(f"magnet:?xt=urn:btih:{A}", A, library.TV, 1, "Show S01")
+    assert ap.waiting()                                  # ждём список файлов — раз в 5 с
+    ap.items[A].waiting_since -= autopilot.STUCK + 1
+    ap.tick()
+    assert not ap.waiting()                              # застряла — обратно раз в 30 с
+    _metadata(fake, A)
+    ap.tick()
+    assert ap.items[A].status == autopilot.DONE and not ap.waiting()
+
+
 def test_has_metadata_without_flag():
     assert not autopilot._has_metadata({"state": "metaDL", "size": 0})
     assert not autopilot._has_metadata({"state": "queuedDL", "total_size": -1})
