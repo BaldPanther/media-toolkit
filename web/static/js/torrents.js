@@ -136,6 +136,22 @@ document.addEventListener("alpine:init", () => {
       await api.post("/api/torrents/watch/mode", { id, mode });
       await this.$store.app.loadState();
     },
+    async watchFilter(id, change) {
+      if (await api.post("/api/torrents/watch/filter", { id, ...change })) {
+        this.$store.ui.toast("Условия сохранены — проверю сейчас");
+        await this.$store.app.loadState();
+      }
+    },
+    async pin(r) {
+      if (await api.post("/api/torrents/watch/pin", { hash: r.hash })) {
+        this.$store.ui.toast("Слежу за раздачей — сообщу, когда прибавятся серии");
+        await this.$store.app.loadState();
+      }
+    },
+    async watchUnpin(id) {
+      await api.post("/api/torrents/watch/unpin", { id });
+      await this.$store.app.loadState();
+    },
     async watchCheck(id) {
       if (await api.post("/api/torrents/watch/check", { id })) this.$store.ui.toast("Проверяю…");
     },
@@ -150,9 +166,8 @@ document.addEventListener("alpine:init", () => {
       await this.$store.app.loadState();
     },
     async watchDownload(id, hash) {
-      if (await api.post("/api/torrents/watch/download", { id, hash })) {
-        this.$store.ui.toast("Добавлено в qBittorrent — разложу сам");
-      }
+      const res = await api.post("/api/torrents/watch/download", { id, hash });
+      if (res) this.$store.ui.toast(res.text === "Скачиваю." || !res.text ? "Добавлено в qBittorrent — разложу сам" : res.text);
     },
 
     // ------------------------------------------------------- автоматика --

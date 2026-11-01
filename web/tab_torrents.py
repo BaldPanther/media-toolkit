@@ -115,12 +115,16 @@ class TorrentsTab:
         return bool(numbers) and all(s is not None and s.episodes
                                      and self.have.get(s.number, 0) >= s.episodes for s in seasons)
 
-    def release_dict(self, rel: search.Release, in_qbit: set[str]) -> dict:
+    def release_dict(self, rel: search.Release, in_qbit: set[str], pinned: set[str]) -> dict:
         d = rel.to_dict()
         d["in_qbit"] = rel.hash in in_qbit
         d["update"] = (not d["in_qbit"]
                        and self.autopilot.replaced_by(pages_of(rel), rel.hash) is not None)
         d["in_library"] = self.owned(rel)
+        # Неполная раздача сериала — за ней можно следить («Следить»).
+        d["partial"] = (self.title is not None and self.title.kind == library.TV
+                        and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
+        d["pinned"] = bool({search.page_key(p) for p in pages_of(rel)} & pinned)
         return d
 
     def search_dict(self) -> dict:
@@ -138,6 +142,8 @@ class TorrentsTab:
             search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
         ap = self.autopilot
         in_qbit = self.in_qbit | {h for h, i in ap.items.items() if i.seen >= ap.last_check - 1}
+        watching = self.watcher.find(title.kind, title.tmdb_id) if title else None
+        pinned = set(watching.pin) if watching else set()
         return {
             "query": self.query,
             "hits": [{"i": i, "label": h.label(), "poster": h.poster_url, "overview": h.overview,
@@ -148,14 +154,14 @@ class TorrentsTab:
                        "poster": self.hit.poster_url if self.hit else "",
                        "library": self.library_dir,
                        "numbering": self.numbering_note,
-                       "watching": self.watcher.find(title.kind, title.tmdb_id) is not None}
+                       "watching": watching is not None}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,
                          "have": self.have.get(s.number, 0),
                          "tmdb": search.tmdb_range(title, s.number),
                          "selected": s.number in self.seasons}
                         for s in (title.seasons if title else [])],
-            "releases": [self.release_dict(r, in_qbit) for r in shown[:200]],
+            "releases": [self.release_dict(r, in_qbit, pinned) for r in shown[:200]],
             "free": autopilot.free_space(title.kind) if title else 0,
             "total": len(self.releases),
             "fit": len(shown),
@@ -173,6 +179,7 @@ class TorrentsTab:
     def to_dict(self) -> dict:
         qs, tg, kd = qbit.load_settings(), telegram.load_settings(), kodi.load_settings()
         ap = self.autopilot
+        prefs = search.load_prefs()
         return {
             "qbit": qs.configured(),
             "auto": qs.configured() and qs.auto,
@@ -201,8 +208,13 @@ class TorrentsTab:
                 "last_check": w.last_check,
                 "modes": [[m, label] for m, label in watchlist.MODE_LABELS.items()
                           if (m == watchlist.MOVIE) == (w.kind == library.MOVIE)],
+                "quality": w.quality, "voice": w.voice,
+                "qualities": [[q, label] for q, label in watchlist.QUALITY_LABELS.items()],
+                "voices": sorted(set(w.voices) | set(prefs.voices) | ({w.voice} - {""})),
+                "pin_title": w.pin_title,
                 "offer": [{"hash": o["hash"], "why": o["why"], "title": o["title"],
-                           "page": o.get("page", "")} for o in w.offer],
+                           "page": o.get("page", ""), "update": self.watcher.is_update(o)}
+                          for o in w.offer],
             } for w in sorted(self.watcher.items.values(), key=lambda w: w.title)],
         }
 
@@ -467,9 +479,46 @@ def watch_check():
 @bp.post("/api/torrents/watch/download")
 def watch_download():
     t = tab()
-    text = t.watcher.download(_watch_id(), str(replies.body().get("hash", "")))
-    if text != "Скачиваю.":
+    ok, text = t.watcher.download(_watch_id(), str(replies.body().get("hash", "")))
+    if not ok:
         raise UserError("Не получилось", text)
+    t.st.touch()
+    return jsonify({"ok": True, "text": text})
+
+
+@bp.post("/api/torrents/watch/filter")
+def watch_filter():
+    """Условия слежения: качество (0 / 1080 / 2160) и озвучка («» — любая)."""
+    t = tab()
+    data = replies.body()
+    quality = data.get("quality")
+    t.watcher.set_filter(_watch_id(), quality=int(quality) if str(quality).isdigit() else None,
+                         voice=str(data["voice"]) if "voice" in data else None)
+    t.st.touch()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/pin")
+def watch_pin():
+    """Следить за раздачей из выдачи поиска: сообщать, когда в ней прибавятся серии."""
+    t = tab()
+    rel = next((r for r in t.releases if r.hash == str(replies.body().get("hash", ""))), None)
+    if rel is None or t.title is None:
+        raise UserError("Нет такой раздачи", "Выполните поиск заново.")
+    have_seasons = max((n for n, c in t.have.items() if c), default=0)
+    w = t.watcher.pin_release(t.title.kind, t.title.tmdb_id,
+                              library.title_with_year(t.title.title, t.title.year),
+                              t.hit.poster_url if t.hit else "", have_seasons, pages_of(rel),
+                              rel.title)
+    t.st.log.add(f"Слежение: {w.title} — слежу за раздачей «{rel.title}»")
+    t.st.touch()
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/torrents/watch/unpin")
+def watch_unpin():
+    t = tab()
+    t.watcher.unpin(_watch_id())
     t.st.touch()
     return jsonify({"ok": True})
 

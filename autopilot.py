@@ -532,6 +532,8 @@ class Autopilot:
                 self._fail(item, "в раздаче несколько фильмов — разложите вручную")
                 return
             owned = self._skip_owned(item, plan, files, client) if item.kind == library.TV else 0
+            if item.kind == library.MOVIE:
+                self._retire_old_movie(item, plan, files, meta, roots)
             policy = (meta.existing_policy if meta.existing_policy != metaconf.POLICY_ASK
                       else metaconf.POLICY_MISSING)
             out = arrange.apply(plan, info, chosen, policy, torrents=files)
@@ -664,6 +666,33 @@ class Autopilot:
         if ids:
             client.set_file_priority(item.hash, ids, 0)
         return owned
+
+    def _retire_old_movie(self, item: Item, plan, files, meta, roots) -> None:
+        """Новая версия фильма (4K вместо Full HD): прежний файл со спутниками (.edl,
+        субтитры — они к той версии) — в Extras фильма. Kodi его фильмом не покажет,
+        удалите сами, когда убедитесь в новой: программа файлы не удаляет. Если
+        прежний ещё раздаёт старая раздача — переносит qBittorrent, чтобы она не сломалась."""
+        row = next((r for r in plan.rows if r.what == "video" and r.action == library.A_RENAME
+                    and r.dst is not None and files.owns(r.src)), None)
+        if row is None or not row.dst.exists() or files.owns(row.dst):
+            return
+        extras = plan.root / meta.extras_folder
+        owners = qbit.torrents_in(plan.root, qbit.load_settings(), roots)
+        moved = []
+        for old in [row.dst] + library.find_sidecars(row.dst):
+            target, n = extras / old.name, 2
+            while target.exists():
+                target, n = extras / f"{old.stem} ({n}){old.suffix}", n + 1
+            if owners is not None and owners.owns(old):
+                owners.rename(old, target)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                old.rename(target)
+            moved.append(target.name)
+        if owners is not None:
+            owners.wait()
+        self.log(f"Автоматика: «{item.name}» — новая версия фильма, прежняя отложена в "
+                 f"{meta.extras_folder}: {', '.join(moved)}")
 
     def _fail(self, item: Item, error: str) -> None:
         item.status, item.error = ERROR, error

@@ -160,12 +160,15 @@
               <td class="num nowrap" x-text="size(r.size)"></td>
               <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
                   x-text="r.seeds"></td>
-              <td>
+              <td class="nowrap">
                 <button type="button" class="btn btn-sm" :class="{ 'btn-primary': (r.recommended || r.update) && !r.in_qbit }"
                         @click="download(r)" :disabled="!t.qbit || r.in_qbit">
                   <svg class="icon" x-show="!r.in_qbit"><use href="#i-download"/></svg>
                   <svg class="icon" x-show="r.in_qbit"><use href="#i-check"/></svg>
                   <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить' : 'Скачать')"></span></button>
+                <button type="button" class="btn btn-sm btn-ghost" x-show="r.partial && !r.pinned" @click="pin(r)"
+                        title="Сообщать в Telegram, когда в этой раздаче прибавятся серии">Следить</button>
+                <span class="badge ok plain" x-show="r.pinned" title="Слежение сообщит, когда в ней прибавятся серии">слежу</span>
               </td>
             </tr>
           </template>
@@ -201,13 +204,39 @@
                 </div>
               </td>
               <td>
-                <select class="input" style="width: 170px" @change="watchMode(w.id, $event.target.value)">
-                  <template x-for="m in w.modes" :key="m[0]">
-                    <option :value="m[0]" x-text="m[1]" :selected="m[0] === w.mode"></option>
+                <div class="stack" style="gap: 6px">
+                  <select class="input" style="width: 190px" @change="watchMode(w.id, $event.target.value)"
+                          title="Чего ждать">
+                    <template x-for="m in w.modes" :key="m[0]">
+                      <option :value="m[0]" x-text="m[1]" :selected="m[0] === w.mode"></option>
+                    </template>
+                  </select>
+                  <template x-if="!w.pin_title">
+                    <div class="stack" style="gap: 6px">
+                      <select class="input" style="width: 190px" title="Качество"
+                              @change="watchFilter(w.id, { quality: +$event.target.value })">
+                        <template x-for="q in w.qualities" :key="q[0]">
+                          <option :value="q[0]" x-text="q[1]" :selected="q[0] === w.quality"></option>
+                        </template>
+                      </select>
+                      <select class="input" style="width: 190px" title="Озвучка"
+                              @change="watchFilter(w.id, { voice: $event.target.value })">
+                        <option value="" :selected="!w.voice">любая озвучка</option>
+                        <template x-for="v in w.voices" :key="v">
+                          <option :value="v" x-text="v" :selected="v === w.voice"></option>
+                        </template>
+                      </select>
+                    </div>
                   </template>
-                </select>
+                </div>
               </td>
               <td>
+                <div class="small" x-show="w.pin_title" style="margin-bottom: 4px">
+                  <span class="badge ok plain">своя раздача</span>
+                  <span class="faint" x-text="w.pin_title"></span>
+                  <button type="button" class="btn btn-sm btn-ghost" @click="watchUnpin(w.id)"
+                          title="Снова предлагать лучшие раздачи">Отвязать</button>
+                </div>
                 <div x-text="w.status || (w.last_check ? '' : 'ещё не проверялось')"></div>
                 <div class="small danger-text" x-show="w.error" x-text="w.error"></div>
                 <div class="small faint" x-show="w.last_check" x-text="'Проверено ' + fmt.clock(w.last_check)"></div>
@@ -215,7 +244,7 @@
                   <div class="row nowrap small" style="margin-top: 6px">
                     <button type="button" class="btn btn-sm" :class="{ 'btn-primary': n === 0 }"
                             @click="watchDownload(w.id, o.hash)" :title="o.title">
-                      <svg class="icon"><use href="#i-download"/></svg><span x-text="(n === 0 ? '⭐ ' : '') + o.why"></span></button>
+                      <svg class="icon"><use href="#i-download"/></svg><span x-text="(o.update ? 'Обновить: ' : n === 0 ? '⭐ ' : '') + o.why"></span></button>
                     <a class="faint" :href="o.page" target="_blank" rel="noopener" x-show="o.page">страница</a>
                   </div>
                 </template>

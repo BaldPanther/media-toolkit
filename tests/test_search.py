@@ -392,3 +392,20 @@ def test_page_key_same_topic():
             == search.page_key("https://rutracker.net/forum/viewtopic.php?t=6426359"))
     assert search.page_key("https://kinozal.guru/details.php?id=2155818") == "kinozal:2155818"
     assert search.page_key("https://torrent.by/111210/Monolog") == "https://torrent.by/111210/Monolog"
+
+
+def test_pin_release_and_watch_conditions(web):
+    st, c, _ = web
+    c.post("/api/torrents/search", json={"query": "Тёмная материя"})
+    assert st.jobs.wait()
+    c.post("/api/torrents/search/options", json={"quality": 1080})
+    rel = _search(c)["releases"][0]
+    assert c.post("/api/torrents/watch/pin", json={"hash": rel["hash"]}).get_json()["ok"]
+    state = c.get("/api/state").get_json()["tabs"]["torrents"]
+    w = state["watch"][0]
+    assert w["mode"] == "episode" and w["pin_title"] == rel["title"]
+    assert next(r for r in state["search"]["releases"] if r["hash"] == rel["hash"])["pinned"]
+    c.post("/api/torrents/watch/filter", json={"id": w["id"], "quality": 2160, "voice": "LostFilm"})
+    c.post("/api/torrents/watch/unpin", json={"id": w["id"]})
+    w = c.get("/api/state").get_json()["tabs"]["torrents"]["watch"][0]
+    assert (w["quality"], w["voice"], w["pin_title"]) == (2160, "LostFilm", "")

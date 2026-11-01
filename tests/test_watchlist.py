@@ -130,8 +130,9 @@ def test_new_seasons_mode_announces(env):
     assert "анонсирован сезон 3" in bot.sent[0][0]
 
 
-def test_movie_waits_for_good_quality(env):
+def test_movie_waits_for_good_quality(env, monkeypatch):
     state, w, bot, _ = env
+    monkeypatch.setattr(search, "in_library", lambda title, roots: ("", {}))   # ещё не скачан
     state["title"] = _title(kind=library.MOVIE, seasons=0)
     state["releases"] = [_rel("e", [], seasons=(), quality=480, year=2024)]
     item = w.add(library.MOVIE, 5, "Фильм (2024)")
@@ -194,3 +195,54 @@ def test_offer_ignores_english_releases(env):
     item = w.add(library.TV, 5, "Тёмная материя (2024)")
     w.tick(now=10 ** 9)
     assert item.offer == [] and bot.sent == []
+
+
+def test_pinned_release_only_and_reports_new_episodes(env):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 6))
+    state["have"] = {1: 9, 2: 3}
+    mine = _rel("m", [1, 4, 10], seeds=0)          # своя — даже без сидов
+    other = _rel("o", [1, 6, 10], seeds=50)
+    state["releases"] = [mine, other]
+    item = w.pin_release(library.TV, 5, "Тёмная материя (2024)", "", 1,
+                         ["http://rutor.info/t/m"], mine.title)
+    assert item.mode == watchlist.EPISODE and item.pin == ["http://rutor.info/t/m"]
+    w.tick(now=10 ** 9)
+    assert [o["hash"] for o in item.offer] == ["m" * 40]
+    assert item.status == "сезон 2: в вашей раздаче уже 4 сер., у вас 3"
+    assert "в вашей раздаче уже 4" in bot.sent[0][0]
+    w.unpin(item.id)
+    w.tick(now=10 ** 9 + 1)
+    assert item.offer[0]["hash"] == "o" * 40      # снова лучшие
+
+
+def test_conditions_quality_and_voice(env):
+    state, w, bot, _ = env
+    state["title"] = _title(last=(2, 10), nxt=(0, 0, ""))
+    hd = _rel("h", [1, 10, 10], quality=1080, seeds=100)
+    uhd = _rel("u", [1, 10, 10], quality=2160, seeds=5)
+    uhd.voices = ["LostFilm"]
+    state["releases"] = [hd, uhd]
+    item = w.add(library.TV, 5, "x")
+    w.set_filter(item.id, quality=2160)
+    w.tick(now=10 ** 9)
+    assert [o["hash"] for o in item.offer] == ["u" * 40]
+    assert item.voices == ["LostFilm"]
+    w.set_filter(item.id, quality=0, voice="Кубик в Кубе")
+    w.tick(now=10 ** 9 + 1)
+    assert item.offer == [] and "(Кубик в Кубе)" in item.status
+
+
+def test_movie_in_library_waits_only_for_conditions(env):
+    state, w, bot, _ = env
+    state["title"] = _title(kind=library.MOVIE, seasons=0)
+    state["releases"] = [_rel("h", [], seasons=(), quality=1080, year=2024),
+                         _rel("u", [], seasons=(), quality=2160, year=2024)]
+    for r in state["releases"]:
+        r.types = ["movie"]
+    item = w.add(library.MOVIE, 5, "Фильм")
+    w.tick(now=10 ** 9)
+    assert item.offer == [] and "уже в медиатеке" in item.status   # in_library даёт папку
+    w.set_filter(item.id, quality=2160)
+    w.tick(now=10 ** 9 + 1)
+    assert [o["hash"] for o in item.offer] == ["u" * 40] and "(4K)" in item.status

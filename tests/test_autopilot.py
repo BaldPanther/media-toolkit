@@ -489,3 +489,30 @@ def test_new_version_found_by_topic_even_if_rutor_slug_changed(env):
     ap.tick()
     old = ap.replaced_by(["http://rutor.info/torrent/959050/show-01x01-23-iz-24"], "h2")
     assert old is not None and old.hash == "h1"
+
+
+def test_new_movie_version_moves_old_file_to_extras(env, monkeypatch):
+    tv, fake, hits = env
+    movies = tv.parent / "movies"
+    movies.mkdir()
+    metaconf.save_settings(metaconf.Settings(tmdb_key="k", tv_roots=[str(tv)],
+                                             movies_roots=[str(movies)]))
+    qbit.save_settings(qbit.Settings(url="http://q", auto=True))
+    fake.save = fake.remote_save_path = movies
+    fake.remote_save = str(movies)
+    fake.category = "movies"
+    info = metadata.MediaInfo(kind=library.MOVIE, tmdb_id=9, title="Film", title_en="Film",
+                              original_title="Film", original_language="en", year=2021)
+    monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    old_dir = movies / "Film (2021)"
+    old_dir.mkdir()
+    (old_dir / "Film (2021).mkv").write_bytes(b"1080p")
+    (old_dir / "Film (2021).edl").write_text("1 2 3", encoding="utf-8")
+    fake.add("uhd", {"Film.2021.2160p/Film.2021.2160p.mkv": 100})
+    ap = autopilot.Autopilot()
+    ap.expect("uhd", library.MOVIE, 9, "Film 2160p", hold=True)
+    ap.tick()
+    assert ap.items["uhd"].status == autopilot.DONE, ap.items["uhd"].error
+    assert (old_dir / "Extras" / "Film (2021).mkv").read_bytes() == b"1080p"
+    assert (old_dir / "Extras" / "Film (2021).edl").exists()
+    assert [new for _, new in fake.renamed] == ["Film (2021)/Film (2021).mkv"]
