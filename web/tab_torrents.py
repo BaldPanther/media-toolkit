@@ -19,6 +19,7 @@ import kodi
 import library
 import metaconf
 import metadata
+import nfo
 import qbit
 import search
 import telegram
@@ -39,6 +40,8 @@ class TorrentsTab:
                                          autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.
         self.query = ""
+        self.folder_query = ""         # название, подставленное из выбранной папки
+        self.folder_tmdb: tuple[str, int] | None = None   # (вид, номер TMDb) из .nfo папки
         self.hits: list[metadata.SearchHit] = []
         self.hit: metadata.SearchHit | None = None
         self.title: search.Title | None = None
@@ -68,15 +71,19 @@ class TorrentsTab:
             self.on_scan_requested(path)
 
     def on_scan_requested(self, path: str) -> None:
-        """«Сканировать» той же папки — название снова в поле (его могли стереть)."""
+        """«Сканировать» той же папки — название снова в поле (его могли стереть).
+        С годом в скобках — поиск TMDb его учтёт; номер TMDb из .nfo папки — поиск
+        откроет сразу этот тайтл (`search_title`)."""
         p = Path(path)
+        folder = p.parent if p.is_file() else p
         if p.is_file():
             p = p.with_suffix("")
         elif library.season_of_dir(p.name) is not None:
-            p = p.parent                # папка сезона — название у папки сериала
-        title, _ = library.guess_title_year(p.name)
+            p = folder = p.parent       # папка сезона — название у папки сериала
+        title, year = library.guess_title_year(p.name)
+        self.folder_tmdb = folder_tmdb(folder)
         if title:
-            self.query = title
+            self.query = self.folder_query = f"{title} ({year})" if year else title
 
     # ------------------------------------------------------------ поиск --
     def default_seasons(self) -> list[int]:
@@ -256,6 +263,15 @@ class TorrentsTab:
         }
 
 
+def folder_tmdb(folder: Path) -> tuple[str, int] | None:
+    """Тайтл папки медиатеки по её .nfo (так пишут tinyMediaManager и эта программа)."""
+    for kind, name in ((library.TV, "tvshow.nfo"), (library.MOVIE, "movie.nfo")):
+        tmdb_id = nfo.read_tmdb_id(folder / name)
+        if tmdb_id:
+            return kind, tmdb_id
+    return None
+
+
 def owned_text(owned: search.Owned | None, kind: str) -> str:
     """«1080p · 7.0 ГБ · ≈ 9.6 Мбит/с»; у сериала — ещё число серий и размер на серию."""
     if owned is None:
@@ -324,7 +340,14 @@ def search_title():
         job.progress(0, 0, "поиск в TMDb…")
         t.hits, t.hit, t.title, t.releases = metadata.search_any(t.query, meta), None, None, []
         t.search_status = ""
-        if len(t.hits) == 1:
+        # Название из папки, а в её .nfo — номер TMDb: это и есть тайтл. Найденные по
+        # названию остаются в «другой…» — вдруг .nfo ошибается.
+        known = (metadata.hit_by_id(*t.folder_tmdb, meta)
+                 if t.folder_tmdb and t.query == t.folder_query else None)
+        if known is not None:
+            t.hits = [known] + [h for h in t.hits if (h.kind, h.tmdb_id) != t.folder_tmdb]
+            _select(t, known, job)
+        elif len(t.hits) == 1:
             _select(t, t.hits[0], job)
         elif not t.hits:
             job.summary = t.search_status = "TMDb ничего не нашёл — поправьте название."

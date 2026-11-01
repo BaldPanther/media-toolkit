@@ -541,18 +541,47 @@ def search(kind: str, query: str, settings, year: int | None = None) -> list[Sea
     return hits
 
 
+def _hit(kind: str, r: dict) -> SearchHit:
+    date = r.get("release_date") or r.get("first_air_date")
+    return SearchHit(kind=kind, tmdb_id=r.get("id"), title=r.get("title") or r.get("name") or "",
+                     year=_year(date), overview=r.get("overview") or "",
+                     poster_url=tmdb.image_url(r.get("poster_path"), "w185") or "")
+
+
+_QUERY_YEAR = re.compile(r"^(.*\S)\s*\((\d{4})\)\s*$")
+
+
 def search_any(query: str, settings) -> list[SearchHit]:
-    """Фильмы и сериалы сразу — когда вид заранее не выбран (поиск раздач)."""
-    hits = []
-    for r in tmdb.search_multi(query, settings.tmdb_key, language=settings.meta_language):
-        date = r.get("release_date") or r.get("first_air_date")
-        hits.append(SearchHit(
-            kind=MOVIE if r["media_type"] == "movie" else TV, tmdb_id=r.get("id"),
-            title=r.get("title") or r.get("name") or "", year=_year(date),
-            overview=r.get("overview") or "",
-            poster_url=tmdb.image_url(r.get("poster_path"), "w185") or "",
-        ))
+    """Фильмы и сериалы сразу — когда вид заранее не выбран (поиск раздач).
+
+    Год в скобках в конце («City Hunter (2019)» — так подставляется название папки) —
+    подсказка: тайтлы этого года ищутся ещё отдельно, с годом, и идут первыми. Без
+    него TMDb по «City Hunter» ставит фильм 2019 года лишь на 23-е место — за первой
+    страницей выдачи."""
+    m = _QUERY_YEAR.match(query or "")
+    title, year = (m.group(1), int(m.group(2))) if m else (query, None)
+    key, lang = settings.tmdb_key, settings.meta_language
+    hits = [_hit(MOVIE if r["media_type"] == "movie" else TV, r)
+            for r in tmdb.search_multi(title, key, language=lang)]
+    if year:
+        for kind in (MOVIE, TV):
+            hits += [_hit(kind, r) for r in tmdb.search(kind, title, key, year=year, language=lang)]
+        seen, unique = set(), []
+        for h in hits:
+            if (h.kind, h.tmdb_id) not in seen:
+                seen.add((h.kind, h.tmdb_id))
+                unique.append(h)
+        # Тот же год — первыми, соседний (премьера в конце года) — следом.
+        hits = sorted(unique, key=lambda h: 0 if h.year == year
+                      else 1 if h.year and abs(h.year - year) == 1 else 2)
     return hits
+
+
+def hit_by_id(kind: str, tmdb_id: int, settings) -> SearchHit | None:
+    """Карточка тайтла по номеру TMDb — когда он уже известен (из .nfo папки)."""
+    fetch = tmdb.movie if kind == MOVIE else tmdb.tv
+    data = fetch(tmdb_id, settings.tmdb_key, language=settings.meta_language)
+    return _hit(kind, data) if data.get("id") else None
 
 
 def search_by_imdb(imdb_id: str, settings) -> list[SearchHit]:

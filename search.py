@@ -1146,17 +1146,26 @@ def bitrate(size: int, minutes: int) -> float:
 
 
 def library_dir(kind: str, tmdb_id: int, roots) -> str:
-    """Папка тайтла в медиатеке — по номеру TMDb в его .nfo; нет — пустая строка."""
+    """Папка тайтла в медиатеке — по номеру TMDb в его .nfo; нет — пустая строка.
+    И на уровень глубже — в папках-подборках без своего .nfo («Super Collection»)."""
     name = "tvshow.nfo" if kind == library.TV else "movie.nfo"
     for root in roots:
-        try:
-            dirs = [d for d in Path(root).iterdir() if d.is_dir()]
-        except OSError:
-            continue
-        for d in dirs:
-            if nfo.read_tmdb_id(d / name) == tmdb_id:
-                return str(d)
+        for d in _subdirs(Path(root)):
+            if (d / name).is_file():
+                if nfo.read_tmdb_id(d / name) == tmdb_id:
+                    return str(d)
+                continue
+            for sub in _subdirs(d):
+                if nfo.read_tmdb_id(sub / name) == tmdb_id:
+                    return str(sub)
     return ""
+
+
+def _subdirs(folder: Path) -> list[Path]:
+    try:
+        return [d for d in folder.iterdir() if d.is_dir()]
+    except OSError:
+        return []
 
 
 def library_episodes(folder: Path, nb: numbering.Numbering) -> set[tuple[int, int]]:

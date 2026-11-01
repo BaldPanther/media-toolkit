@@ -181,6 +181,21 @@ def test_in_library_by_tmdb_id(tmp_path):
     assert found == str(show) and have == {1: 3}
 
 
+def test_library_dir_inside_collection_folder(tmp_path):
+    film = tmp_path / "movies" / "Super Collection" / "City Hunter (2019) - Nicky Larson"
+    film.mkdir(parents=True)
+    (film / "movie.nfo").write_text('<movie><uniqueid type="tmdb">469274</uniqueid></movie>',
+                                    encoding="utf-8")
+    other = tmp_path / "movies" / "Dune (2021)"
+    (other / "Extras").mkdir(parents=True)
+    (other / "movie.nfo").write_text('<movie><uniqueid type="tmdb">438631</uniqueid></movie>',
+                                     encoding="utf-8")
+    roots = [str(tmp_path / "movies")]
+    assert search.library_dir(library.MOVIE, 469274, roots) == str(film)
+    assert search.library_dir(library.MOVIE, 438631, roots) == str(other)
+    assert search.library_dir(library.MOVIE, 1, roots) == ""
+
+
 def test_sources_file_created_with_jacred(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
     monkeypatch.setattr(paths, "_LEGACY_DIR", tmp_path / "legacy")
@@ -285,6 +300,29 @@ def test_search_any_mixes_movies_and_series(monkeypatch):
     assert [(h.kind, h.tmdb_id, h.year) for h in hits] == [(library.MOVIE, 1, 2021), (library.TV, 3, 2024)]
 
 
+def test_search_any_year_in_brackets_goes_first(monkeypatch):
+    import tmdb
+    calls = []
+
+    def call(path, key, **p):
+        calls.append((path, p.get("query"), p.get("year") or p.get("first_air_date_year")))
+        if path == "/search/multi":
+            return {"results": [{"media_type": "tv", "id": 36046, "name": "Городской охотник",
+                                 "first_air_date": "1987-04-06"},
+                                {"media_type": "movie", "id": 45401, "title": "Леди охотник",
+                                 "release_date": "1993-01-01"}]}
+        if path == "/search/movie":
+            return {"results": [{"id": 469274, "title": "Плейбой под прикрытием",
+                                 "release_date": "2019-02-06"}]}
+        return {"results": []}
+
+    monkeypatch.setattr(tmdb, "_call", call)
+    hits = metadata.search_any("City Hunter (2019)",
+                               type("S", (), {"tmdb_key": "k", "meta_language": "ru-RU"})())
+    assert hits[0].tmdb_id == 469274 and len(hits) == 3
+    assert ("/search/multi", "City Hunter", None) in calls and ("/search/movie", "City Hunter", 2019) in calls
+
+
 # ---------------------------------------------------------------- Knaben --
 
 def test_parse_title_scene_seasons_and_episodes():
@@ -386,10 +424,33 @@ def test_title_folder_fills_search_field_without_scan(web, tmp_path):
     season = tmp_path / "tv" / "The Apothecary Diaries (2023)" / "Season 01"
     season.mkdir(parents=True)
     c.post("/api/path", json={"path": str(season)})       # только выбрали папку
-    assert _search(c)["query"] == "The Apothecary Diaries"
+    assert _search(c)["query"] == "The Apothecary Diaries (2023)"   # год — подсказка поиску
     st.tabs["torrents"].query = ""                         # поле стёрли — «Сканировать» вернёт
     c.post("/api/scan", json={"path": str(season)})       # сканирование может и не начаться
-    assert _search(c)["query"] == "The Apothecary Diaries"
+    assert _search(c)["query"] == "The Apothecary Diaries (2023)"
+
+
+def test_folder_nfo_opens_its_title(web, tmp_path, monkeypatch):
+    st, c, _ = web
+    film = tmp_path / "movies" / "City Hunter (2019) - Nicky Larson et le parfum de Cupidon"
+    film.mkdir(parents=True)
+    (film / "movie.nfo").write_text('<movie><uniqueid type="tmdb">469274</uniqueid></movie>',
+                                    encoding="utf-8")
+    asked = []
+    monkeypatch.setattr(metadata, "hit_by_id", lambda kind, tid, s: asked.append((kind, tid)) or
+                        metadata.SearchHit(kind, tid, "Плейбой под прикрытием", 2019))
+    monkeypatch.setattr(search, "title_info", lambda kind, tmdb_id, key: search.Title(
+        kind=kind, tmdb_id=tmdb_id, title="Плейбой под прикрытием", year=2019))
+    c.post("/api/path", json={"path": str(film)})
+    assert _search(c)["query"] == "City Hunter (2019)"
+    c.post("/api/torrents/search", json={"query": "City Hunter (2019)"})
+    assert st.jobs.wait() and st.jobs.last.status == "done", st.jobs.last.error
+    s = _search(c)
+    assert asked == [(library.MOVIE, 469274)] and s["title"]["label"] == "Плейбой под прикрытием (2019)"
+    assert len(s["hits"]) == 2                           # и найденное по названию — в «другой…»
+    # Поменяли запрос — обычный поиск, .nfo ни при чём.
+    c.post("/api/torrents/search", json={"query": "City Hunter"})
+    assert st.jobs.wait() and asked == [(library.MOVIE, 469274)]
 
 
 def test_title_names_include_romaji(monkeypatch):
