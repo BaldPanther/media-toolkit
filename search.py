@@ -496,9 +496,19 @@ def count_in_season(rel: Release, title: Title) -> None:
         # Последнего сезона в сборнике ещё нет: «0 из 12».
         rel.episodes = [first, pos[1] if pos[0] == seasons[-1] else 0, tail.episodes]
         return
+    if not nb.grouped:
+        return
     before = sum(s.episodes for s in title.seasons if 0 < s.number < seasons[0])
-    if nb.grouped and before < first and last - before <= tail.episodes:
+    if before < first and last - before <= tail.episodes:
         rel.episodes = [first - before, last - before, tail.episodes]
+        return
+    # Нумерация как в TMDb — один сезон подряд: «1 сезон: 1-52 из 60», «S01E50».
+    # Это сквозные номера: раздача уходит в те сезоны трекеров, где эти серии.
+    start, end = nb.from_absolute(first), nb.from_absolute(last)
+    if start is None or end is None:
+        return
+    rel.seasons = list(range(start[0], end[0] + 1))
+    rel.episodes = [start[1] if start[0] == end[0] else 1, end[1], title.season(end[0]).episodes]
 
 
 # --------------------------------------------------------------------------- #

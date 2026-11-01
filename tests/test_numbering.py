@@ -94,6 +94,18 @@ def test_pack_episodes_counted_in_its_last_season(monkeypatch):
     assert one.episodes == [1, 5, 12]
 
 
+def test_release_numbered_like_tmdb_goes_to_tracker_seasons(monkeypatch):
+    title = _title(monkeypatch)
+    whole = search.Release("a" * 40, "1 сезон: 1-52 из 60", "m", seasons=[1], episodes=[1, 52, 60])
+    search.count_in_season(whole, title)
+    assert whole.seasons == [1, 2, 3] and whole.episodes == [1, 4, 12]
+    scene = search.Release("b" * 40, "Kusuriya no Hitorigoto S01E50", "m", seasons=[1],
+                           episodes=[50, 50, 0])
+    search.count_in_season(scene, title)
+    assert scene.seasons == [3] and scene.episodes == [2, 2, 12]
+    assert search.fits(scene, title, [3])
+
+
 def test_release_without_season_checked_by_season_year(monkeypatch):
     title = _title(monkeypatch)
     tv1 = search.Release("d" * 40, "Монолог фармацевта / 2023 / [WEBRip 1080p][1-24]", "m", year=2023)
