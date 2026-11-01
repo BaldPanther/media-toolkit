@@ -544,3 +544,11 @@ def test_new_movie_version_without_subs_keeps_old_subs(env, monkeypatch):
     ap.tick()
     assert ap.items["uhd"].status == autopilot.DONE, ap.items["uhd"].error
     assert (old_dir / "Film (2021).ru.srt").exists()           # своих нет — прежние остаются
+
+
+def test_original_filename_kept_in_episode_nfo(env):
+    tv, fake, _ = env
+    _add(tv, fake, on_disk=())
+    autopilot.Autopilot().tick()
+    text = (tv / "Show (2026)" / "Season 01" / "Show - S01E01 - Ep 1.nfo").read_text(encoding="utf-8")
+    assert "<original_filename>Show.S01E01.1080p.mkv</original_filename>" in text

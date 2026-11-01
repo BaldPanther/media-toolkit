@@ -89,6 +89,9 @@ def write_episode_nfo(plan, info, policy: str) -> int:
         if path.exists() and policy == metaconf.POLICY_MISSING:
             continue
         preserve = nfo.read_watch_state(path)
+        if row.action == library.A_RENAME and row.src is not None:
+            # Имя в раздаче («…WEB-DL.1080p…») — потом по нему видно источник.
+            preserve.setdefault("original_filename", row.src.name)
         text = (nfo.make_episode_nfo(info, eps[0], preserve=preserve) if len(eps) == 1
                 else nfo.make_episodes_nfo(info, eps, preserve=preserve))
         nfo.write(path, text)
@@ -137,6 +140,11 @@ def apply(plan, info, chosen: dict, policy: str, delete_junk: bool = False,
     status = status or (lambda text: None)
     out = Outcome()
     preserve = title_watch_state(plan, info)
+    if info.kind == library.MOVIE:
+        video = next((r for r in plan.rows if r.what == "video" and r.action == library.A_RENAME
+                      and r.src is not None), None)
+        if video is not None:
+            preserve.setdefault("original_filename", video.src.name)
     if torrents is not None:
         status("переименование через qBittorrent…")
     out.results = library.apply_plan(plan, delete_junk=delete_junk, stop=stop,

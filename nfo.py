@@ -2,9 +2,10 @@
 
 Состав тегов повторяет файлы, которые в этой медиатеке уже написал
 tinyMediaManager, — чтобы после перехода на свой скрапер карточки в Kodi
-выглядели ровно так же. Часть тегов tmm (`<streamdetails>`, `<original_filename>`,
-`<dateadded>`) описывает сам медиафайл, а не тайтл; Kodi добывает это сам при
-сканировании, поэтому мы их не пишем.
+выглядели ровно так же. Часть тегов tmm (`<streamdetails>`, `<dateadded>`) описывает
+сам медиафайл, а не тайтл; Kodi добывает это сам при сканировании, поэтому мы их не
+пишем. Исключение — `<original_filename>`: имя файла в раздаче до переименования. По
+нему потом видно, какой это источник (WEB-DL, BDRip), — Kodi его не знает.
 
 Отметки просмотра — `<watched>`, `<playcount>`, `<userrating>` — при перезаписи
 переносятся из старого файла (`read_watch_state`). Без этого повторный прогон
@@ -90,7 +91,7 @@ def read_watch_state(path) -> dict:
             return {}
         root = first
     state = {}
-    for tag in _WATCH_TAGS:
+    for tag in _WATCH_TAGS + ("original_filename",):
         el = root.find(tag)
         if el is not None and (el.text or "").strip():
             state[tag] = el.text.strip()
@@ -101,9 +102,41 @@ def _watch(parent: ET.Element, preserve: dict | None) -> None:
     preserve = preserve or {}
     _text(parent, "watched", preserve.get("watched", "false"))
     _text(parent, "playcount", preserve.get("playcount", "0"))
-    for tag in ("lastplayed", "dateadded"):
+    for tag in ("lastplayed", "dateadded", "original_filename"):
         if preserve.get(tag):
             _text(parent, tag, preserve[tag])
+
+
+def read_source_hint(path) -> tuple[str, str]:
+    """(исходное имя файла, тег <source>) из .nfo фильма или серии — откуда файл.
+    Пишут и tinyMediaManager («BLURAY»), и эта программа (только имя)."""
+    try:
+        text = Path(path).read_text("utf-8", errors="replace")
+    except OSError:
+        return "", ""
+    name = re.search(r"<original_filename>([^<]*)</original_filename>", text)
+    source = re.search(r"<source>([^<]*)</source>", text)
+    return (name.group(1).strip() if name else "", source.group(1).strip() if source else "")
+
+
+def set_original_filename(path, name: str) -> None:
+    """Новый файл встал на место прежнего (новая версия фильма), а .nfo оставлен:
+    исходное имя в нём — уже от нового. Остальное в файле не трогаем."""
+    p = Path(path)
+    try:
+        text = p.read_text("utf-8")
+    except OSError:
+        return
+    tag = f"<original_filename>{_escape(name)}</original_filename>"
+    if "<original_filename>" in text:
+        text = re.sub(r"<original_filename>[^<]*</original_filename>", lambda m: tag, text, count=1)
+    else:
+        text = re.sub(r"(\s*)</movie>", lambda m: f"{m.group(1)}  {tag}{m.group(1)}</movie>", text, count=1)
+    write(p, text)
+
+
+def _escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # --------------------------------------------------------------------------- #

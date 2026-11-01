@@ -163,7 +163,9 @@
               </td>
               <td class="nowrap">
                 <span class="badge plain" :class="{ accent: r.quality >= 2160 }" x-text="qualityLabel(r.quality)"></span>
-                <span class="badge plain" x-show="r.codec === 'HEVC'" title="H.265 / x265: при том же качестве примерно вдвое мельче">HEVC</span>
+                <span class="badge plain" x-show="r.source" x-text="r.source"
+                      title="Источник: Remux и BDRip — с Blu-ray, WEB-DL — поток сервиса как есть, WEBRip — пережатый"></span>
+                <span class="badge plain" x-show="r.codec === 'HEVC'" title="H.265 / x265: при том же качестве примерно на треть мельче">HEVC</span>
                 <span class="badge plain" x-show="r.hdr && !r.dv_only">HDR</span>
                 <span class="badge plain" x-show="r.dv"
                       :title="r.dv_only ? 'Только Dolby Vision: экран без DV покажет блёклую картинку' : 'Dolby Vision поверх HDR: экран без DV покажет HDR'">DV</span>
@@ -173,8 +175,8 @@
                 <div x-text="size(r.size)"></div>
                 <div class="small faint" x-show="r.bitrate" x-text="'≈ ' + r.bitrate + ' Мбит/с'"
                      title="Примерно: размер на длительность из TMDb, со звуком"></div>
-                <div class="small" x-show="r.vs_library" :class="vsClass(r.vs_library)" x-text="'×' + r.vs_library + ' к вашей'"
-                     :title="'Во столько раз больше (на серию у сериала), чем то, что лежит в медиатеке'"></div>
+                <div class="small" x-show="r.vs_library" :class="vsClass(r.vs_library)" x-text="vsText(r)"
+                     :title="vsHint(r)"></div>
               </td>
               <td class="num" :class="{ 'warn-text': r.seeds < 5 }" :title="'Обновлено: ' + (r.updated || '?')"
                   x-text="r.seeds"></td>

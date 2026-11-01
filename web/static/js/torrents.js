@@ -120,7 +120,17 @@ document.addEventListener("alpine:init", () => {
       return r.seasons.length > 1 ? `сез. ${r.seasons[r.seasons.length - 1]}: ${text}` : text;
     },
     // Заметно крупнее вашей — скорее всего, качество лучше; заметно мельче — хуже.
+    // Отношение — с поправкой на кодек (HEVC мельче при том же качестве).
     vsClass(ratio) { return ratio >= 1.5 ? "ok-text" : ratio <= 0.67 ? "warn-text" : "faint"; },
+    vsText(r) {
+      return r.vs_library >= 0.8 && r.vs_library <= 1.25 ? "≈ как ваша" : `×${r.vs_library} к вашей`;
+    },
+    vsHint(r) {
+      const base = "Сравнение с тем, что лежит в медиатеке (у сериала — на серию)";
+      return r.vs_codec
+        ? `${base}. По размеру ×${r.vs_raw}, но кодеки разные: HEVC экономнее AVC примерно на треть — с поправкой ×${r.vs_library}`
+        : `${base}: по размеру ×${r.vs_raw}`;
+    },
     size(bytes) {
       if (!bytes) return "—";
       const gb = bytes / 1024 ** 3;

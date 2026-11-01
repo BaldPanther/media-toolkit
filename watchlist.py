@@ -235,9 +235,9 @@ class Watcher:
         roots = meta.tv_roots if w.kind == library.TV else meta.movies_roots
         folder, have = search.in_library(title, roots)
         # «Заметно крупнее моей»: порог — размер того, что лежит (у сериала — на серию).
-        owned = (search.library_version(w.kind, folder, meta.extras_folder, probe=False)
-                 if w.bigger else None)
-        min_size = int(owned.per_episode * BIGGER) if owned else 0
+        # Кодек тоже читается: HEVC той же сути мельче, порог — в пересчёте на AVC.
+        owned = search.library_version(w.kind, folder, meta.extras_folder) if w.bigger else None
+        min_size = int(search.avc_equivalent(owned.per_episode, owned.codec) * BIGGER) if owned else 0
         if w.kind == library.MOVIE:
             self._check_movie(w, title, bool(folder), min_size)
             return
@@ -337,7 +337,7 @@ class Watcher:
         раздаче, а о русской (событие то же) — уже нет. Раздача без сезона в названии
         у сериала из нескольких сезонов — неизвестно какого, не предлагается.
         `more_than` — в раздаче больше серий сезона, чем в медиатеке; `min_size` — не
-        меньше этого на серию (у фильма — весь файл).
+        меньше этого на серию (у фильма — весь файл), в пересчёте на AVC.
 
         Условия тайтла: качество и озвучка. Своя раздача (`pin`) — только она, без
         прочих условий: её выбрали руками, даже если сейчас у неё нет сидов."""
@@ -355,7 +355,8 @@ class Watcher:
                    if r.seeds >= 1 and search.picture_ok(r, prefs) and search.russian(r)
                    and r.quality >= max(min_quality, w.quality)
                    and (not w.voice or search.has_voice(r, w.voice))
-                   and (not min_size or _per_episode(r, title) >= min_size)]
+                   and (not min_size
+                        or search.avc_equivalent(_per_episode(r, title), r.codec) >= min_size)]
         ranked = search.rank(fit, title, prefs, seasons)
         w.offer = [{"hash": r.hash, "title": r.title, "magnet": r.magnet, "why": r.why,
                     "seasons": r.seasons, "episodes": r.episodes[1] if r.episodes else 0,

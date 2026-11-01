@@ -11,8 +11,8 @@
   перечисляются, сиды берутся наибольшие (рой у неё общий).
 - Год: у сериала годится и год начала, и год выбранного сезона (±1) — трекеры
   пишут «(2026) Сезон 2» у сериала 2024-го.
-- Рекомендация: русские дорожки → все серии → качество → любимая озвучка → HEVC →
-  сиды.
+- Рекомендация: русские дорожки → все серии → качество → любимая озвучка →
+  источник (Remux → BDRip → WEB-DL → WEBRip) → HEVC → сиды.
   Мало сидов — не повод убирать из списка: «для коллекции подожду неделю».
 - Сезоны — как у трекеров (`numbering.py`): у аниме, которое TMDb держит одним
   сезоном со сквозной нумерацией, это деление из episode groups.
@@ -46,6 +46,40 @@ QUALITIES = (2160, 1080, 720, 480)
 QUALITY_NAMES = {2160: "4K", 1080: "1080p", 720: "720p", 480: "SD"}
 HEVC, AVC = "HEVC", "AVC"
 CODECS = (HEVC, AVC)
+# HEVC при том же качестве — примерно 65% битрейта AVC (на практике экономия 30–40%,
+# «вдвое» — рекламная цифра). Для сравнения размеров раздач с разными кодеками.
+HEVC_FACTOR = 0.65
+
+# Источник раздачи — по качеству он важнее кодека: пережатие не добавляет деталей.
+# Порядок проверки (не качества!) важен: «BDRemux» — Remux, «WEB-DLRip» — пережатый
+# WEB-DL, то есть WEBRip. Ранг от лучшего к худшему — `SOURCE_RANK`.
+REMUX, BDRIP, WEBDL, WEBRIP, HDTV, DVDRIP, CAMRIP = (
+    "Remux", "BDRip", "WEB-DL", "WEBRip", "HDTV", "DVDRip", "CAMRip")
+_SOURCES = [
+    (REMUX, re.compile(r"remux", re.I)),
+    (BDRIP, re.compile(r"\b(?:bd|br)-?rip|\bblu-?ray\b", re.I)),
+    (WEBRIP, re.compile(r"\bweb-?(?:dl-?)?rip|\bhdrip\b", re.I)),
+    (WEBDL, re.compile(r"\bweb-?dl\b", re.I)),
+    (HDTV, re.compile(r"\bhdtv(?:rip)?\b|\bsat-?rip\b|\btvrip\b|\biptv", re.I)),
+    (DVDRIP, re.compile(r"\bdvd(?:rip|5|9)?\b", re.I)),
+    (CAMRIP, re.compile(r"\bcam(?:rip)?\b|\btelesync\b|\bts\b", re.I)),
+]
+SOURCE_RANK = {name: i for i, name in enumerate((REMUX, BDRIP, WEBDL, WEBRIP, HDTV, DVDRIP, CAMRIP))}
+_UNKNOWN_SOURCE_RANK = SOURCE_RANK[WEBRIP]     # не указан — не лучше пережатого
+# Теги <source> tinyMediaManager в .nfo.
+_TMM_SOURCES = {"BLURAY": BDRIP, "UHD_BLURAY": BDRIP, "WEB_DL": WEBDL, "WEBDL": WEBDL,
+                "WEBRIP": WEBRIP, "HDTV": HDTV, "TV": HDTV, "DVD": DVDRIP}
+
+
+def source_of(text: str) -> str:
+    """Источник по названию раздачи или имени файла: Remux, BDRip, WEB-DL… «» — не указан."""
+    return next((name for name, rx in _SOURCES if rx.search(text or "")), "")
+
+
+def avc_equivalent(size: float, codec: str) -> float:
+    """Размер, пересчитанный на AVC: так сравниваются раздачи с разными кодеками.
+    Кодек не указан — считаем AVC: русские трекеры не пишут его, когда он обычный."""
+    return size / HEVC_FACTOR if codec == HEVC else size
 LOW_SEEDS = 5
 
 TV_TYPES = {"serial", "multserial", "docuserial", "anime", "tvshow"}
@@ -211,6 +245,7 @@ class Release:
     dv: bool = False
     dv_only: bool = False
     codec: str = ""                     # HEVC / AVC — из названия; "" — не указан
+    source: str = ""                    # Remux / BDRip / WEB-DL / WEBRip… — из названия
     voices: list[str] = field(default_factory=list)
     seasons: list[int] = field(default_factory=list)
     year: int | None = None
@@ -290,6 +325,7 @@ def parse_title(text: str) -> dict:
         out["quality"] = int(q.group(1)) if q.group(1) else 2160
     c = _CODEC.search(text or "")
     out["codec"] = (HEVC if c.group(1) else AVC) if c else ""
+    out["source"] = source_of(text)
     dv = bool(_DV.search(text or ""))
     hdr = bool(_HDR.search(text or ""))
     out["dv"] = dv
@@ -341,7 +377,7 @@ def _from_jacred(item: dict) -> Release | None:
         quality=quality,
         hdr=str(item.get("videotype") or "").lower() == "hdr" or parsed["hdr"],
         dv=parsed["dv"], dv_only=parsed["dv_only"], codec=parsed["codec"],
-        voices=[str(v) for v in item.get("voices") or []],
+        source=parsed["source"], voices=[str(v) for v in item.get("voices") or []],
         seasons=[int(s) for s in item.get("seasons") or [] if str(s).isdigit()]
         or parsed.get("seasons", []),
         year=int(item["relased"]) if str(item.get("relased") or "").isdigit() else None,
@@ -403,7 +439,7 @@ def _torznab(source: dict, title: Title) -> list[Release]:
                 seeds=int(attrs.get("seeders") or 0), peers=int(attrs.get("peers") or 0),
                 updated=it.findtext("pubDate") or "", quality=parsed.get("quality", 0),
                 hdr=parsed["hdr"], dv=parsed["dv"], dv_only=parsed["dv_only"],
-                codec=parsed["codec"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
+                codec=parsed["codec"], source=parsed["source"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
                 trackers=[[it.findtext("jackettindexer") or source.get("name") or "torznab",
                            it.findtext("comments") or ""]],
                 episodes=parsed.get("episodes", []), pack=parsed.get("pack", False)))
@@ -444,7 +480,7 @@ def _knaben(source: dict, title: Title) -> list[Release]:
                 peers=int(it.get("peers") or 0), updated=str(it.get("date") or ""),
                 quality=parsed.get("quality", 0),
                 hdr=parsed["hdr"], dv=parsed["dv"], dv_only=parsed["dv_only"],
-                codec=parsed["codec"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
+                codec=parsed["codec"], source=parsed["source"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
                 trackers=[[str(it.get("tracker") or "Knaben"), str(it.get("details") or "")]],
                 episodes=parsed.get("episodes", []), pack=parsed.get("pack", False)))
     return out
@@ -473,6 +509,7 @@ def group(items: list[Release]) -> list[Release]:
             g.dv_only = r.dv_only and (g.dv_only or not g.dv)
         g.hdr, g.dv = g.hdr or r.hdr, g.dv or r.dv
         g.codec = g.codec or r.codec
+        g.source = g.source or r.source
         g.voices += [v for v in r.voices if v not in g.voices]
         g.seasons = sorted(set(g.seasons) | set(r.seasons))
         g.types += [t for t in r.types if t not in g.types]
@@ -652,9 +689,11 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
     под галки, любимая озвучка, сиды. Фильтры (`picture_ok`, качество) — до вызова."""
     for r in releases:
         full = complete(r, title, seasons)
-        # HEVC — сразу после любимой озвучки: при том же качестве он вдвое мельче.
+        # После любимой озвучки — источник (Remux → BDRip → WEB-DL → WEBRip → HDTV),
+        # и только при равном источнике HEVC: он мельче, но качества не добавляет.
         r.score = (0 if russian(r) else 1, 0 if full else 1, -quality_of(r),
                    _picture_rank(r, prefs), _voice_rank(r, prefs.voices),
+                   SOURCE_RANK.get(r.source, _UNKNOWN_SOURCE_RANK),
                    0 if r.codec == HEVC else 1, 0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
         if not russian(r):
@@ -684,6 +723,8 @@ def _ranges(nums) -> str:
 
 def _why(r: Release, prefs: Prefs) -> str:
     parts = [f"{r.quality}p" if r.quality > 480 else ("SD" if r.quality else "качество ?")]
+    if r.source:
+        parts[0] += f" {r.source}"
     if r.codec == HEVC:
         parts[0] += " HEVC"
     if r.dv:
@@ -762,6 +803,7 @@ class Owned:
     quality: int = 0                    # 2160 / 1080 / 720 / 480; 0 — не прочитать
     bitrate: float = 0.0                # Мбит/с, вместе со звуком
     codec: str = ""                     # HEVC / AVC / прочее, как у раздач
+    source: str = ""                    # WEB-DL / BDRip… — по исходному имени в .nfo
 
     @property
     def per_episode(self) -> int:
@@ -799,6 +841,12 @@ def library_version(kind: str, folder: str, extras: str = "Extras", probe: bool 
         owned.quality = quality_of_width(width)
         c = _CODEC.search(codec)
         owned.codec = (HEVC if c.group(1) else AVC) if c else codec.split("/")[0]
+        # Источник — по имени файла в раздаче, которое сохранено в .nfo (его пишут и
+        # эта программа, и tinyMediaManager); у tmm есть ещё тег <source>.
+        hint = next((p for p in (sample.with_suffix(".nfo"), root / "movie.nfo") if p.is_file()), None)
+        if hint is not None:
+            name, tag = nfo.read_source_hint(hint)
+            owned.source = source_of(name) or _TMM_SOURCES.get(tag.upper(), "")
         if duration:
             owned.bitrate = round(scan.size_of(sample) * 8 / duration / 1e6, 1)
     return owned

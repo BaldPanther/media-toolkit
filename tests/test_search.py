@@ -457,3 +457,40 @@ def test_codec_filter_in_search(web):
     assert s["codec"] == "HEVC" and s["releases"] == []
     c.post("/api/torrents/search/options", json={"codec": ""})
     assert len(_search(c)["releases"]) == 2
+
+
+def test_source_parsed_and_ranked_before_codec():
+    assert search.source_of("Полдень (1 сезон) / 2026 / РУ / HEVC / WEBRip (1080p)") == "WEBRip"
+    assert search.source_of("Polden.S01.2026.WEB-DL.1080p.ExKinoRay") == "WEB-DL"
+    assert search.source_of("Show WEBDLRip 1080p") == "WEBRip"
+    assert search.source_of("Film 2021 BDRemux 1080p") == "Remux"
+    assert search.source_of("[BDRip 1080p x265 FLAC]") == "BDRip"
+    assert search.source_of("Film 2021 1080p") == ""
+    title = _title()
+    rip = search.Release("r" * 40, "S01 1080p WEBRip HEVC", "m", quality=1080, seeds=50,
+                         codec="HEVC", source="WEBRip", seasons=[1], episodes=[1, 9, 9])
+    web = search.Release("w" * 40, "S01 1080p WEB-DL", "m", quality=1080, seeds=10,
+                         source="WEB-DL", seasons=[1], episodes=[1, 9, 9])
+    assert search.rank([rip, web], title, search.Prefs(), [1])[0] is web
+    assert web.why.startswith("1080p WEB-DL") and rip.why.startswith("1080p WEBRip HEVC")
+
+
+def test_owned_source_from_nfo_and_codec_aware_comparison(tmp_path, monkeypatch):
+    import core
+    monkeypatch.setattr(core, "video_info", lambda path: (1920, 2400.0, "AVC/H.264/MPEG-4p10"))
+    show = tmp_path / "Полдень (2026)"
+    (show / "Season 01").mkdir(parents=True)
+    ep = show / "Season 01" / "Полдень - S01E01.mkv"
+    ep.write_bytes(b"x" * 1400)
+    ep.with_suffix(".nfo").write_text(
+        "<episodedetails><original_filename>Polden.S01E01.2026.WEB-DL.1080p.mkv"
+        "</original_filename></episodedetails>", encoding="utf-8")
+    owned = search.library_version(library.TV, str(show))
+    assert (owned.codec, owned.source) == ("AVC", "WEB-DL")
+    # HEVC в 0.6 размера — с поправкой на кодек примерно как ваша.
+    assert round(search.avc_equivalent(860, "HEVC") / search.avc_equivalent(1400, "AVC"), 1) == 0.9
+    tmm = tmp_path / "Film (2021)"
+    tmm.mkdir()
+    (tmm / "Film (2021).mkv").write_bytes(b"x")
+    (tmm / "movie.nfo").write_text("<movie><source>BLURAY</source></movie>", encoding="utf-8")
+    assert search.library_version(library.MOVIE, str(tmm)).source == "BDRip"

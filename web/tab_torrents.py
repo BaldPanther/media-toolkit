@@ -132,8 +132,15 @@ class TorrentsTab:
         n = search.episode_count(rel, self.title) if self.title else 0
         per = rel.size // n if n else 0
         d["bitrate"] = search.bitrate(per, self.title.runtime) if self.title else 0.0
-        mine = self.owned_version.per_episode if self.owned_version else 0
-        d["vs_library"] = round(per / mine, 1) if per and mine else 0.0
+        # С поправкой на кодек: HEVC ×0.6 к вашему AVC — по качеству примерно как ваша.
+        mine = self.owned_version
+        d["vs_library"] = d["vs_raw"] = 0.0
+        d["vs_codec"] = False
+        if per and mine and mine.per_episode:
+            d["vs_library"] = round(search.avc_equivalent(per, rel.codec)
+                                    / search.avc_equivalent(mine.per_episode, mine.codec), 1)
+            d["vs_raw"] = round(per / mine.per_episode, 1)
+            d["vs_codec"] = (rel.codec == search.HEVC) != (mine.codec == search.HEVC)
         return d
 
     def search_dict(self) -> dict:
@@ -241,8 +248,8 @@ def owned_text(owned: search.Owned | None, kind: str) -> str:
         return ""
     parts = [f"{owned.episodes} сер."] if kind == library.TV else []
     if owned.quality:
-        parts.append(search.QUALITY_NAMES.get(owned.quality, f"{owned.quality}p")
-                     + (f" {owned.codec}" if owned.codec else ""))
+        parts.append(" ".join(p for p in (search.QUALITY_NAMES.get(owned.quality, f"{owned.quality}p"),
+                                          owned.source, owned.codec) if p))
     parts.append(autopilot.gb(owned.size) + (f" (≈ {autopilot.gb(owned.per_episode)} на серию)"
                                              if kind == library.TV and owned.episodes > 1 else ""))
     if owned.bitrate:

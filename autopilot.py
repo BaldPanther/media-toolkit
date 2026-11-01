@@ -700,6 +700,9 @@ class Autopilot:
             moved.append(target.name)
         if owners is not None:
             owners.wait()
+        # movie.nfo остаётся прежним (описание то же), а исходное имя — уже нового файла.
+        if (plan.root / "movie.nfo").is_file():
+            nfo.set_original_filename(plan.root / "movie.nfo", row.src.name)
         self.log(f"Автоматика: «{item.name}» — новая версия фильма, прежнее отложено в "
                  f"{meta.extras_folder}: {', '.join(moved)}")
 
