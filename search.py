@@ -497,7 +497,9 @@ def _knaben(source: dict, title: Title) -> list[Release]:
 
 
 def _same_size(a: Release, b: Release) -> bool:
-    return not a.size or not b.size or abs(a.size - b.size) <= max(a.size, b.size) * 0.01
+    """Трекеры пишут размер по-разному: одна и та же раздача — 32.01 ГБ на rutracker и
+    31.67 на bitru. До 3% — тот же размер; прежняя версия обновлённой — заметно другой."""
+    return not a.size or not b.size or abs(a.size - b.size) <= max(a.size, b.size) * 0.03
 
 
 def group(items: list[Release]) -> list[Release]:

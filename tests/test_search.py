@@ -559,3 +559,13 @@ def test_any_russian_voice_not_subtitles():
     assert search.has_voice(rel("Фильм", ["AniLibria"]), rus)
     assert not search.has_voice(rel("Фильм / Film [2026, WEB-DL] JAP + Sub Rus"), rus)
     assert not search.has_voice(rel("Фильм / 2026 / СТ / WEB-DL (1080p)"), rus)
+
+
+def test_same_hash_rounded_sizes_still_merged():
+    # Одна раздача: rutracker — точный размер, bitru — округлённый (≈1% меньше).
+    a = search.Release("05bb" * 10, "Сезон 4 rutracker", "m", size=34_370_475_786, updated="2026-02-04",
+                       trackers=[["rutracker", "https://rutracker.org/forum/viewtopic.php?t=6472229"]])
+    b = search.Release("05bb" * 10, "4 сезон bitru", "m", size=34_005_403_566, updated="2026-08-11",
+                       trackers=[["bitru", "https://bitru.org/details.php?id=581862"]])
+    out = search.group([a, b])
+    assert len(out) == 1 and not out[0].stale and len(out[0].trackers) == 2
