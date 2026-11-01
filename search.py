@@ -236,6 +236,7 @@ _SEASON_WORD = re.compile(r"\bseason[ .]?(\d{1,2})\b", re.I)
 _TV_PART = re.compile(r"\b(?:тв|tv)-?(\d{1,2})\b|\b(\d{1,2})(?:st|nd|rd|th)[\s.]+season\b", re.I)
 _YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
 _CYRILLIC = re.compile(r"[а-яё]", re.I)
+_UKRAINIAN = re.compile(r"[іїєґ]", re.I)
 _LATIN = re.compile(r"[a-z]", re.I)
 _RUS_TAG = re.compile(r"\brus\b", re.I)
 
@@ -289,8 +290,12 @@ def parse_title(text: str) -> dict:
 
 
 def russian(rel: Release) -> bool:
-    """Есть ли русские дорожки — насколько видно по озвучкам и названию раздачи."""
-    return bool(rel.voices or _CYRILLIC.search(rel.title) or _RUS_TAG.search(rel.title))
+    """Есть ли русские дорожки — насколько видно по озвучкам и названию раздачи.
+    Кириллица с украинскими буквами («Монолог травниці … Ukr/Jap» с toloka) — не
+    русская: такие раздачи приходят по ромадзи и английскому названию."""
+    if rel.voices or _RUS_TAG.search(rel.title):
+        return True
+    return bool(_CYRILLIC.search(rel.title)) and not _UKRAINIAN.search(rel.title)
 
 
 def _from_jacred(item: dict) -> Release | None:
@@ -623,7 +628,7 @@ def rank(releases: list[Release], title: Title, prefs: Prefs, seasons=()) -> lis
                    0 if r.seeds >= 1 else 1, -r.seeds)
         r.notes = []
         if not russian(r):
-            r.notes.append("английская")
+            r.notes.append("украинская" if _UKRAINIAN.search(r.title) else "английская")
         if r.seeds < LOW_SEEDS:
             r.notes.append("мало сидов" if r.seeds else "нет сидов")
         if r.dv_only:

@@ -371,3 +371,14 @@ def test_title_names_include_romaji(monkeypatch):
     t = search.title_info(library.TV, 220542, "k")
     assert t.names == ["Монолог фармацевта", "薬屋のひとりごと", "The Apothecary Diaries",
                        "Kusuriya no Hitorigoto", "Записки аптекаря"]
+
+
+def test_ukrainian_release_is_not_russian():
+    ukr = search.Release("u" * 40, "Монолог травниці (Сезон 3, серії 04 з 12) / Kusuriya no Hitorigoto "
+                         "(Season 3) (2026) WEBDLRip 1080p H.265 Ukr/Jap | sub Ukr", "m")
+    rus = search.Release("r" * 40, "Монолог фармацевта / Kusuriya no Hitorigoto [03x01-04 из 24]", "m")
+    both = search.Release("b" * 40, "Монолог травниці / Kusuriya no Hitorigoto | Rus, Ukr", "m")
+    assert not search.russian(ukr) and search.russian(rus) and search.russian(both)
+    title = _title()
+    search.rank([ukr], title, search.Prefs())
+    assert "украинская" in ukr.notes
