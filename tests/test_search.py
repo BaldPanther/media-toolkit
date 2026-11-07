@@ -931,3 +931,89 @@ def test_seeds_date_from_same_record():
                          seeds_at="2026-08-11", trackers=[["bitru", "u3"]])
     g = search.group([rt, nnm, bit])[0]
     assert (g.seeds, g.seeds_at, g.updated) == (57, "2026-02-04", "2026-08-11")
+
+
+# ------------------------------------------------- что вышло: статус, сезоны --
+
+def _airing(status="Returning Series", last=(2, 7), nxt=(2, 8, "2026-11-14")):
+    return search.Title(kind=library.TV, tmdb_id=1, title="Сериал", year=2024, status=status,
+                        seasons=[search.Season(1, 10, 2024), search.Season(2, 19, 2026),
+                                 search.Season(3, 0, None)],
+                        last_aired=last, next_air=nxt)
+
+
+def test_season_state_and_status_line():
+    import datetime
+    today = datetime.date(2026, 11, 7)
+    t = _airing()
+    assert [search.season_state(t, n) for n in (1, 2, 3)] == [
+        ("aired", 10), ("running", 7), ("announce", 0)]
+    assert search.status_text(t, today) == "Идёт: следующая серия 14.11 (сезон 2, серия 8)"
+    t = _airing(last=(2, 19), nxt=(3, 1, "2027-01-10"))
+    assert search.status_text(t, today) == "Сезон 3 выходит 10.01.2027"
+    assert search.announce_date(t, 3, today) == "10.01.2027"
+    assert search.status_text(_airing(last=(2, 19), nxt=(0, 0, ""))) == \
+        "Продлён: сезон 3 — дата пока неизвестна"
+    assert search.status_text(_airing("Ended", (2, 19), (0, 0, ""))) == \
+        "Завершён — новых сезонов не будет"
+    # TMDb не знает, что вышло, — сезоны считаются вышедшими, как раньше.
+    unknown = _airing(last=(0, 0), nxt=(0, 0, ""))
+    assert search.season_state(unknown, 2) == ("aired", 19)
+
+
+def test_voice_lag_by_studio():
+    t = _airing()
+    rels = [search.Release("a" * 40, "Сериал [02x01-05 из 19]", "m", seasons=[2],
+                           episodes=[1, 5, 19], voices=["AniLibria"]),
+            search.Release("b" * 40, "Сериал [02x01-04 из 19]", "m", seasons=[2],
+                           episodes=[1, 4, 19], voices=["Dream Cast"]),
+            search.Release("c" * 40, "Сериал [02x01-07 из 19]", "m", seasons=[2],
+                           episodes=[1, 7, 19], voices=["Мёртвая"], dead=True),
+            search.Release("d" * 40, "Show S02E07 1080p", "m", seasons=[2], episodes=[7, 7, 19])]
+    assert search.voice_lag(t, rels, [2]) == (
+        "Сезон 2 идёт: в оригинале вышло 7 из 19, в русских раздачах — до 5 (AniLibria 5, Dream Cast 4)")
+    assert search.voice_lag(t, rels, [3]) == ""                  # анонс — нечего сравнивать
+    assert search.voice_lag(t, [], [2]) == "Сезон 2 идёт: в оригинале вышло 7 из 19, русских раздач с ним пока нет"
+    # Сезон вышел целиком, а русские раздачи отстают — тоже сказать; догнали — молчать.
+    full = [search.Release("e" * 40, "Сериал [01x01-08 из 10]", "m", seasons=[1],
+                           episodes=[1, 8, 10], voices=["LostFilm"])]
+    assert search.voice_lag(t, full, [1]) == \
+        "Сезон 1 вышел целиком (10 сер.), в русских раздачах — до 8 (LostFilm 8)"
+    full[0].episodes = [1, 10, 10]
+    assert search.voice_lag(t, full, [1]) == ""
+
+
+def test_specials_note_count_and_length():
+    t = _airing()
+    t.specials = [search.Special(1, "Break Time 1-1", 2016, 2), search.Special(2, "Break Time 1-4", 2016, 3),
+                  search.Special(3, "Memory Snow: Manner Movie", 2018, 3)]
+    text, hint = search.specials_note(t, have=1)
+    assert text == "Спецвыпуски в TMDb: 3 (короткие, 2–3 мин), у вас: 1"
+    assert hint.splitlines()[2] == "3. Memory Snow: Manner Movie (2018), 3 мин"
+    t.specials.append(search.Special(4, "Making of", 2019, 60))
+    assert search.specials_note(t)[0] == "Спецвыпуски в TMDb: 4 (2–60 мин)"
+    assert search.specials_note(_title()) == ("", "")
+
+
+def test_versions_from_release_titles():
+    assert search.versions_of("Царство небесное (Режиссёрская версия) / Kingdom of Heaven [Director's Cut]") \
+        == ["режиссёрская"]
+    assert search.versions_of("Бегущий по лезвию / Blade Runner (Final Cut + Theatrical)") == \
+        ["театральная", "Final Cut"]
+    assert search.versions_of("Апокалипсис сегодня Redux") == ["Redux"]
+    assert search.versions_of("Дюна: Часть вторая 2024 WEB-DL 2160p") == []
+
+
+def test_version_filter_in_search(web, monkeypatch):
+    st, c, _ = web
+    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None, seasons=(): _releases([
+        _item("rutor", "Тёмная материя [S01] (Режиссёрская версия)", h="1" * 40, seasons=[1]),
+        _item("rutor", "Тёмная материя [S01]", h="2" * 40, seasons=[1])]))
+    c.post("/api/torrents/search", json={"query": "Тёмная материя", "kind": "tv"})
+    assert st.jobs.wait() and st.jobs.last.status == "done", st.jobs.last.error
+    c.post("/api/torrents/search/options", json={"quality": 1080})
+    s = _search(c)
+    assert s["versions"] == [["режиссёрская", 1]] and len(s["releases"]) == 2
+    c.post("/api/torrents/search/options", json={"version": "режиссёрская"})
+    s = _search(c)
+    assert [r["hash"] for r in s["releases"]] == ["1" * 40] and s["releases"][0]["versions"] == ["режиссёрская"]

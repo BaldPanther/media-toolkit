@@ -39,6 +39,7 @@ from pathlib import Path
 
 import core
 import library
+import metadata
 import net
 import nfo
 import numbering
@@ -161,6 +162,15 @@ class Season:
 
 
 @dataclass
+class Special:
+    """Спецвыпуск сериала (сезон 0 TMDb): OVA, фильм, мини-серия, «за кадром»."""
+    number: int
+    name: str
+    year: int | None
+    runtime: int = 0                    # минут; 0 — TMDb не знает
+
+
+@dataclass
 class Title:
     kind: str
     tmdb_id: int
@@ -177,6 +187,7 @@ class Title:
     # Сезоны выше, last_aired и next_air — в нумерации трекеров; это — её связь с TMDb.
     numbering: numbering.Numbering = field(default_factory=numbering.Numbering)
     runtime: int = 0                    # минут: фильм или серия — для битрейта раздач
+    specials: list[Special] = field(default_factory=list)
 
     def season(self, number: int) -> Season | None:
         return next((s for s in self.seasons if s.number == number), None)
@@ -238,6 +249,7 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         return t
     t.runtime = int(next(iter(d.get("episode_run_time") or []), 0)
                     or (d.get("last_episode_to_air") or {}).get("runtime") or 0)
+    t.specials = _specials(d.get("season/0") or {}, tmdb_id, api_key)
     nb = t.numbering = numbering.load(d, tmdb_id, api_key)
     t.seasons = [Season(s.season, s.count, s.year) for s in nb.spans]
     last, nxt = d.get("last_episode_to_air") or {}, d.get("next_episode_to_air") or {}
@@ -247,6 +259,26 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
         t.next_air = (*nb.from_tmdb(int(nxt["season_number"]), int(nxt.get("episode_number") or 0)),
                       str(nxt.get("air_date") or ""))
     return t
+
+
+def _specials(season0: dict, tmdb_id: int, api_key: str) -> list[Special]:
+    """Спецвыпуски из сезона 0 (он приходит вместе с карточкой). Русских названий у TMDb
+    почти нет — вместо них заглушки «Эпизод 1»: тогда английское (ещё один запрос)."""
+    episodes = season0.get("episodes") or []
+    if not episodes:
+        return []
+    english = {}
+    if any(not metadata.real_title(str(e.get("name") or "")) for e in episodes):
+        try:
+            english = {e.get("episode_number"): str(e.get("name") or "")
+                       for e in tmdb.season(tmdb_id, 0, api_key).get("episodes") or []}
+        except net.NetError:
+            pass
+    return [Special(int(e.get("episode_number") or 0),
+                    metadata.real_title(str(e.get("name") or ""),
+                                        english.get(e.get("episode_number"), "")),
+                    _year(e.get("air_date")), int(e.get("runtime") or 0))
+            for e in episodes]
 
 
 # --------------------------------------------------------------------------- #
@@ -1165,6 +1197,156 @@ def numbering_note(title: Title, folder: str = "") -> str:
              f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
              f"S{tmdb_season:02d}E{first:02d} и дальше.")
     return text
+
+
+# --------------------------------------------------------------------------- #
+# Что вышло: статус сериала, ход сезонов, русская озвучка, спецвыпуски, версии
+# --------------------------------------------------------------------------- #
+
+AIRED, RUNNING, ANNOUNCE = "aired", "running", "announce"
+
+
+def season_state(title: Title, number: int) -> tuple[str, int]:
+    """Сезон вышел целиком (AIRED), идёт (RUNNING) или ещё не начался (ANNOUNCE) —
+    и сколько его серий уже вышло. Дат выхода TMDb не знает вовсе — «вышел», как раньше."""
+    s = title.season(number)
+    if s is None or not s.episodes:
+        return ANNOUNCE, 0
+    if title.last_aired == (0, 0) and not title.next_air[0]:
+        return AIRED, s.episodes
+    if title.season_complete(number):
+        return AIRED, s.episodes
+    aired = title.aired(number)
+    return (RUNNING, aired) if aired else (ANNOUNCE, 0)
+
+
+def short_date(date: str, today=None) -> str:
+    """«2026-11-14» → «14.11» в этом году, «14.11.2027» — в другом."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date or "")
+    if not m:
+        return ""
+    year = (today or datetime.now().date()).year
+    return f"{m.group(3)}.{m.group(2)}" + (f".{m.group(1)}" if int(m.group(1)) != year else "")
+
+
+def announce_date(title: Title, number: int, today=None) -> str:
+    """Когда начнётся сезон — если TMDb уже знает дату его первой серии."""
+    season, episode, date = title.next_air
+    return short_date(date, today) if season == number and episode == 1 else ""
+
+
+def status_text(title: Title, today=None) -> str:
+    """Строка под названием сериала: завершён ли, когда следующая серия, анонсы."""
+    if title.kind != library.TV:
+        return ""
+    if title.status == "Ended":
+        return "Завершён — новых сезонов не будет"
+    if title.status == "Canceled":
+        return "Закрыт — новых сезонов не будет"
+    season, episode, date = title.next_air
+    when = short_date(date, today)
+    if season and episode == 1:
+        return f"Сезон {season} выходит {when}" if when else f"Сезон {season} анонсирован"
+    if season:
+        return (f"Идёт: следующая серия {when} (сезон {season}, серия {episode})" if when
+                else f"Идёт: дальше сезон {season}, серия {episode}")
+    later = next((s for s in title.seasons if season_state(title, s.number)[0] == ANNOUNCE), None)
+    if later is not None:
+        return f"Продлён: сезон {later.number}" + (f" ({later.year})" if later.year else "")             + " — дата пока неизвестна"
+    if title.status in ("In Production", "Planned", "Pilot"):
+        return "Готовится — дата выхода пока неизвестна"
+    if title.status == "Returning Series":
+        return "Не завершён — дат новых серий пока нет"
+    return ""
+
+
+def _reaches(rel: Release, title: Title, number: int) -> int:
+    """До какой серии сезона дошла раздача; 0 — не понять. В сборнике сезоны до
+    последнего — целиком (серии там посчитаны в последнем, `count_in_season`)."""
+    seasons = sorted(rel.seasons)
+    s = title.season(number)
+    if number not in seasons or s is None:
+        return 0
+    if number != seasons[-1]:
+        return s.episodes
+    if rel.episodes:
+        return rel.episodes[1]
+    return (title.aired(number) or s.episodes) if complete(rel, title, [number]) else 0
+
+
+def voice_lag(title: Title, releases, seasons) -> str:
+    """Выбран идущий сезон (или вышедший, а русские раздачи не догнали) — сколько серий
+    вышло в оригинале и докуда дошли русские раздачи, по студиям: ждать или качать."""
+    if title.kind != library.TV or len(seasons) != 1:
+        return ""
+    number = seasons[0]
+    state, aired = season_state(title, number)
+    if state == ANNOUNCE:
+        return ""
+    total = title.season(number).episodes
+    best: dict[str, int] = {}
+    seen = False
+    for r in releases:
+        if r.dead or not russian(r) or number not in r.seasons or not fits(r, title, [number]):
+            continue
+        seen = True
+        reach = _reaches(r, title, number)
+        for v in r.voices or [""]:
+            best[v] = max(best.get(v, 0), reach)
+    top = max(best.values(), default=0)
+    head = (f"Сезон {number} идёт: в оригинале вышло {aired} из {total}" if state == RUNNING
+            else f"Сезон {number} вышел целиком ({total} сер.)")
+    if not seen:
+        return f"{head}, русских раздач с ним пока нет" if state == RUNNING else ""
+    if not top or (state == AIRED and top >= total):
+        return ""
+    studios = sorted(((n, v) for v, n in best.items() if v and n), key=lambda x: -x[0])[:3]
+    who = f" ({', '.join(f'{v} {n}' for n, v in studios)})" if studios else ""
+    if top >= aired:
+        return f"{head}, русские раздачи успевают: {top}{who}"
+    return f"{head}, в русских раздачах — до {top}{who}"
+
+
+SHORT_SPECIAL = 10      # минут: до стольких — мини-серии, гоняться за ними незачем
+
+
+def specials_note(title: Title, have: int = 0) -> tuple[str, str]:
+    """Спецвыпуски сериала → (строка, подсказка со списком). Строка — сколько их и какой
+    длины: у аниме это часто мини-серии по 2–3 минуты (OVA-фильмы TMDb держит отдельными
+    фильмами), у сериалов — «за кадром» и превью. Список с названиями — в подсказке."""
+    if title.kind != library.TV or not title.specials:
+        return "", ""
+    text = f"Спецвыпуски в TMDb: {len(title.specials)}"
+    times = sorted(s.runtime for s in title.specials if s.runtime)
+    if times:
+        span = f"{times[0]} мин" if times[0] == times[-1] else f"{times[0]}–{times[-1]} мин"
+        text += f" ({'короткие, ' if times[-1] <= SHORT_SPECIAL else ''}{span})"
+    if have:
+        text += f", у вас: {have}"
+    hint = "\n".join(f"{s.number}. {s.name or '—'}" + (f" ({s.year})" if s.year else "")
+                     + (f", {s.runtime} мин" if s.runtime else "") for s in title.specials[:40])
+    if len(title.specials) > 40:
+        hint += f"\n… и ещё {len(title.specials) - 40}"
+    return text, hint
+
+
+# Версии фильма (или сериала: аниме «без цензуры») — по названию раздачи: TMDb знает их
+# плохо (у «Царства небесного» режиссёрская там — строчка среди фестивалей).
+VERSIONS = [
+    ("режиссёрская", re.compile(r"режисс[её]рск|director[’'`]?s?[\s.]*cut", re.I)),
+    ("театральная", re.compile(r"театральн|theatrical", re.I)),
+    ("расширенная", re.compile(r"расширенн|удлин[её]нн|\bextended\b", re.I)),
+    ("без цензуры", re.compile(r"без\s+цензур|uncensored|\bunrated\b|\buncut\b", re.I)),
+    ("Final Cut", re.compile(r"final[\s.]*cut", re.I)),
+    ("Redux", re.compile(r"\bredux\b", re.I)),
+    ("IMAX", re.compile(r"\bimax\b", re.I)),
+    ("Ultimate", re.compile(r"ultimate[\s.]*(?:cut|edition)", re.I)),
+]
+
+
+def versions_of(text: str) -> list[str]:
+    """Версии, названные в раздаче: «режиссёрская», «театральная»… Ничего — обычная."""
+    return [name for name, rx in VERSIONS if rx.search(text or "")]
 
 
 @dataclass

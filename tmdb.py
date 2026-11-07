@@ -97,11 +97,13 @@ def tv(tmdb_id: int, api_key: str, language: str = "en-US") -> dict:
 def titles(kind: str, tmdb_id: int, api_key: str, language: str = "ru-RU") -> dict:
     """Карточка с альтернативными названиями и переводами — для поиска раздач:
     трекеры пишут тайтл и по-русски, и в оригинале, и под прокатным именем.
-    У сериала тут же список сезонов (номер, число серий, дата выхода)."""
+    У сериала тут же список сезонов (номер, число серий, дата выхода) и спецвыпуски
+    («season/0»)."""
     if kind not in KINDS:
         raise ValueError(f"kind должен быть movie или tv, получено {kind!r}")
+    append = "alternative_titles,translations" + (",season/0" if kind == "tv" else "")
     return _call(f"/{kind}/{tmdb_id}", api_key, language=language,
-                 append_to_response="alternative_titles,translations") or {}
+                 append_to_response=append) or {}
 
 
 def season(tv_id: int, number: int, api_key: str, language: str = "en-US") -> dict:

@@ -95,13 +95,19 @@ document.addEventListener("alpine:init", () => {
       this.opt({ seasons: next });
     },
     seasonState(se) {
-      if (!se.episodes) return "анонс";
+      if (se.state === "announce") return "анонс" + (se.date ? " " + se.date : "");
       if (se.have >= se.episodes) return "есть";
+      if (se.state === "running") {
+        return se.have ? `есть ${se.have}, вышло ${se.aired} из ${se.episodes}`
+          : `идёт: ${se.aired} из ${se.episodes}`;
+      }
       if (se.have) return `есть ${se.have} из ${se.episodes}`;
       return `${se.episodes} сер.`;
     },
     seasonHint(se) {
-      return `Серий: ${se.episodes || "?"}, год: ${se.year || "?"}, в медиатеке: ${se.have}`
+      return `Серий: ${se.episodes || "?"}`
+        + (se.state === "running" ? ` (вышло ${se.aired})` : "")
+        + `, год: ${se.year || "?"}, в медиатеке: ${se.have}`
         + (se.tmdb ? `; в TMDb — ${se.tmdb}` : "") + ". Ctrl+клик — выбрать несколько сезонов";
     },
     async download(r) {

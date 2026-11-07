@@ -56,6 +56,7 @@ class TorrentsTab:
         self.in_qbit: set[str] = set() # хеши раздач в qBittorrent на момент поиска
         self.voice = ""
         self.codec = ""                # фильтр кодека: HEVC / AVC / "" — все
+        self.version = ""              # фильтр версии: «режиссёрская»… / "" — все
         self.search_status = ""
 
     def start_background(self) -> None:
@@ -107,7 +108,8 @@ class TorrentsTab:
         prefs = prefs or search.load_prefs()
         fit = [r for r in self.fitting(prefs) if search.quality_of(r) == prefs.quality
                and (not self.voice or search.has_voice(r, self.voice))
-               and (not self.codec or r.codec == self.codec)]
+               and (not self.codec or r.codec == self.codec)
+               and (not self.version or self.version in search.versions_of(r.title))]
         return search.rank(fit, self.title, prefs, self.seasons) if fit else []
 
     def refresh_in_qbit(self) -> None:
@@ -143,6 +145,7 @@ class TorrentsTab:
         d["partial"] = (self.title is not None and self.title.kind == library.TV
                         and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
         d["pinned"] = bool({search.page_key(p) for p in pages_of(rel)} & pinned)
+        d["versions"] = search.versions_of(rel.title)
         # Сравнение с медиатекой: у сериала — на серию, у фильма — файл целиком.
         n = search.episode_count(rel, self.title) if self.title else 0
         per = rel.size // n if n else 0
@@ -176,6 +179,13 @@ class TorrentsTab:
         per_codec = collections.Counter(
             r.codec for r in fit if search.quality_of(r) == prefs.quality
             and (not self.voice or search.has_voice(r, self.voice)))
+        # Версии (режиссёрская, театральная…) — так же, ещё и с выбранным кодеком.
+        per_version = collections.Counter(
+            v for r in fit if search.quality_of(r) == prefs.quality
+            and (not self.voice or search.has_voice(r, self.voice))
+            and (not self.codec or r.codec == self.codec) for v in search.versions_of(r.title))
+        specials, specials_hint = (search.specials_note(title, self.have.get(0, 0))
+                                   if title else ("", ""))
         ap = self.autopilot
         in_qbit = self.in_qbit | ap.present()
         watching = self.watcher.find(title.kind, title.tmdb_id) if title else None
@@ -191,13 +201,22 @@ class TorrentsTab:
                        "library": self.library_dir,
                        "numbering": self.numbering_note,
                        "owned": owned_text(self.owned_version, title.kind),
-                       "watching": watching is not None}
+                       "watching": watching is not None,
+                       "status_text": search.status_text(title),
+                       "specials": specials, "specials_hint": specials_hint}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,
                          "have": self.have.get(s.number, 0),
                          "tmdb": search.tmdb_range(title, s.number),
+                         "state": state, "aired": aired,
+                         "date": search.announce_date(title, s.number),
                          "selected": s.number in self.seasons}
-                        for s in (title.seasons if title else [])],
+                        for s in (title.seasons if title else [])
+                        for state, aired in [search.season_state(title, s.number)]],
+            "lag": search.voice_lag(title, self.releases, self.seasons) if title else "",
+            "versions": [[v, per_version.get(v, 0)] for v, _ in search.VERSIONS
+                         if per_version.get(v) or self.version == v],
+            "version": self.version,
             "releases": [self.release_dict(r, in_qbit, pinned) for r in shown[:200]],
             "free": autopilot.free_space(title.kind) if title else 0,
             "total": len(self.releases),
@@ -309,7 +328,7 @@ def _select(t: TorrentsTab, hit: metadata.SearchHit, job) -> None:
     t.library_dir, t.have = search.in_library(title, roots)
     t.numbering_note = search.numbering_note(title, t.library_dir)
     t.owned_version = search.library_version(hit.kind, t.library_dir, meta.extras_folder)
-    t.title, t.releases, t.voice, t.codec, t.any_year = title, [], "", "", False
+    t.title, t.releases, t.voice, t.codec, t.version, t.any_year = title, [], "", "", "", False
     t.seasons = t.default_seasons()
     job.progress(0, 0, "поиск раздач…")
     t.with_english = search.load_prefs().english
@@ -387,6 +406,8 @@ def search_options():
         t.voice = str(data["voice"] or "")
     if "codec" in data:
         t.codec = data["codec"] if data["codec"] in search.CODECS else ""
+    if "version" in data:
+        t.version = data["version"] if data["version"] in dict(search.VERSIONS) else ""
     prefs = search.load_prefs()
     if data.get("quality") in search.QUALITIES:
         prefs.quality = int(data["quality"])

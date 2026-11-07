@@ -53,11 +53,14 @@
                   title="Раз в день проверять, что вышло и появилось ли на трекерах; писать в Telegram">
             <svg class="icon"><use href="#i-eye"/></svg>Следить</button>
           <span class="badge ok" x-show="s.title && s.title.watching">в слежении</span></div>
+        <div class="small" x-show="s.title && s.title.status_text" x-text="s.title && s.title.status_text"></div>
         <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
         <div class="small" x-show="s.title && s.title.owned" x-text="s.title && 'У вас: ' + s.title.owned"></div>
         <div class="small warn-text" x-show="s.title && s.title.numbering" x-text="s.title && s.title.numbering"></div>
+        <div class="small muted" x-show="s.title && s.title.specials" x-text="s.title && s.title.specials"
+             :title="s.title && s.title.specials_hint"></div>
       </div>
     </div>
   </section>
@@ -73,9 +76,11 @@
         <template x-for="se in s.seasons" :key="se.number">
           <button type="button" class="btn btn-sm" :class="{ 'btn-primary': se.selected }"
                   @click="toggleSeason(se.number, $event)" :title="seasonHint(se)"
-                  x-text="'Сезон ' + se.number + ' · ' + seasonState(se)"></button>
+                  x-text="'Сезон ' + se.number + (se.year ? ' · ' + se.year : '') + ' · ' + seasonState(se)"></button>
         </template>
       </div>
+      <div class="small" x-show="s.lag" x-text="s.lag"
+           title="Серии в оригинале — по TMDb, в русских раздачах — по их названиям («1-5 из 19»)"></div>
       <div class="row">
         <span class="small muted">Качество:</span>
         <div class="seg">
@@ -102,6 +107,17 @@
                   :title="codecHint(c[0])"
                   @click="opt({ codec: s.codec === c[0] ? '' : c[0] })">
             <span x-text="c[0]"></span> <span class="faint" x-text="c[1]"></span></button>
+        </template>
+      </div>
+      <div class="row" x-show="(s.versions || []).length">
+        <span class="small muted">Версия:</span>
+        <button type="button" class="btn btn-sm" :class="{ 'btn-primary': !s.version }" @click="opt({ version: '' })"
+                title="Все раздачи — и без пометки версии (обычно это театральная)">все</button>
+        <template x-for="v in s.versions || []" :key="v[0]">
+          <button type="button" class="btn btn-sm" :class="{ 'btn-primary': s.version === v[0] }"
+                  title="Версия — по названию раздачи"
+                  @click="opt({ version: s.version === v[0] ? '' : v[0] })">
+            <span x-text="v[0]"></span> <span class="faint" x-text="v[1]"></span></button>
         </template>
       </div>
       <div class="row" x-show="s.voices && s.voices.length">
@@ -153,6 +169,7 @@
                   <span class="badge accent plain" x-show="r.update"
                         title="Та же страница трекера, что у раздачи в qBittorrent: докачаются только новые серии">новая версия вашей раздачи</span>
                   <span class="badge plain" x-show="r.in_library">уже в медиатеке</span>
+                  <template x-for="v in r.versions || []" :key="v"><span class="badge accent plain" x-text="v"></span></template>
                   <span class="badge plain" x-show="r.links > 1"
                         title="Те же файлы под разными хешами (тот же размер, сезоны, серии, качество): раздачу перезаливали, или трекер завёл свой торрент. «Скачать» добавит их разом — качаться будет та ссылка, что первой получит список файлов, остальные уберутся"
                         x-text="'ссылок: ' + r.links + ' — возьму живую'"></span>
