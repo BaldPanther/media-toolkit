@@ -955,7 +955,7 @@ def test_season_state_and_status_line():
     assert search.status_text(_airing(last=(2, 19), nxt=(0, 0, ""))) == \
         "Продлён: сезон 3 — дата пока неизвестна"
     assert search.status_text(_airing("Ended", (2, 19), (0, 0, ""))) == \
-        "Завершён — новых сезонов не будет"
+        "Завершён"
     # TMDb не знает, что вышло, — сезоны считаются вышедшими, как раньше.
     unknown = _airing(last=(0, 0), nxt=(0, 0, ""))
     assert search.season_state(unknown, 2) == ("aired", 19)
@@ -1017,3 +1017,20 @@ def test_version_filter_in_search(web, monkeypatch):
     c.post("/api/torrents/search/options", json={"version": "режиссёрская"})
     s = _search(c)
     assert [r["hash"] for r in s["releases"]] == ["1" * 40] and s["releases"][0]["versions"] == ["режиссёрская"]
+
+
+def test_voice_filter_keeps_releases_with_unknown_voices(web, monkeypatch):
+    # rutracker студий в названии не пишет — такую раздачу фильтр не прячет, а ставит
+    # ниже и без ⭐; раздача с другой известной озвучкой — мимо.
+    st, c, _ = web
+    monkeypatch.setattr(search, "find", lambda title, sources=None, log=None, seasons=(): _releases([
+        _item("rutracker", "Тёмная материя [S01] [RUS(int)]", h="1" * 40, sid=90),
+        _item("rutor", "Тёмная материя [S01] | Crunchyroll", h="2" * 40, sid=5, voices=["Crunchyroll"]),
+        _item("rutor", "Тёмная материя [S01] | AniDUB", h="3" * 40, sid=50, voices=["AniDUB"])]))
+    c.post("/api/torrents/search", json={"query": "Тёмная материя", "kind": "tv"})
+    assert st.jobs.wait() and st.jobs.last.status == "done", st.jobs.last.error
+    c.post("/api/torrents/search/options", json={"quality": 1080, "voice": "Crunchyroll"})
+    s = _search(c)
+    assert [(r["hash"][0], r["recommended"], r["voice_unknown"]) for r in s["releases"]] == [
+        ("2", True, False), ("1", False, True)]
+    assert dict(s["qualities"])[1080] == 2

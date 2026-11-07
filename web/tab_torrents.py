@@ -104,13 +104,25 @@ class TorrentsTab:
         return [r for r in self.releases if search.fits(r, self.title, self.seasons, self.any_year)
                 and search.picture_ok(r, prefs) and (prefs.english or search.russian(r))]
 
+    def voice_match(self, r: search.Release) -> bool:
+        """Выбранная озвучка в раздаче есть — или её озвучки неизвестны. Озвучки знаем
+        только из названия раздачи: rutracker студий в нём не пишет (они в описании темы,
+        а его ботам не отдают) — такие раздачи фильтр не прячет, а ставит ниже."""
+        return not self.voice or not r.voices or search.has_voice(r, self.voice)
+
     def shown(self, prefs: search.Prefs | None = None) -> list[search.Release]:
         prefs = prefs or search.load_prefs()
         fit = [r for r in self.fitting(prefs) if search.quality_of(r) == prefs.quality
-               and (not self.voice or search.has_voice(r, self.voice))
+               and self.voice_match(r)
                and (not self.codec or r.codec == self.codec)
                and (not self.version or self.version in search.versions_of(r.title))]
-        return search.rank(fit, self.title, prefs, self.seasons) if fit else []
+        sure = [r for r in fit if not self.voice or search.has_voice(r, self.voice)]
+        maybe = [r for r in fit if self.voice and not search.has_voice(r, self.voice)]
+        ranked = search.rank(sure, self.title, prefs, self.seasons)
+        rest = search.rank(maybe, self.title, prefs, self.seasons)
+        for r in rest:
+            r.recommended = False          # ⭐ — только там, где озвучка точно есть
+        return ranked + rest
 
     def refresh_in_qbit(self) -> None:
         qs = qbit.load_settings()
@@ -146,6 +158,7 @@ class TorrentsTab:
                         and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
         d["pinned"] = bool({search.page_key(p) for p in pages_of(rel)} & pinned)
         d["versions"] = search.versions_of(rel.title)
+        d["voice_unknown"] = bool(self.voice) and not search.has_voice(rel, self.voice)
         # Сравнение с медиатекой: у сериала — на серию, у фильма — файл целиком.
         n = search.episode_count(rel, self.title) if self.title else 0
         per = rel.size // n if n else 0
@@ -173,16 +186,13 @@ class TorrentsTab:
             v for r in fit if search.quality_of(r) == prefs.quality for v in r.voices).most_common(14)]
         if self.voice and self.voice not in voices:
             voices.append(self.voice)
-        per_quality = collections.Counter(
-            search.quality_of(r) for r in fit if not self.voice or search.has_voice(r, self.voice))
+        per_quality = collections.Counter(search.quality_of(r) for r in fit if self.voice_match(r))
         # Число раздач на кнопках кодека — в выбранном качестве и с выбранной озвучкой.
         per_codec = collections.Counter(
-            r.codec for r in fit if search.quality_of(r) == prefs.quality
-            and (not self.voice or search.has_voice(r, self.voice)))
+            r.codec for r in fit if search.quality_of(r) == prefs.quality and self.voice_match(r))
         # Версии (режиссёрская, театральная…) — так же, ещё и с выбранным кодеком.
         per_version = collections.Counter(
-            v for r in fit if search.quality_of(r) == prefs.quality
-            and (not self.voice or search.has_voice(r, self.voice))
+            v for r in fit if search.quality_of(r) == prefs.quality and self.voice_match(r)
             and (not self.codec or r.codec == self.codec) for v in search.versions_of(r.title))
         specials, specials_hint = (search.specials_note(title, self.have.get(0, 0))
                                    if title else ("", ""))
@@ -203,6 +213,7 @@ class TorrentsTab:
                        "owned": owned_text(self.owned_version, title.kind),
                        "watching": watching is not None,
                        "status_text": search.status_text(title),
+                       "status_done": title.status in search.DONE_STATUS,
                        "specials": specials, "specials_hint": specials_hint}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,

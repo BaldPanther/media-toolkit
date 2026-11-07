@@ -53,7 +53,9 @@
                   title="Раз в день проверять, что вышло и появилось ли на трекерах; писать в Telegram">
             <svg class="icon"><use href="#i-eye"/></svg>Следить</button>
           <span class="badge ok" x-show="s.title && s.title.watching">в слежении</span></div>
-        <div class="small" x-show="s.title && s.title.status_text" x-text="s.title && s.title.status_text"></div>
+        <div class="small" :class="{ 'ok-text': s.title && s.title.status_done }"
+             x-show="s.title && s.title.status_text" x-text="s.title && s.title.status_text"
+             :title="s.title && s.title.status_done ? 'Новых сезонов не будет — по TMDb' : ''"></div>
         <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
@@ -170,6 +172,8 @@
                         title="Та же страница трекера, что у раздачи в qBittorrent: докачаются только новые серии">новая версия вашей раздачи</span>
                   <span class="badge plain" x-show="r.in_library">уже в медиатеке</span>
                   <template x-for="v in r.versions || []" :key="v"><span class="badge accent plain" x-text="v"></span></template>
+                  <span class="badge warn plain" x-show="r.voice_unknown"
+                        title="В названии раздачи студий нет (rutracker пишет их в описании темы) — может быть и выбранная. Откройте страницу раздачи по ссылке трекера">озвучки не указаны — см. страницу</span>
                   <span class="badge plain" x-show="r.links > 1"
                         title="Те же файлы под разными хешами (тот же размер, сезоны, серии, качество): раздачу перезаливали, или трекер завёл свой торрент. «Скачать» добавит их разом — качаться будет та ссылка, что первой получит список файлов, остальные уберутся"
                         x-text="'ссылок: ' + r.links + ' — возьму живую'"></span>

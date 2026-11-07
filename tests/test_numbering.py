@@ -162,13 +162,14 @@ def test_sibling_numbers(tmp_path):
 def test_numbering_note_says_how_seasons_map(tmp_path, monkeypatch):
     title = _title(monkeypatch)
     note = search.numbering_note(title)
-    assert "один сезон из 60 серий" in note and "3 — серии 49–60" in note
-    assert "группа TMDb «Seasons»" in note               # деление — из TMDb, не из раздач
-    assert "В медиатеку — по сезонам трекеров" in note     # тайтла в медиатеке нет
+    # Номера — как в именах файлов; деление — из TMDb, не из раздач.
+    assert note == ("Нумерация разная: в TMDb один сезон из 60 серий, а раздачи делят на сезоны "
+                    "(группа TMDb «Seasons»): S1 — E01–24 · S2 — E25–48 · S3 — E49–60. "
+                    "В медиатеку — по сезонам: S02E01…")          # тайтла в медиатеке нет
     show = tmp_path / "Show"
     (show / "Season 01").mkdir(parents=True)
     (show / "Season 01" / "Show - S01E01 - x.mkv").write_bytes(b"")
-    assert "по сезонам трекеров" in search.numbering_note(title, str(show))
+    assert "В медиатеку — по сезонам" in search.numbering_note(title, str(show))
     (show / "Season 01" / "Show - S01E25 - x.mkv").write_bytes(b"")
-    assert "сезон 3 ложится как S01E49" in search.numbering_note(title, str(show))
-    assert search.tmdb_range(title, 3) == "серии 49–60"
+    assert "S3 ложится как S01E49" in search.numbering_note(title, str(show))
+    assert search.tmdb_range(title, 3) == "S01E49–60"

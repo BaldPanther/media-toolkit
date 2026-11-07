@@ -1165,36 +1165,36 @@ def in_library(title: Title, roots) -> tuple[str, dict[int, int]]:
     return folder, have
 
 
-def tmdb_range(title: Title, season: int) -> str:
-    """Сезон трекеров в нумерации TMDb: «серии 49–60» или «S01E49–E60»."""
+def tmdb_range(title: Title, season: int, short: bool = False) -> str:
+    """Сезон трекеров в нумерации TMDb: «S01E49–60»; `short` — без сезона: «E49–60»
+    (когда сезон у TMDb один)."""
     span = title.numbering.span(season)
     if span is None or not title.numbering.grouped:
         return ""
     last = span.first + span.count - 1
-    if len(title.numbering.tmdb_seasons()) == 1:
-        return f"серии {span.first}–{last}"
-    return f"S{span.tmdb_season:02d}E{span.first:02d}–E{last:02d}"
+    return ("" if short else f"S{span.tmdb_season:02d}") + f"E{span.first:02d}–{last:02d}"
 
 
 def numbering_note(title: Title, folder: str = "") -> str:
     """Нумерация трекеров и TMDb разная — сказать прямо, чтобы не искать «сезон 3»
-    в TMDb, где он часть первого, и знать, под какими номерами лягут серии."""
+    в TMDb, где он часть первого, и знать, под какими номерами лягут серии. Номера —
+    как в именах файлов: «S3 — E51–66»."""
     nb = title.numbering
     if title.kind != library.TV or not nb.grouped:
         return ""
-    tmdb_count = len(nb.tmdb_seasons())
+    single = len(nb.tmdb_seasons()) == 1
     total = sum(s.count for s in nb.spans)
-    where = (f"в TMDb один сезон из {total} серий подряд" if tmdb_count == 1
-             else f"в TMDb сезонов {tmdb_count}")
-    parts = ", ".join(f"{s.season} — {tmdb_range(title, s.season)}" for s in nb.spans)
+    where = (f"в TMDb один сезон из {total} серий" if single
+             else f"в TMDb сезонов {len(nb.tmdb_seasons())}")
+    parts = " · ".join(f"S{s.season} — {tmdb_range(title, s.season, short=single)}"
+                       for s in nb.spans)
     group = f" «{nb.source}»" if nb.source else ""
-    text = (f"Нумерация разная: {where}, а по сезонам, как у раздач, серии делит группа "
-            f"TMDb{group}: {parts}. Программа сверяет сама.")
+    text = f"Нумерация разная: {where}, а раздачи делят на сезоны (группа TMDb{group}): {parts}."
     grouped_disk = numbering.library_grouped(nb, disk_episodes(folder) if folder else ())
     last = nb.spans[-1]
     tmdb_season, first = nb.to_tmdb(last.season, 1)
-    text += (" В медиатеку — по сезонам трекеров (S02E01…)." if grouped_disk else
-             f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
+    text += (" В медиатеку — по сезонам: S02E01…" if grouped_disk else
+             f" В медиатеке — как в TMDb: S{last.season} ложится как "
              f"S{tmdb_season:02d}E{first:02d} и дальше.")
     return text
 
@@ -1204,6 +1204,8 @@ def numbering_note(title: Title, folder: str = "") -> str:
 # --------------------------------------------------------------------------- #
 
 AIRED, RUNNING, ANNOUNCE = "aired", "running", "announce"
+# Сериал кончился — новых сезонов не будет (на вкладке — зелёным).
+DONE_STATUS = {"Ended": "Завершён", "Canceled": "Закрыт"}
 
 
 def season_state(title: Title, number: int) -> tuple[str, int]:
@@ -1239,10 +1241,8 @@ def status_text(title: Title, today=None) -> str:
     """Строка под названием сериала: завершён ли, когда следующая серия, анонсы."""
     if title.kind != library.TV:
         return ""
-    if title.status == "Ended":
-        return "Завершён — новых сезонов не будет"
-    if title.status == "Canceled":
-        return "Закрыт — новых сезонов не будет"
+    if title.status in DONE_STATUS:
+        return DONE_STATUS[title.status]
     season, episode, date = title.next_air
     when = short_date(date, today)
     if season and episode == 1:
