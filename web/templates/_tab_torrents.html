@@ -221,13 +221,12 @@
                         @click="download(r)" :disabled="!t.qbit || r.in_qbit || r.stale"
                         :title="r.stale ? 'У источника старый magnet этой раздачи — скачайте её со страницы трекера'
                                 : r.dead ? 'Трекер эту ссылку больше не знает, сидов нет — скорее всего, не скачается; надёжнее со страницы трекера'
-                                : r.picked.length ? 'Только выбранные: ' + seasonsText(r.picked) + '. Остальным сезонам сборника — «не загружать»; целиком — «Всю раздачу»' : ''">
+                                : r.picked.length ? 'Только выбранные сезоны' : ''">
                   <svg class="icon" x-show="!r.in_qbit"><use href="#i-download"/></svg>
                   <svg class="icon" x-show="r.in_qbit"><use href="#i-check"/></svg>
                   <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить' : 'Скачать')"></span></button>
                 <button type="button" class="btn btn-sm btn-ok" x-show="r.picked.length && !r.in_qbit && !r.update"
-                        @click="download(r, true)" :disabled="!t.qbit || r.stale"
-                        :title="'Сборник целиком, ' + size(r.size) + ': ' + seasonsText(r.seasons) + ' и всё, что в нём ещё есть, — фильмы, OVA, спецвыпуски. «Скачать» возьмёт только выбранные: ' + seasonsText(r.picked)">
+                        @click="download(r, true)" :disabled="!t.qbit || r.stale">
                   <svg class="icon"><use href="#i-download"/></svg><span>Всю раздачу</span></button>
                 <button type="button" class="btn btn-sm btn-ghost" x-show="r.partial && !r.pinned" @click="pin(r)"
                         title="Сообщать в Telegram, когда в этой раздаче прибавятся серии">Следить</button>
