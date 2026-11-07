@@ -196,6 +196,7 @@ class TorrentsTab:
             and (not self.codec or r.codec == self.codec) for v in search.versions_of(r.title))
         specials, specials_hint = (search.specials_note(title, self.have.get(0, 0))
                                    if title else ("", ""))
+        asked = search.asked_names(title, self.with_english) if title else []
         ap = self.autopilot
         in_qbit = self.in_qbit | ap.present()
         watching = self.watcher.find(title.kind, title.tmdb_id) if title else None
@@ -206,7 +207,8 @@ class TorrentsTab:
                       "kind": "фильм" if h.kind == library.MOVIE else "сериал"}
                      for i, h in enumerate(self.hits)],
             "title": ({"label": library.title_with_year(title.title, title.year),
-                       "kind": title.kind, "names": title.names, "status": title.status,
+                       "kind": title.kind, "names": asked, "status": title.status,
+                       "names_other": [n for n in title.names if n not in asked],
                        "poster": self.hit.poster_url if self.hit else "",
                        "library": self.library_dir,
                        "numbering": self.numbering_note,

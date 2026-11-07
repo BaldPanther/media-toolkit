@@ -56,7 +56,11 @@
         <div class="small" :class="{ 'ok-text': s.title && s.title.status_done }"
              x-show="s.title && s.title.status_text" x-text="s.title && s.title.status_text"
              :title="s.title && s.title.status_done ? 'Новых сезонов не будет — по TMDb' : ''"></div>
-        <div class="small faint" x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ') : ''"></div>
+        <div class="small faint"
+             x-text="s.title ? 'Ищу по: ' + s.title.names.join(' · ')
+                     + (s.title.names_other.length ? ' · ещё названий: ' + s.title.names_other.length : '') : ''"
+             :title="s.title && s.title.names_other.length
+                     ? 'Ещё названия тайтла в TMDb (по ним не ищу: японскими и корейскими буквами jac.red не ищет, остальные — сверх лимита запросов):\n' + s.title.names_other.join('\n') : ''"></div>
         <div class="small" :class="s.title && s.title.library ? 'ok-text' : 'faint'"
              x-text="s.title ? (s.title.library ? 'В медиатеке: ' + s.title.library : 'В медиатеке нет') : ''"></div>
         <div class="small" x-show="s.title && s.title.owned" x-text="s.title && 'У вас: ' + s.title.owned"></div>

@@ -626,15 +626,27 @@ def _torznab(source: dict, title: Title, log=None) -> list[Release]:
 _KNABEN_CATEGORY = {library.TV: 2_000_000, library.MOVIE: 3_000_000}
 
 
+def _knaben_names(title: Title) -> list[str]:
+    """Два названия для Knaben: не русские, латиница — вперёд (английское и ромадзи
+    находят больше, чем иероглифы)."""
+    return sorted((n for n in title.names if not _CYRILLIC.search(n)),
+                  key=lambda n: (_foreign_script(n), not _LATIN.search(n)))[:2]
+
+
+def asked_names(title: Title, english: bool = False) -> list[str]:
+    """Названия, по которым поиск спрашивает источники: jac.red (`_jacred_queries`) и, с
+    галкой «и английские», Knaben. Остальные названия тайтла — только в подсказке."""
+    names = [n for q in _jacred_queries(title) for n in (q["search"], q.get("altname")) if n]
+    return list(dict.fromkeys(names + (_knaben_names(title) if english else [])))
+
+
 def _knaben(source: dict, title: Title, log=None) -> list[Release]:
     """Knaben — поиск по The Pirate Bay, 1337x, Nyaa и др.: в основном английские
     раздачи. Русские названия не спрашиваем: русские трекеры — у jac.red."""
     url = str(source.get("url") or KNABEN["url"])
     cat = _KNABEN_CATEGORY[title.kind]
     out = []
-    # Латиница — вперёд: английское и ромадзи находят больше, чем иероглифы.
-    names = sorted((n for n in title.names if not _CYRILLIC.search(n)),
-                   key=lambda n: not _LATIN.search(n))[:2]
+    names = _knaben_names(title)
     failed = []
     for name in names:
         try:

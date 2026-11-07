@@ -170,6 +170,18 @@ def test_jacred_queries_pair_names_and_skip_foreign_script():
     assert search._no_accents("Настоящий детектив") == "Настоящий детектив"   # «й» — не «и»
 
 
+def test_asked_names_are_only_those_sent():
+    t = _rezero()
+    asked = search.asked_names(t)
+    # «Ищу по» — то, что ушло в запросы; японское и сверх лимита — только в подсказке.
+    assert asked[:3] == ["Re:ZERO – Жизнь с нуля в альтернативном мире",
+                         "Re:ZERO -Starting Life in Another World-", "Re:Zero kara Hajimeru Isekai Seikatsu"]
+    assert "Re:ゼロから始める異世界生活" not in asked and len(asked) == 7
+    # Knaben — два латинских: «Re» в японском оригинале латиницей его не делает.
+    assert search._knaben_names(t) == ["Re:ZERO -Starting Life in Another World-",
+                                       "Re:Zero kara Hajimeru Isekai Seikatsu"]
+
+
 def _bureau():
     return search.Title(kind=library.TV, tmdb_id=62480, title="Бюро", year=2015,
                         original="Le Bureau des légendes", original_language="fr",
