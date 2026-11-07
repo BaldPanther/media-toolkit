@@ -702,10 +702,10 @@ class Autopilot:
         """Карточка и номера серий в медиатеке для аниме со сквозной нумерацией.
 
         В медиатеке серия ложится так, как там уже принято у тайтла: сквозным
-        номером TMDb (S01E50) или по сезонам трекеров (S03E02). → (info, overrides)."""
+        номером TMDb (S01E50) или по сезонам трекеров (S03E02); тайтла ещё нет — по
+        сезонам трекеров. → (info, overrides)."""
         lib = search.library_dir(library.TV, tmdb_id, meta.tv_roots)
-        grouped_disk = bool(lib) and numbering.library_grouped(
-            nb, library.scan_folder(Path(lib)).seasons())
+        grouped_disk = numbering.library_grouped(nb, search.disk_episodes(Path(lib)) if lib else ())
         videos = set(scan.videos)
         overrides = {v: numbering.to_library(nb, s, e, grouped_disk)
                      for v, (s, e) in tracker.items() if v in videos}

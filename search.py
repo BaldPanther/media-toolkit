@@ -167,6 +167,7 @@ class Title:
     title: str                          # русское (язык описаний)
     year: int | None
     names: list[str] = field(default_factory=list)   # все названия для поиска
+    romaji: list[str] = field(default_factory=list)  # из них — запись японского латиницей
     original: str = ""
     seasons: list[Season] = field(default_factory=list)
     status: str = ""                    # у сериала: «Returning Series», «Ended»
@@ -220,8 +221,9 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
     # трекеры тайтл не знают. Ромадзи — вперёд: запросов по названиям немного.
     alt = d.get("alternative_titles") or {}
     alts = alt.get("titles") or alt.get("results") or []
-    names += [a.get("title") or "" for a in alts
-              if str(a.get("type") or "").casefold() == "romaji"]
+    t.romaji = [str(a.get("title") or "").strip() for a in alts
+                if str(a.get("type") or "").casefold() == "romaji" and a.get("title")]
+    names += t.romaji
     names += [a.get("title") or "" for a in alts if a.get("iso_3166_1") == "RU"]
     seen = set()
     for n in names:
@@ -416,24 +418,78 @@ def _from_jacred(item: dict) -> Release | None:
     return rel
 
 
-def _jacred(source: dict, title: Title) -> list[Release]:
+JACRED_QUERIES = 4
+
+
+def _jacred_key(name: str) -> str:
+    """Название так, как его сравнивает jac.red: латиница, кириллица и цифры, «ё» — «е»,
+    остальное он выбрасывает (от «Shōgun» остаётся «shgun»)."""
+    return re.sub(r"[^0-9a-zа-я]", "", name.casefold().replace("ё", "е"))
+
+
+def _foreign_script(name: str) -> bool:
+    """Есть буквы не латиницей и не кириллицей (японские, корейские). jac.red их
+    выбросит: от «Re:ゼロから始める異世界生活» останется «re», а такой запрос перебирает
+    всю его базу и падает (504). Диакритика — не в счёт: «ō» — это «o» со знаком."""
+    base = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
+    return bool(re.search(r"[^\W\d_a-zа-яё]", base, re.I))
+
+
+def _jacred_queries(title: Title) -> list[dict]:
+    """Запросы к jac.red по названиям тайтла.
+
+    Точный поиск (`exact`) берёт два названия за раз — `search` и `altname` (найдёт по
+    любому), так что разных названий в нескольких запросах помещается вдвое больше: у
+    аниме их бывает десяток, и каждое находит свою часть раздач (kinozal пишет «Re: Жизнь в
+    альтернативном мире с нуля», rutracker — «Re:Zero — жизнь с нуля в другом мире»).
+    Ромадзи — неточным поиском: трекеры дописывают к нему сезон («… Isekai Seikatsu 4»,
+    «… 2nd Season»), и точный такие раздачи не находит. jac.red отвечает по одному
+    запросу за раз (два разом — 429), каждый — около секунды: запросов не больше
+    `JACRED_QUERIES`.
+    """
+    names, seen = [], set()
+    for n in [title.title, title.original, *title.names]:
+        key = _jacred_key(n or "")
+        if key and key not in seen and not _foreign_script(n):
+            seen.add(key)
+            names.append(n.strip())
+    romaji = {_jacred_key(n) for n in title.romaji}
+    wide = [n for n in names if _jacred_key(n) in romaji][:1]
+    exact = [n for n in names if n not in wide]
+    queries = [{"search": a, "altname": b, "exact": "true"}
+               for a, b in zip(exact[::2], exact[1::2] + [""])]
+    # Ромадзи — вторым: первый запрос (русское и оригинал) важнее всего.
+    queries[1:1] = [{"search": n} for n in wide]
+    return queries[:JACRED_QUERIES]
+
+
+def _jacred(source: dict, title: Title, log=None) -> list[Release]:
+    """Раздачи из jac.red. Запрос, на который он не ответил (504 бывает и на отдельные
+    названия), — в журнал, остальные всё равно в деле; не ответил ни на один — ошибка
+    источника."""
     base = str(source["url"]).rstrip("/")
     found: dict[tuple, Release] = {}
-    original = title.original if title.original.casefold() != title.title.casefold() else ""
-    queries = [{"search": title.title, "altname": original}] if title.title else []
-    # Каждый запрос — сотни раздач и секунды ожидания: остальных названий хватит трёх.
-    queries += [{"search": n} for n in title.names if n not in (title.title, original)][:3]
+    failed = []
+    queries = _jacred_queries(title)
     for q in queries:
         params = {k: v for k, v in q.items() if v}
-        params["exact"] = "true"
         if source.get("apikey"):
             params["apikey"] = source["apikey"]
-        data = net.get_json(f"{base}/api/v1.0/torrents?{urllib.parse.urlencode(params)}",
-                            timeout=30) or []
+        try:
+            data = net.get_json(f"{base}/api/v1.0/torrents?{urllib.parse.urlencode(params)}",
+                                timeout=30) or []
+        except net.NetError as e:
+            failed.append((q, e))
+            continue
         for item in data if isinstance(data, list) else []:
             rel = _from_jacred(item)
             if rel is not None and not _other_title(item, title):
                 found.setdefault((rel.trackers[0][0], rel.trackers[0][1], rel.hash), rel)
+    if failed and len(failed) == len(queries):
+        raise failed[0][1]
+    for q, e in failed:
+        if log:
+            log(f"⚠ Поиск: {base}: не ответил по «{q['search']}»: {e}")
     return list(found.values())
 
 
@@ -462,7 +518,7 @@ def _other_title(item: dict, title: Title) -> bool:
 _TZ = "{http://torznab.com/schemas/2015/feed}"
 
 
-def _torznab(source: dict, title: Title) -> list[Release]:
+def _torznab(source: dict, title: Title, log=None) -> list[Release]:
     base = str(source["url"]).rstrip("/")
     out = []
     for name in title.names[:4]:
@@ -472,7 +528,9 @@ def _torznab(source: dict, title: Title) -> list[Release]:
         try:
             raw = net.get_bytes(f"{base}?{urllib.parse.urlencode(params)}", timeout=40)
             root = ET.fromstring(raw)
-        except (net.NetError, ET.ParseError):
+        except (net.NetError, ET.ParseError) as e:
+            if log:
+                log(f"⚠ Поиск: {base}: не ответил по «{name}»: {e}")
             continue
         for it in root.iter("item"):
             attrs = {a.get("name"): a.get("value") for a in it.iter(f"{_TZ}attr")}
@@ -499,7 +557,7 @@ def _torznab(source: dict, title: Title) -> list[Release]:
 _KNABEN_CATEGORY = {library.TV: 2_000_000, library.MOVIE: 3_000_000}
 
 
-def _knaben(source: dict, title: Title) -> list[Release]:
+def _knaben(source: dict, title: Title, log=None) -> list[Release]:
     """Knaben — поиск по The Pirate Bay, 1337x, Nyaa и др.: в основном английские
     раздачи. Русские названия не спрашиваем: русские трекеры — у jac.red."""
     url = str(source.get("url") or KNABEN["url"])
@@ -507,11 +565,17 @@ def _knaben(source: dict, title: Title) -> list[Release]:
     out = []
     # Латиница — вперёд: английское и ромадзи находят больше, чем иероглифы.
     names = sorted((n for n in title.names if not _CYRILLIC.search(n)),
-                   key=lambda n: not _LATIN.search(n))
-    for name in names[:2]:
-        data = net.post_json(url, {"search_type": "100%", "search_field": "title", "query": name,
-                                   "order_by": "seeders", "order_direction": "desc", "size": 300,
-                                   "hide_unsafe": True, "hide_xxx": True}, timeout=30)
+                   key=lambda n: not _LATIN.search(n))[:2]
+    failed = []
+    for name in names:
+        try:
+            data = net.post_json(url, {"search_type": "100%", "search_field": "title",
+                                       "query": name, "order_by": "seeders",
+                                       "order_direction": "desc", "size": 300,
+                                       "hide_unsafe": True, "hide_xxx": True}, timeout=30)
+        except net.NetError as e:
+            failed.append((name, e))
+            continue
         for it in data.get("hits", []) if isinstance(data, dict) else []:
             # Категории: 2xxxxxx — сериалы, 3xxxxxx — фильмы, остальное (музыка…) мимо.
             cats = [int(c) for c in it.get("categoryId") or [] if str(c).isdigit()]
@@ -533,6 +597,11 @@ def _knaben(source: dict, title: Title) -> list[Release]:
                 codec=parsed["codec"], source=parsed["source"], seasons=parsed.get("seasons", []), year=int(year.group(1)) if year else None,
                 trackers=[[str(it.get("tracker") or "Knaben"), str(it.get("details") or "")]],
                 episodes=parsed.get("episodes", []), pack=parsed.get("pack", False)))
+    if failed and len(failed) == len(names):
+        raise failed[0][1]
+    for name, e in failed:
+        if log:
+            log(f"⚠ Поиск: Knaben: не ответил по «{name}»: {e}")
     return out
 
 
@@ -776,7 +845,7 @@ def find(title: Title, sources=None, log=None, seasons=()) -> list[Release]:
 
     def read(source: dict) -> list[Release]:
         try:
-            return readers[source["type"]](source, title)
+            return readers[source["type"]](source, title, log)
         except (net.NetError, OSError) as e:
             log(f"⚠ Поиск: {source.get('url')}: {e}")
             return []
@@ -1061,13 +1130,12 @@ def numbering_note(title: Title, folder: str = "") -> str:
     parts = ", ".join(f"{s.season} — {tmdb_range(title, s.season)}" for s in nb.spans)
     text = (f"Нумерация разная: {where}, а трекеры делят на сезоны: {parts}. "
             f"Программа сверяет сама.")
-    if folder:
-        grouped_disk = numbering.library_grouped(nb, library.scan_folder(Path(folder)).seasons())
-        last = nb.spans[-1]
-        tmdb_season, first = nb.to_tmdb(last.season, 1)
-        text += (" В медиатеке — по сезонам трекеров (S02E01…)." if grouped_disk else
-                 f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
-                 f"S{tmdb_season:02d}E{first:02d} и дальше.")
+    grouped_disk = numbering.library_grouped(nb, disk_episodes(folder) if folder else ())
+    last = nb.spans[-1]
+    tmdb_season, first = nb.to_tmdb(last.season, 1)
+    text += (" В медиатеку — по сезонам трекеров (S02E01…)." if grouped_disk else
+             f" В медиатеке — как в TMDb: сезон {last.season} ложится как "
+             f"S{tmdb_season:02d}E{first:02d} и дальше.")
     return text
 
 
@@ -1168,16 +1236,22 @@ def _subdirs(folder: Path) -> list[Path]:
         return []
 
 
-def library_episodes(folder: Path, nb: numbering.Numbering) -> set[tuple[int, int]]:
-    """Серии тайтла на диске — (сезон, серия) в нумерации трекеров. Сквозные номера
-    медиатеки (S01E50) пересчитываются в сезоны трекеров (3, 2)."""
+def disk_episodes(folder) -> set[tuple[int, int]]:
+    """Серии тайтла на диске — (сезон, серия), как названы файлы."""
     scan = library.scan_folder(folder)
     found = set()
     for v in scan.videos:
         season, numbers = scan.episodes_of(v)
         if season is not None:
             found.update((season, n) for n in numbers)
-    grouped_disk = numbering.library_grouped(nb, {s for s, _ in found})
+    return found
+
+
+def library_episodes(folder: Path, nb: numbering.Numbering) -> set[tuple[int, int]]:
+    """Серии тайтла на диске — (сезон, серия) в нумерации трекеров. Сквозные номера
+    медиатеки (S01E50) пересчитываются в сезоны трекеров (3, 2)."""
+    found = disk_episodes(folder)
+    grouped_disk = numbering.library_grouped(nb, found)
     return {numbering.from_library(nb, s, n, grouped_disk) for s, n in found}
 
 

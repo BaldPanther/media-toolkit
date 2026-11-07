@@ -226,7 +226,8 @@ def test_episodes_already_in_library_are_not_downloaded(env):
 
 def _anime(env, monkeypatch, layout):
     """TMDb: один сезон из 6 серий, у трекеров — три сезона по две. В медиатеке —
-    первые 4 серии: сквозными номерами (S01E01–04) или по сезонам (S01, S02)."""
+    первые 4 серии: сквозными номерами (S01E01–04) или по сезонам (S01, S02);
+    `layout` None — тайтла в медиатеке нет."""
     tv, fake, hits = env
     hits.clear()
     nb = numbering.Numbering([numbering.Span(n, 1, 2 * n - 1, 2) for n in (1, 2, 3)], grouped=True)
@@ -235,6 +236,8 @@ def _anime(env, monkeypatch, layout):
     for n in range(1, 7):
         info.episodes[(1, n)] = metadata.EpisodeInfo(1, n, title=f"Э{n}", title_en=f"Ep {n}")
     monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    if layout is None:
+        return tv, fake
     show = tv / "Show (2026)"
     show.mkdir()
     (show / "tvshow.nfo").write_text('<tvshow><uniqueid type="tmdb">1</uniqueid></tvshow>',
@@ -271,6 +274,19 @@ def test_anime_single_season_release_keeps_library_layout(env, monkeypatch):
     assert sorted(new for _, new in fake.renamed) == [
         "Show (2026)/Season 03/Show - S03E01 - Ep 5.mkv",
         "Show (2026)/Season 03/Show - S03E02 - Ep 6.mkv"]
+
+
+def test_new_anime_title_goes_by_tracker_seasons(env, monkeypatch):
+    # Тайтла в медиатеке нет — сезоны как у раздачи (S02E01), а не сквозные номера TMDb.
+    tv, fake = _anime(env, monkeypatch, None)
+    fake.add("t2", {"[ТВ-2] Show/Show - 01.mkv": 100, "[ТВ-2] Show/Show - 02.mkv": 100})
+    ap = autopilot.Autopilot()
+    ap.expect("t2", library.TV, 1, "[ТВ-2] Show")
+    ap.tick()
+    assert ap.items["t2"].status == autopilot.DONE, ap.items["t2"].error
+    assert sorted(new for _, new in fake.renamed) == [
+        "Show (2026)/Season 02/Show - S02E01 - Ep 3.mkv",
+        "Show (2026)/Season 02/Show - S02E02 - Ep 4.mkv"]
 
 
 def test_held_torrent_that_failed_stays_paused_and_warns_once(env):

@@ -8,7 +8,8 @@
 
 В медиатеку серия ложится так, как там уже принято у этого тайтла: сквозным
 номером TMDb (S01E50) или по сезонам трекеров (S03E02 — так разложен, например,
-«Solo Leveling» вкладкой «Медиатека»). Тайтла в медиатеке ещё нет — по TMDb.
+«Solo Leveling» вкладкой «Медиатека»). Тайтла в медиатеке ещё нет — по сезонам
+трекеров.
 """
 from __future__ import annotations
 
@@ -187,10 +188,21 @@ def for_title(tmdb_id: int, api_key: str) -> Numbering:
     return load(tmdb.tv(tmdb_id, api_key), tmdb_id, api_key)
 
 
-def library_grouped(numbering: Numbering, disk_seasons) -> bool:
-    """Тайтл в медиатеке уже разложен по сезонам трекеров (есть сезон, которого нет
-    в TMDb: «Season 02» у «Solo Leveling» при одном сезоне TMDb), а не сквозными номерами."""
-    return numbering.grouped and any(s and s not in numbering.tmdb_seasons() for s in disk_seasons)
+def library_grouped(numbering: Numbering, disk_episodes) -> bool:
+    """Раскладывать ли по сезонам трекеров (S02E01), а не сквозными номерами TMDb (S01E26).
+
+    Как уже лежит тайтл: сезон, которого нет в TMDb («Season 02» у «Solo Leveling» при
+    одном сезоне TMDb), — по сезонам трекеров; серия, у которой номера в двух нумерациях
+    разные (S01E26 при 25 сериях в первом сезоне трекеров), — сквозными. Тайтла в
+    медиатеке нет или лежит только то, что в обеих нумерациях одинаково (первый сезон), —
+    по сезонам трекеров: так делят раздачи. `disk_episodes` — (сезон, серия) с диска."""
+    if not numbering.grouped:
+        return False
+    tmdb_seasons = numbering.tmdb_seasons()
+    episodes = [(s, e) for s, e in disk_episodes if s]
+    if any(s not in tmdb_seasons for s, _ in episodes):
+        return True
+    return all(numbering.from_tmdb(s, e) == (s, e) for s, e in episodes)
 
 
 def to_library(numbering: Numbering, season: int, episode: int, grouped_disk: bool) -> tuple[int, int]:

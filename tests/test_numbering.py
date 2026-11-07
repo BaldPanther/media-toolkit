@@ -67,8 +67,12 @@ def test_place_episode_numbers_from_files(monkeypatch):
 
 def test_library_layout_decides_numbers():
     nb = numbering.Numbering([numbering.Span(1, 1, 1, 24), numbering.Span(2, 1, 25, 24)], grouped=True)
-    assert not numbering.library_grouped(nb, [1])           # S01E25 — сквозные номера
-    assert numbering.library_grouped(nb, [1, 2])            # Season 02 при одном сезоне TMDb
+    assert not numbering.library_grouped(nb, [(1, 3), (1, 25)])   # S01E25 — сквозные номера
+    assert numbering.library_grouped(nb, [(1, 3), (2, 1)])        # Season 02 при одном сезоне TMDb
+    # Тайтла нет или лежит только первый сезон (в обеих нумерациях одинаков) — как раздачи.
+    assert numbering.library_grouped(nb, [])
+    assert numbering.library_grouped(nb, [(0, 1), (1, 1), (1, 24)])
+    assert not numbering.library_grouped(numbering.regular([(1, 10, 2020)]), [])
     assert numbering.to_library(nb, 2, 3, grouped_disk=False) == (1, 27)
     assert numbering.to_library(nb, 2, 3, grouped_disk=True) == (2, 3)
 
@@ -159,8 +163,11 @@ def test_numbering_note_says_how_seasons_map(tmp_path, monkeypatch):
     title = _title(monkeypatch)
     note = search.numbering_note(title)
     assert "один сезон из 60 серий" in note and "3 — серии 49–60" in note
+    assert "В медиатеку — по сезонам трекеров" in note     # тайтла в медиатеке нет
     show = tmp_path / "Show"
     (show / "Season 01").mkdir(parents=True)
     (show / "Season 01" / "Show - S01E01 - x.mkv").write_bytes(b"")
+    assert "по сезонам трекеров" in search.numbering_note(title, str(show))
+    (show / "Season 01" / "Show - S01E25 - x.mkv").write_bytes(b"")
     assert "сезон 3 ложится как S01E49" in search.numbering_note(title, str(show))
     assert search.tmdb_range(title, 3) == "серии 49–60"

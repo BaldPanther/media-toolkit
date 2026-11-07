@@ -142,6 +142,47 @@ def test_find_uses_sources_and_reports_failures(monkeypatch):
     assert logged and "broken" in logged[0]
 
 
+def _rezero():
+    names = ["Re:ZERO – Жизнь с нуля в альтернативном мире", "Re:ゼロから始める異世界生活",
+             "Re:ZERO -Starting Life in Another World-", "Re:Zero kara Hajimeru Isekai Seikatsu",
+             "Re: Жизнь в другом мире с нуля", "Re: Жизнь в альтернативном мире с нуля",
+             "Re:Zero — жизнь с нуля в другом мире", "Re:Zero. Жизнь с нуля в альтернативном мире",
+             "Жизнь в альтернативном мире с нуля", "Жизнь в другом мире с нуля"]
+    return search.Title(kind=library.TV, tmdb_id=65942, title=names[0], year=2016,
+                        original=names[1], names=names, romaji=[names[3]])
+
+
+def test_jacred_queries_pair_names_and_skip_foreign_script():
+    qs = search._jacred_queries(_rezero())
+    # Японское jac.red превратил бы в «re» (504); «Re:Zero. Жизнь…» для него — то же, что
+    # первое; ромадзи — неточным поиском, вторым.
+    assert qs == [
+        {"search": "Re:ZERO – Жизнь с нуля в альтернативном мире",
+         "altname": "Re:ZERO -Starting Life in Another World-", "exact": "true"},
+        {"search": "Re:Zero kara Hajimeru Isekai Seikatsu"},
+        {"search": "Re: Жизнь в другом мире с нуля",
+         "altname": "Re: Жизнь в альтернативном мире с нуля", "exact": "true"},
+        {"search": "Re:Zero — жизнь с нуля в другом мире",
+         "altname": "Жизнь в альтернативном мире с нуля", "exact": "true"},
+    ]                                                   # запросов — не больше JACRED_QUERIES
+    assert not search._foreign_script("Shōgun") and search._foreign_script("오징어 게임")
+
+
+def test_jacred_survives_failed_query(monkeypatch):
+    def fake_get_json(url, timeout=None, **kw):
+        if "altname" in url and "Starting" in url:
+            raise search.net.NetError("HTTP 504")
+        return [_item("rutor", "Re:Zero kara Hajimeru Isekai Seikatsu 4 [ТВ-4] (2026)",
+                      year=2026, types=("anime",))]
+
+    monkeypatch.setattr(search.net, "get_json", fake_get_json)
+    logged = []
+    rels = search.find(_rezero(), sources=[{"type": "jacred", "url": "https://jac.red"}],
+                       log=logged.append)
+    assert len(rels) == 1
+    assert len(logged) == 1 and "504" in logged[0] and "Re:ZERO – Жизнь" in logged[0]
+
+
 def test_year_from_title_when_source_has_none():
     item = {"magnet": "magnet:?xt=urn:btih:" + "a" * 40, "relased": 0, "types": ["docuserial"],
             "title": "Настояший детектив (Паутина любви) / 2025 / РУ / WEBRip"}
