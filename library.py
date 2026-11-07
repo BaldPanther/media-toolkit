@@ -58,6 +58,19 @@ IGNORE_FILE = "не обрабатывать.ignore"
 
 _SEASON_DIR_RE = re.compile(r"(?i)^season[\s._-]*(\d{1,3})$")
 _SPECIALS_DIR_RE = re.compile(r"(?i)^(specials?|sps?|season[\s._-]*0+)$")
+# Сезон в имени папки внутри раздачи-сборника: «[VCB-Studio] Show [S02 SPs 2020-2021]»,
+# «Show.S02.1080p», «Show Season 2», «2nd Season», «Сезон 2», «[ТВ-2]». Не сезон:
+# «S02E01» (серия), «S01-S03» и «Season 1-3» (диапазон).
+_SEASON_TAG = re.compile(r"""(?ix)
+    (?<![^\W_])(?<![-–~])(?<![-–~][\s._])      # не конец диапазона: «S01-S03»
+    (?: s(\d{1,2})(?!\d)(?![\s._]*e\d)
+      | (?:season|сезон)[\s._-]*(\d{1,2})(?!\d)
+      | (\d{1,2})(?:st|nd|rd|th)[\s._-]*season
+      | тв[\s._-]*(\d{1,2})(?!\d) )
+    (?![\s._]*[-–~][\s._]*s?\d)
+""")
+# Папка OVA и спецвыпусков в сборнике: «[VCB-Studio] Show Memory Snow [OVA-1 SPs 2018]».
+_SPECIALS_TAG = re.compile(r"(?i)(?<![^\W_])(?:ova|oad|ona|sps?|specials?|спецвыпуски?)(?![^\W_])")
 
 # Токен, после которого в имени раздачи начинается техническая часть.
 _RELEASE_TOKEN = re.compile(
@@ -309,6 +322,21 @@ def season_of_dir(name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def season_of_tag(name: str) -> int | None:
+    """Сезон по пометке в имени папки сборника: «[VCB-Studio] Show [S02 SPs 2020-2021]» → 2,
+    «… Memory Snow [OVA-1 SPs 2018]» → 0 (OVA, спецвыпуски), без пометки или с
+    диапазоном «S01-S03» — None.
+
+    Только для папок внутри раздачи: имя папки в корне медиатеки («Show.S02.1080p»)
+    так читать нельзя — по ней `_looks_like_show_folder` принял бы корень за сериал."""
+    seasons = {int(next(g for g in m.groups() if g)) for m in _SEASON_TAG.finditer(name)}
+    if len(seasons) == 1:
+        return seasons.pop()
+    if not seasons and _SPECIALS_TAG.search(name):
+        return 0
+    return None
+
+
 def find_sidecars(video: Path, siblings=None) -> list[Path]:
     """Файлы-спутники рядом с видео: те же имя+точка и известное расширение.
 
@@ -484,6 +512,8 @@ def scan_folder(folder, extra=None) -> Scan:
     scan.guessed = sibling_numbers(scan.videos)
     for path in dirs:
         s = season_of_dir(path.name)
+        if s is None and any(is_video(p) for p in by_dir.get(path, ())):
+            s = season_of_tag(path.name)     # папка сезона в сборнике: «… [S02 SPs 2020-2021]»
         if s is not None:
             scan.season_dirs[path] = s
     for path in files:
@@ -794,7 +824,8 @@ def _show_root_for(folder: Path, target_name: str) -> Path:
 
 
 def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
-    """План для сериала. `overrides` — ручные (season, episode) по путям видео,
+    """План для сериала. `overrides` — ручные (season, episode) по путям видео; episode —
+    номер или список номеров (склеенные серии режиссёрской версии: [2, 3] → «S01E02-E03»).
     `extra` — файлы раздачи, которых на диске может ещё не быть (`scan_folder`)."""
     folder = Path(folder)
     scan = scan_folder(folder, extra)
@@ -806,7 +837,8 @@ def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
     plan = Plan(kind=TV, root=show_root)
     for video in scan.videos:
         if video in overrides:
-            season, numbers = overrides[video][0], [overrides[video][1]]
+            season, ep = overrides[video]
+            numbers = sorted(ep) if isinstance(ep, (list, tuple)) else [ep]
         else:
             season, numbers = scan.episodes_of(video)
         if season is None or not numbers:

@@ -157,6 +157,11 @@ class TorrentsTab:
         d["partial"] = (self.title is not None and self.title.kind == library.TV
                         and bool(rel.episodes) and not search.complete(rel, self.title, self.seasons))
         d["pinned"] = bool({search.page_key(p) for p in pages_of(rel)} & pinned)
+        # Сборник, в котором сезонов больше выбранных: «Скачать» возьмёт только выбранные
+        # (`picked`), «Всю раздачу» — всё, вместе с фильмами и спецвыпусками.
+        d["picked"] = (sorted(set(rel.seasons) & set(self.seasons))
+                       if self.title is not None and self.title.kind == library.TV
+                       and rel.seasons and not set(rel.seasons) <= set(self.seasons) else [])
         d["versions"] = search.versions_of(rel.title)
         d["voice_unknown"] = bool(self.voice) and not search.has_voice(rel, self.voice)
         # Сравнение с медиатекой: у сериала — на серию, у фильма — файл целиком.
@@ -241,7 +246,7 @@ class TorrentsTab:
             "codec": self.codec,
             "any_year": self.any_year,
             "prefs": {"quality": prefs.quality, "hdr": prefs.hdr, "dv": prefs.dv,
-                      "english": prefs.english, "voices": prefs.voices},
+                      "english": prefs.english, "voices": prefs.voices, "minis": prefs.minis},
             "status": (f"Найдено раздач: {len(self.releases)}, под фильтры: {len(shown)}"
                        if title else self.search_status),
             "links": search.tracker_search_links(title.names) if title and not shown else [],
@@ -424,7 +429,7 @@ def search_options():
     prefs = search.load_prefs()
     if data.get("quality") in search.QUALITIES:
         prefs.quality = int(data["quality"])
-    for key in ("hdr", "dv", "english"):
+    for key in ("hdr", "dv", "english", "minis"):
         if key in data:
             setattr(prefs, key, bool(data[key]))
     if isinstance(data.get("voices"), list):
@@ -464,12 +469,14 @@ def search_options():
 def search_download():
     """Раздачу — в qBittorrent с категорией сериалов/фильмов; дальше её ведёт автоматика."""
     t = tab()
-    h = str(replies.body().get("hash", ""))
+    body = replies.body()
+    h = str(body.get("hash", ""))
     rel = next((r for r in t.releases if r.hash == h), None)
     if rel is None or t.title is None:
         raise UserError("Нет такой раздачи", "Выполните поиск заново.")
     kind = t.title.kind
-    wanted = (t.seasons if kind == library.TV and rel.seasons
+    # «Всю раздачу» — сборник целиком; «Скачать» — только выбранные сезоны из него.
+    wanted = (t.seasons if kind == library.TV and rel.seasons and not body.get("all")
               and not set(rel.seasons) <= set(t.seasons) else [])
     # Сборник, из которого нужны не все сезоны, займёт примерно свою долю.
     need = rel.size * len(wanted) // len(rel.seasons) if wanted else rel.size

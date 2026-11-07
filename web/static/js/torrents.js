@@ -110,12 +110,19 @@ document.addEventListener("alpine:init", () => {
         + `, год: ${se.year || "?"}, в медиатеке: ${se.have}`
         + (se.tmdb ? `; в TMDb — ${se.tmdb}` : "") + ". Ctrl+клик — выбрать несколько сезонов";
     },
-    async download(r) {
-      const res = await api.post("/api/torrents/search/download", { hash: r.hash });
+    // all — «Всю раздачу»: сборник целиком, а не только выбранные сезоны из него.
+    async download(r, all = false) {
+      const res = await api.post("/api/torrents/search/download", { hash: r.hash, all });
       if (res && res.ok) {
         this.$store.ui.toast(res.text === "Скачиваю" || !res.text ? "Добавлено в qBittorrent — разложу сам" : res.text);
         await this.$store.app.loadState();
       }
+    },
+    // [1] → «сез. 1», [1, 2, 3] → «сез. 1–3», [1, 3] → «сез. 1, 3».
+    seasonsText(list) {
+      const n = [...list].sort((a, b) => a - b);
+      const run = n.every((x, i) => !i || x === n[i - 1] + 1);
+      return "сез. " + (n.length > 2 && run ? `${n[0]}–${n[n.length - 1]}` : n.join(", "));
     },
     qualityLabel(q) { return q >= 2160 ? "4K" : q > 480 ? `${q}p` : q ? "SD" : "?"; },
     // Сезон — всегда на виду: «8/8» без него не отличить 1-й сезон от 4-го.

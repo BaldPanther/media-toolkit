@@ -9,8 +9,10 @@ import library
 import metaconf
 import metadata
 import numbering
+import packs
 import paths
 import qbit
+import search
 import telegram
 from test_qbit import FakeClient
 
@@ -294,6 +296,119 @@ def test_new_anime_title_goes_by_tracker_seasons(env, monkeypatch):
         "Show (2026)/Season 02/Show - S02E01 - Ep 3.mkv",
         "Show (2026)/Season 02/Show - S02E02 - Ep 4.mkv"]
     assert fetched[-1]["art_seasons"] == [2]                # постер Season 02, а не сезона TMDb
+
+
+# -------------------------------------------------------- сборник VCB-Studio --
+
+def _vcb(env, monkeypatch):
+    """Как «Re:Zero» S01–03 + OVA от VCB-Studio: первый сезон — режиссёрская версия (13
+    серий из 25 ТВ, первая ТВ-серия — 50 минут), дальше нумерация своя сквозная: второй
+    сезон — «14»…«38», третий — «39»…«54». OVA без номера, мини-спецвыпуски в SPs.
+    TMDb: один сезон из 66 серий, у трекеров — 25/25/16."""
+    tv, fake, hits = env
+    hits.clear()
+    nb = numbering.Numbering([numbering.Span(1, 1, 1, 25), numbering.Span(2, 1, 26, 25),
+                              numbering.Span(3, 1, 51, 16)], grouped=True)
+    monkeypatch.setattr(numbering, "for_title", lambda tmdb_id, key: nb)
+    monkeypatch.setattr(packs, "tmdb_runtimes", lambda tmdb_id, key: lambda season: {
+        n: 50 if n == 1 else 25 for n in range(1, 67)})
+    info = _info()
+    for n in range(1, 67):
+        info.episodes[(1, n)] = metadata.EpisodeInfo(1, n, title=f"Э{n}", title_en=f"Ep {n}")
+    for n, name in enumerate(["Recap", "Break Time from Zero - Party - 1",
+                              "Memory Snow: Manner Movie"], start=1):
+        info.episodes[(0, n)] = metadata.EpisodeInfo(0, n, title=name, title_en=name)
+    monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: info)
+    top = "[VCB-Studio] Show [BDRip 1080p x265 FLAC]"
+    files = {}
+    for folder, numbers, size in (("[S01 Director's Cut SPs 2016]", range(1, 14), 1500),
+                                  ("[S02 SPs 2020-2021]", range(14, 39), 800),
+                                  ("[S03 SPs 2024-2025]", range(39, 55), 1000)):
+        for n in numbers:
+            files[f"{top}/[VCB-Studio] Show {folder}/[VCB-Studio] Show {n:02d} [BDRip].mkv"] = size
+    for n in (1, 2, 3):
+        files[f"{top}/[VCB-Studio] Show [S01 Director's Cut SPs 2016]/SPs/"
+              f"[VCB-Studio] Show Break Time 01.{n:02d} [BDRip].mkv"] = 30
+        files[f"{top}/[VCB-Studio] Show [S02 SPs 2020-2021]/SPs/"
+              f"[VCB-Studio] Re Petit 02.{n:02d} [BDRip].mkv"] = 30
+    ova1 = f"{top}/[VCB-Studio] Show Memory Snow [OVA-1 SPs 2018]"
+    files[f"{ova1}/[VCB-Studio] Show Memory Snow [BDRip].mkv"] = 1900
+    files[f"{ova1}/SPs/[VCB-Studio] Show Memory Snow Manner Movie [BDRip].mkv"] = 45
+    files[f"{top}/[VCB-Studio] Show Hyouketsu no Kizuna [OVA-2 SPs 2019]/"
+          f"[VCB-Studio] Show Hyouketsu no Kizuna [BDRip].mkv"] = 3500
+    fake.add("vcb", files)
+    return tv, fake
+
+
+def _renamed(fake) -> dict[str, str]:
+    return {old.rsplit("/", 1)[1]: new for old, new in fake.renamed}
+
+
+def test_vcb_pack_whole_director_cut_merged_and_seasons_shifted(env, monkeypatch):
+    tv, fake = _vcb(env, monkeypatch)
+    ap = autopilot.Autopilot()
+    ap.expect("vcb", library.TV, 1, "Re:Zero [S01-03 + OVA + Specials]", seasons=[1, 2, 3])
+    ap.tick()
+    item = ap.items["vcb"]
+    assert item.status == autopilot.DONE, item.error
+    got = _renamed(fake)
+    assert got["[VCB-Studio] Show 01 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E01 - Ep 1.mkv"
+    assert got["[VCB-Studio] Show 02 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E02-E03 - Ep 2.mkv"
+    assert got["[VCB-Studio] Show 13 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E24-E25 - Ep 24.mkv"
+    assert got["[VCB-Studio] Show 14 [BDRip].mkv"] == "Show (2026)/Season 02/Show - S02E01 - Ep 26.mkv"
+    assert got["[VCB-Studio] Show 38 [BDRip].mkv"] == "Show (2026)/Season 02/Show - S02E25 - Ep 50.mkv"
+    assert got["[VCB-Studio] Show 39 [BDRip].mkv"] == "Show (2026)/Season 03/Show - S03E01 - Ep 51.mkv"
+    assert got["[VCB-Studio] Show 54 [BDRip].mkv"] == "Show (2026)/Season 03/Show - S03E16 - Ep 66.mkv"
+    # OVA: в TMDb их нет — в Specials после последнего спецвыпуска, по году.
+    assert got["[VCB-Studio] Show Memory Snow [BDRip].mkv"] ==         "Show (2026)/Specials/Show - S00E04 - Memory Snow.mkv"
+    assert got["[VCB-Studio] Show Hyouketsu no Kizuna [BDRip].mkv"] ==         "Show (2026)/Specials/Show - S00E05 - Hyouketsu no Kizuna.mkv"
+    # Мини-спецвыпуски — «не загружать» и не раскладываются.
+    names = fake.names["vcb"]
+    minis = [i for i, n in enumerate(names) if "Break Time" in n or "Re Petit" in n
+             or "Manner" in n]
+    assert len(minis) == 7 and fake.priorities == [("vcb", minis, 0)]
+    assert not any("Break Time" in old or "Manner" in old for old, _ in fake.renamed)
+    # Склеенная серия: одно видео — два описания в .nfo, Kodi покажет обе серии.
+    text = (tv / "Show (2026)/Season 01/Show - S01E02-E03 - Ep 2.nfo").read_text(encoding="utf-8")
+    assert text.count("<episodedetails>") == 2
+    assert "<episode>2</episode>" in text and "<episode>3</episode>" in text
+
+
+def test_vcb_pack_first_season_only(env, monkeypatch):
+    tv, fake = _vcb(env, monkeypatch)
+    ap = autopilot.Autopilot()
+    ap.expect("vcb", library.TV, 1, "Re:Zero [S01-03]", wanted=[1], seasons=[1, 2, 3])
+    ap.tick()
+    assert ap.items["vcb"].status == autopilot.DONE, ap.items["vcb"].error
+    names = fake.names["vcb"]
+    off = {i for _, ids, _ in fake.priorities for i in ids}
+    later = {i for i, n in enumerate(names) if "[S02 SPs" in n and "/SPs/" not in n
+             or "[S03 SPs" in n}
+    assert later <= off and len(later) == 41
+    # Первый сезон — режиссёрская версия целиком, а не она плюс полсезона второго.
+    renamed = [new for _, new in fake.renamed]
+    assert sum("/Season 01/" in n for n in renamed) == 13
+    assert not any("/Season 02/" in n or "/Season 03/" in n for n in renamed)
+
+
+def test_vcb_pack_minis_when_asked(env, monkeypatch):
+    tv, fake = _vcb(env, monkeypatch)
+    prefs = search.load_prefs()
+    prefs.minis = True
+    search.save_prefs(prefs)
+    ap = autopilot.Autopilot()
+    ap.expect("vcb", library.TV, 1, "Re:Zero [S01-03 + OVA + Specials]", seasons=[1, 2, 3])
+    ap.tick()
+    assert ap.items["vcb"].status == autopilot.DONE, ap.items["vcb"].error
+    assert not getattr(fake, "priorities", [])
+    got = _renamed(fake)
+    # Название совпало со спецвыпуском TMDb — его номер.
+    assert got["[VCB-Studio] Show Memory Snow Manner Movie [BDRip].mkv"] ==         "Show (2026)/Specials/Show - S00E03 - Memory Snow - Manner Movie.mkv"
+    # Свои номера раздачи («01.02») — не номера TMDb: следом за его спецвыпусками.
+    specials = sorted(new for old, new in fake.renamed if "/Specials/" in new)
+    assert len(specials) == 9 and len(set(specials)) == 9
+    assert got["[VCB-Studio] Show Break Time 01.01 [BDRip].mkv"].startswith(
+        "Show (2026)/Specials/Show - S00E")
 
 
 def test_held_torrent_that_failed_stays_paused_and_warns_once(env):

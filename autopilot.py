@@ -50,6 +50,7 @@ import metaconf
 import metadata
 import nfo
 import numbering
+import packs
 import paths
 import qbit
 import search
@@ -632,8 +633,12 @@ class Autopilot:
             if item.kind == library.TV:
                 full = library.scan_folder(folder, extra)
                 nb = numbering.for_title(tmdb_id, meta.tmdb_key)
-                tracker = self._tracker_episodes(item, full, nb) if nb.grouped else {}
-                skipped = self._skip_unwanted(item, torrent, client, tracker)
+                # Сборник со своей нумерацией (VCB-Studio): сезоны из пометок папок,
+                # режиссёрская версия — склеенными сериями (`packs`).
+                pack = packs.layout(full, nb, packs.tmdb_runtimes(tmdb_id, meta.tmdb_key))
+                tracker = self._tracker_episodes(item, full, nb, pack) if nb.grouped else pack
+                minis = set() if search.load_prefs().minis else packs.minis(full)
+                skipped = self._skip_unwanted(item, torrent, client, tracker, minis)
                 extra = {p: s for p, s in extra.items() if p not in skipped}
                 scan = library.scan_folder(folder, extra)
                 if nb.grouped:
@@ -641,6 +646,10 @@ class Autopilot:
                 else:
                     info = metadata.fetch(item.kind, tmdb_id, meta, seasons=scan.seasons(),
                                           season_sizes=scan.season_sizes())
+                    videos = set(scan.videos)
+                    overrides = {v: se for v, se in tracker.items() if v in videos}
+                overrides.update(packs.specials(scan, info, self._specials_taken(
+                    tmdb_id, meta, files)))
             else:
                 info = metadata.fetch(item.kind, tmdb_id, meta)
             arrange.resolve_name_language(info, meta)
@@ -683,19 +692,21 @@ class Autopilot:
                  + (f", уже есть в медиатеке — не загружать: {owned}" if owned else ""))
         self._kodi(item.root, roots)
 
-    def _tracker_episodes(self, item: Item, scan, nb) -> dict:
-        """Серии аниме со сквозной нумерацией в TMDb → {видео: (сезон, серия)} в
-        нумерации трекеров: «[ТВ-3] - 02», «S03E02» и сквозное «50» — одна (3, 2).
-        Спецвыпуски и видео без номера — как есть, их разберёт план."""
+    def _tracker_episodes(self, item: Item, scan, nb, pack=None) -> dict:
+        """Серии аниме со сквозной нумерацией в TMDb → {видео: (сезон, [серии])} в
+        нумерации трекеров: «[ТВ-3] - 02», «S03E02» и сквозное «50» — одна (3, [2]).
+        `pack` — уже разобранные серии сборника (`packs.layout`). Спецвыпуски и видео
+        без номера — как есть, их разберёт план."""
         seasons = item.seasons or search.parse_title(item.name).get("seasons", [])
         single = seasons[0] if len(seasons) == 1 else None
-        out = {}
+        out = dict(pack or {})
         for v in scan.videos:
             season, numbers = scan.episodes_of(v)
-            if not numbers or season == 0:
+            if v in out or not numbers or season == 0:
                 continue
             explicit = library.parse_episodes(v)[0] is not None or v.parent in scan.season_dirs
-            out[v] = nb.place(numbers[0], season if explicit else single)
+            season, episode = nb.place(numbers[0], season if explicit else single)
+            out[v] = (season, [episode])
         return out
 
     def _grouped_info(self, tmdb_id: int, meta, nb, scan, tracker: dict):
@@ -707,9 +718,12 @@ class Autopilot:
         lib = search.library_dir(library.TV, tmdb_id, meta.tv_roots)
         grouped_disk = numbering.library_grouped(nb, search.disk_episodes(Path(lib)) if lib else ())
         videos = set(scan.videos)
-        overrides = {v: numbering.to_library(nb, s, e, grouped_disk)
-                     for v, (s, e) in tracker.items() if v in videos}
-        seasons = {nb.to_tmdb(s, e)[0] for s, e in tracker.values()}
+        overrides = {}
+        for v, (s, eps) in tracker.items():
+            if v in videos:
+                placed = [numbering.to_library(nb, s, e, grouped_disk) for e in eps]
+                overrides[v] = (placed[0][0], [e for _, e in placed])
+        seasons = {nb.to_tmdb(s, e)[0] for s, eps in tracker.values() for e in eps}
         specials = {0} if any(scan.season_of(v) == 0 for v in scan.videos) else set()
         # По сезонам трекеров — и постеры их сезонов (Season 02…), а не одного сезона TMDb.
         art = sorted({s for s, _ in overrides.values()} | specials) if grouped_disk else None
@@ -717,38 +731,68 @@ class Autopilot:
                               art_seasons=art)
         if grouped_disk:
             # Описания серий — из TMDb, номера в .nfo — как в имени файла.
-            for season, episode in overrides.values():
-                ep = info.episodes.get(nb.to_tmdb(season, episode))
-                if ep is not None:
-                    info.episodes[(season, episode)] = replace(ep, season=season, episode=episode)
+            for season, eps in overrides.values():
+                for episode in eps:
+                    ep = info.episodes.get(nb.to_tmdb(season, episode))
+                    if ep is not None:
+                        info.episodes[(season, episode)] = replace(ep, season=season,
+                                                                   episode=episode)
         return info, overrides
 
-    def _skip_unwanted(self, item: Item, torrent, client, tracker=None) -> set:
-        """Сборник, а нужны не все сезоны: файлам лишних — «не загружать». Спецвыпуски
-        не трогаем: их в поиске не выбрать, а качается по умолчанию всё, чего нет.
-        → их пути, чтобы не раскладывать то, чего не будет на диске."""
-        if not item.wanted or item.kind != library.TV:
+    def _specials_taken(self, tmdb_id: int, meta, files) -> set[int]:
+        """Номера спецвыпусков, что уже лежат в медиатеке тайтла не от этой раздачи:
+        OVA без номера в TMDb ляжет после них, а не поверх (`packs.specials`)."""
+        lib = search.library_dir(library.TV, tmdb_id, meta.tv_roots)
+        if not lib:
+            return set()
+        scan = library.scan_folder(lib)
+        return {n for v in scan.videos if not files.owns(v)
+                for s, numbers in [scan.episodes_of(v)] if s == 0 for n in numbers}
+
+    @staticmethod
+    def _season_of(rel: str) -> int | None:
+        """Сезон файла раздачи по его пути в ней: «S02E05» в имени, папка «Season 2» или
+        пометка «[S02 …]» (папки выше раздачи — не в счёт: «/mnt/S1/…» — не сезон)."""
+        parts = Path(rel).parts
+        season = library.parse_episodes(Path(rel))[0]
+        for name in reversed(parts[:-1]):
+            if season is not None:
+                break
+            season = library.season_of_dir(name)
+            if season is None:
+                season = library.season_of_tag(name)
+        return season
+
+    def _skip_unwanted(self, item: Item, torrent, client, tracker=None, minis=()) -> set:
+        """Файлам, которые не нужны, — «не загружать»: сезонам сборника, которые не
+        выбраны в поиске, и мини-спецвыпускам (`packs.minis`), если их не просили.
+        Остальные спецвыпуски не трогаем: их в поиске не выбрать, а качается по
+        умолчанию всё, чего нет. → их пути, чтобы не раскладывать то, чего не будет
+        на диске."""
+        if item.kind != library.TV:
             return set()
         tracker = tracker or {}
-        skip, ids = set(), []
+        skip, ids, mini = set(), [], 0
         for f in torrent.files:
             path = torrent.local(f.rel)
             if not library.is_video(path):
                 continue
-            if path in tracker:
-                season = tracker[path][0]
+            if path in minis:
+                mini += 1
+            elif item.wanted:
+                season = tracker[path][0] if path in tracker else self._season_of(f.rel)
+                if not season or season in item.wanted:
+                    continue
             else:
-                season = library.parse_episodes(path)[0]
-                if season is None:
-                    season = next((s for s in (library.season_of_dir(p.name) for p in path.parents)
-                                   if s is not None), None)
-            if season and season not in item.wanted:
-                skip.add(path)
-                ids.append(f.index)
+                continue
+            skip.add(path)
+            ids.append(f.index)
         if ids:
             client.set_file_priority(torrent.hash, ids, 0)
+            why = [f"нужны сезоны {', '.join(map(str, item.wanted))}"] if len(ids) > mini else []
+            why += [f"мини-спецвыпусков: {mini}"] if mini else []
             self.log(f"Автоматика: «{item.name}» — не загружать файлов: {len(ids)} "
-                     f"(нужны сезоны {', '.join(map(str, item.wanted))})")
+                     f"({'; '.join(why)})")
         return skip
 
     def _skip_owned(self, item: Item, plan, files, client) -> int:

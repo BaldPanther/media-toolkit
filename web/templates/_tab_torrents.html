@@ -104,6 +104,9 @@
                :checked="s.prefs && s.prefs.english" @change="opt({ english: $event.target.checked })">и английские</label>
         <label class="check"><input type="checkbox" :checked="s.any_year"
                @change="opt({ any_year: $event.target.checked })">и с другим годом</label>
+        <label class="check" x-show="s.title && s.title.kind === 'tv'"
+               title="Короткие спецвыпуски в сборниках — сценки по 2–5 минут, заставки без титров: всё, что меньше четверти обычной серии раздачи. Без галки — «не загружать». OVA и фильмы качаются всегда"><input type="checkbox"
+               :checked="s.prefs && s.prefs.minis" @change="opt({ minis: $event.target.checked })">и мини-спецвыпуски</label>
       </div>
       <div class="row" x-show="(s.codecs || []).some((c) => c[1] > 0)">
         <span class="small muted">Кодек:</span>
@@ -220,7 +223,11 @@
                                 : r.dead ? 'Трекер эту ссылку больше не знает, сидов нет — скорее всего, не скачается; надёжнее со страницы трекера' : ''">
                   <svg class="icon" x-show="!r.in_qbit"><use href="#i-download"/></svg>
                   <svg class="icon" x-show="r.in_qbit"><use href="#i-check"/></svg>
-                  <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить' : 'Скачать')"></span></button>
+                  <span x-text="r.in_qbit ? 'Уже качается' : (r.update ? 'Обновить'
+                                : r.picked.length ? 'Скачать ' + seasonsText(r.picked) : 'Скачать')"></span></button>
+                <button type="button" class="btn btn-sm btn-ghost" x-show="r.picked.length && !r.in_qbit && !r.update"
+                        @click="download(r, true)" :disabled="!t.qbit || r.stale"
+                        :title="'Сборник целиком: ' + seasonsText(r.seasons) + ' и всё, что в нём ещё есть, — фильмы, OVA, спецвыпуски. «Скачать» возьмёт только выбранные сезоны'">Всю раздачу</button>
                 <button type="button" class="btn btn-sm btn-ghost" x-show="r.partial && !r.pinned" @click="pin(r)"
                         title="Сообщать в Telegram, когда в этой раздаче прибавятся серии">Следить</button>
                 <span class="badge ok plain" x-show="r.pinned" title="Слежение сообщит, когда в ней прибавятся серии">слежу</span>

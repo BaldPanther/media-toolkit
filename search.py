@@ -117,6 +117,7 @@ class Prefs:
     dv: bool = False                    # экран показывает Dolby Vision; нет — DV-раздачи скрыты
     voices: list[str] = field(default_factory=lambda: ["Кубик в Кубе", "TVShows"])
     english: bool = False               # искать и показывать английские раздачи (Knaben)
+    minis: bool = False                 # качать мини-спецвыпуски сборников (`packs.minis`)
 
 
 def load_prefs() -> Prefs:
@@ -128,7 +129,8 @@ def load_prefs() -> Prefs:
             return Prefs(quality=q if q in QUALITIES else base.quality,
                          hdr=bool(d.get("hdr", base.hdr)), dv=bool(d.get("dv", base.dv)),
                          voices=[str(v) for v in d.get("voices", base.voices) if str(v).strip()],
-                         english=bool(d.get("english", base.english)))
+                         english=bool(d.get("english", base.english)),
+                         minis=bool(d.get("minis", base.minis)))
         except Exception:  # noqa: BLE001 — поле неожиданного типа: значения по умолчанию
             pass
     return Prefs()
