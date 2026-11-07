@@ -985,8 +985,11 @@ def test_season_state_and_status_line():
     assert search.announce_date(t, 3, today) == "10.01.2027"
     assert search.status_text(_airing(last=(2, 19), nxt=(0, 0, ""))) == \
         "Продлён: сезон 3 — дата пока неизвестна"
-    assert search.status_text(_airing("Ended", (2, 19), (0, 0, ""))) == \
-        "Завершён"
+    ended = _airing("Ended", (2, 19), (0, 0, ""))
+    # TMDb «Ended», а сезон 3 анонсирован (TVmaze завёл) — продлён, не завершён.
+    assert search.status_text(ended) == "Продлён: сезон 3 — дата пока неизвестна"
+    ended.seasons = ended.seasons[:2]
+    assert search.status_text(ended) == "Завершён"
     # TMDb не знает, что вышло, — сезоны считаются вышедшими, как раньше.
     unknown = _airing(last=(0, 0), nxt=(0, 0, ""))
     assert search.season_state(unknown, 2) == ("aired", 19)

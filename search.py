@@ -259,6 +259,11 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
     if nxt.get("season_number"):
         t.next_air = (*nb.from_tmdb(int(nxt["season_number"]), int(nxt.get("episode_number") or 0)),
                       str(nxt.get("air_date") or ""))
+    # Сезоны из TVmaze — и расписание его: TMDb новые серии заводит позже.
+    if nb.source == numbering.TVMAZE:
+        t.last_aired = max(t.last_aired, nb.last)
+        if nb.next[0]:
+            t.next_air = nb.next
     return t
 
 
@@ -1269,8 +1274,8 @@ def numbering_note(title: Title, folder: str = "") -> str:
              else f"в TMDb сезонов {len(nb.tmdb_seasons())}")
     parts = " · ".join(f"S{s.season} — {tmdb_range(title, s.season, short=single)}"
                        for s in nb.spans)
-    group = f" «{nb.source}»" if nb.source else ""
-    text = f"Нумерация разная: {where}, а раздачи делят на сезоны (группа TMDb{group}): {parts}."
+    source = f" ({nb.source})" if nb.source else ""
+    text = f"Нумерация разная: {where}, а раздачи делят на сезоны{source}: {parts}."
     grouped_disk = numbering.library_grouped(nb, disk_episodes(folder) if folder else ())
     last = nb.spans[-1]
     tmdb_season, first = nb.to_tmdb(last.season, 1)
@@ -1322,7 +1327,10 @@ def status_text(title: Title, today=None) -> str:
     """Строка под названием сериала: завершён ли, когда следующая серия, анонсы."""
     if title.kind != library.TV:
         return ""
-    if title.status in DONE_STATUS:
+    # Анонсированный сезон важнее «Ended» у TMDb: Re:Zero там «завершён», а TVmaze уже
+    # завёл пятый сезон.
+    announced = any(season_state(title, s.number)[0] == ANNOUNCE for s in title.seasons)
+    if title.status in DONE_STATUS and not announced and not title.next_air[0]:
         return DONE_STATUS[title.status]
     season, episode, date = title.next_air
     when = short_date(date, today)

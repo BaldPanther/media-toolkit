@@ -215,7 +215,7 @@ class TorrentsTab:
                        "owned": owned_text(self.owned_version, title.kind),
                        "watching": watching is not None,
                        "status_text": search.status_text(title),
-                       "status_done": title.status in search.DONE_STATUS,
+                       "status_done": search.status_text(title) in search.DONE_STATUS.values(),
                        "specials": specials, "specials_hint": specials_hint}
                       if title else None),
             "seasons": [{"number": s.number, "episodes": s.episodes, "year": s.year,

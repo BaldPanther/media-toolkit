@@ -4,7 +4,9 @@
 нумерацией: в TMDb «Монолог фармацевта» — один сезон из 60 серий, а трекеры
 пишут «ТВ-3», «3 сезон: 1-5 из 12». Официальное деление на сезоны TMDb держит
 в episode groups («Seasons»: Season 3 → S01E49–60). Оно и становится сезонами
-для поиска и слежения.
+для поиска и слежения. Группу правят позже, чем выходит новый сезон, а у части
+тайтлов её нет вовсе — тогда сезоны из TVmaze (`tvmaze.py`): он делит как трекеры и
+TheTVDB и сразу заводит анонсированные сезоны.
 
 В медиатеку серия ложится так, как там уже принято у этого тайтла: сквозным
 номером TMDb (S01E50) или по сезонам трекеров (S03E02 — так разложен, например,
@@ -15,9 +17,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 
 import net
 import tmdb
+import tvmaze
+
+TVMAZE = "TVmaze"
+LONG_SEASON = 13        # серий: один сезон TMDb длиннее — возможно, это несколько сезонов трекеров
 
 # Подгруппы-сезоны: «Season 3», «Сезон 3». «Cour 2», «Part 1», арки — не сезоны трекеров.
 _SEASON_NAME = re.compile(r"(?i)\b(?:season|сезон)\b\D*(\d{1,2})|(\d{1,2})\D*\b(?:season|сезон)\b")
@@ -41,8 +48,12 @@ class Span:
 @dataclass
 class Numbering:
     spans: list[Span] = field(default_factory=list)
-    grouped: bool = False      # сезоны из episode group, а не обычные сезоны TMDb
-    source: str = ""           # её название в TMDb («Seasons»)
+    grouped: bool = False      # сезоны не обычные сезоны TMDb: из его группы серий или TVmaze
+    source: str = ""           # откуда: «группа TMDb «Seasons»» или TVMAZE
+    # Только у сезонов из TVmaze — что вышло по его расписанию (TMDb новые серии
+    # заводит позже): (сезон, серия) последней вышедшей и (сезон, серия, дата) следующей.
+    last: tuple[int, int] = (0, 0)
+    next: tuple[int, int, str] = (0, 0, "")
 
     def span(self, season: int) -> Span | None:
         return next((s for s in self.spans if s.season == season), None)
@@ -164,7 +175,8 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
         if not spans or len(spans) <= len(counts) or not {s.tmdb_season for s in spans} <= set(counts):
             continue
         if best is None or (len(spans), sum(s.count for s in spans)) > (len(best), sum(s.count for s in best)):
-            best, source = spans, str(meta.get("name") or detail.get("name") or "")
+            name = str(meta.get("name") or detail.get("name") or "")
+            best, source = spans, f"группа TMDb «{name}»" if name else "группа TMDb"
     if best is None:
         return None
     # Новые серии TMDb добавляет в свой сезон раньше, чем кто-то правит группу:
@@ -177,12 +189,70 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
     return Numbering(best, grouped=True, source=source)
 
 
+def from_tvmaze(data: dict, tmdb_season: int, tmdb_total: int, today: str) -> Numbering | None:
+    """Сезоны TVmaze поверх единственного сезона TMDb: сезон k — серии TMDb подряд после
+    предыдущих. Серия без даты — заготовка анонса, не в счёт; сезон без датированных
+    серий — анонс (0 серий), а «из 12» TVmaze знает и до выхода (`episodeOrder`).
+    Сезон один — None: делить нечего. `today` — «2026-11-07», для расписания."""
+    embedded = data.get("_embedded") or {}
+    dated = sorted((str(e["airdate"]), int(e["season"]), int(e["number"]))
+                   for e in embedded.get("episodes") or []
+                   if e.get("airdate") and e.get("season") and e.get("number"))
+    last_number: dict[int, int] = {}
+    for _, season, number in dated:
+        last_number[season] = max(last_number.get(season, 0), number)
+    spans, first = [], 1
+    for s in sorted(embedded.get("seasons") or [], key=lambda s: int(s.get("number") or 0)):
+        number = int(s.get("number") or 0)
+        if number <= 0:
+            continue
+        count = max(last_number.get(number, 0), int(s.get("episodeOrder") or 0))
+        spans.append(Span(number, tmdb_season, first, count, _year(s.get("premiereDate"))))
+        first += count
+    if len(spans) < 2:
+        return None
+    # TMDb уже знает серии дальше, а TVmaze ещё нет: они — продолжение последнего сезона,
+    # если за ним не заведён следующий (как и у группы TMDb).
+    tail = spans[-1]
+    if tail.count and tail.first + tail.count - 1 < tmdb_total:
+        tail.count = tmdb_total - tail.first + 1
+    nb = Numbering(spans, grouped=True, source=TVMAZE)
+    aired = [d for d in dated if d[0] <= today]
+    upcoming = [d for d in dated if d[0] > today]
+    if aired:
+        nb.last = aired[-1][1:]
+    if upcoming:
+        nb.next = (upcoming[0][1], upcoming[0][2], upcoming[0][0])
+    return nb
+
+
+def _tvmaze(details: dict, seasons) -> Numbering | None:
+    """Сезоны из TVmaze — только у сериала, где в TMDb один длинный сезон (почти всегда
+    аниме): у остальных сезоны TMDb и так как у трекеров. Не ответил — None."""
+    if len(seasons) != 1 or seasons[0][1] < LONG_SEASON:
+        return None
+    ids = details.get("external_ids") or {}
+    try:
+        data = tvmaze.show(ids.get("tvdb_id"), ids.get("imdb_id"))
+    except net.NetError:
+        return None
+    return from_tvmaze(data, seasons[0][0], seasons[0][1], date.today().isoformat()) if data else None
+
+
 def load(details: dict, tmdb_id: int, api_key: str) -> Numbering:
-    """Нумерация сериала по его карточке TMDb (`tmdb.titles`/`tmdb.tv`)."""
+    """Нумерация сериала по его карточке TMDb (`tmdb.titles`/`tmdb.tv`).
+
+    Группа TMDb «Seasons» — если она есть и сезонов в ней не меньше, чем у TVmaze; у
+    TVmaze больше (вышел или анонсирован новый, а группу не поправили) или группы нет
+    вовсе — сезоны TVmaze."""
     seasons = [(int(s["season_number"]), int(s.get("episode_count") or 0), _year(s.get("air_date")))
                for s in details.get("seasons") or []
                if isinstance(s.get("season_number"), int) and s["season_number"] > 0]
-    return grouped(tmdb_id, api_key, seasons) or regular(seasons)
+    group = grouped(tmdb_id, api_key, seasons)
+    maze = _tvmaze(details, seasons)
+    if maze is not None and (group is None or len(maze.spans) > len(group.spans)):
+        return maze
+    return group or regular(seasons)
 
 
 def for_title(tmdb_id: int, api_key: str) -> Numbering:

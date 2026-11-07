@@ -238,6 +238,6 @@ This product uses the TMDB API but is not endorsed or certified by TMDB.
 Метаданные и картинки — [The Movie Database (TMDB)](https://www.themoviedb.org/),
 дополнительные картинки — [Fanart.tv](https://fanart.tv/), рейтинги —
 [OMDb](https://www.omdbapi.com/), тайминги заставок — [AniSkip](https://aniskip.com/) и
-[TheIntroDB](https://theintrodb.org/), вспомогательные данные о сериях —
-[TVmaze](https://www.tvmaze.com/) (CC BY-SA) и [Jikan](https://jikan.moe/)
+[TheIntroDB](https://theintrodb.org/), деление аниме на сезоны и вспомогательные данные
+о сериях — [TVmaze](https://www.tvmaze.com/) (CC BY-SA) и [Jikan](https://jikan.moe/)
 (MyAnimeList). Ключи API у каждого пользователя свои.
