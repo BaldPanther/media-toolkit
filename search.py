@@ -1327,10 +1327,13 @@ def status_text(title: Title, today=None) -> str:
     """Строка под названием сериала: завершён ли, когда следующая серия, анонсы."""
     if title.kind != library.TV:
         return ""
-    # Анонсированный сезон важнее «Ended» у TMDb: Re:Zero там «завершён», а TVmaze уже
-    # завёл пятый сезон.
+    # Анонсированный сезон важнее «Ended» у TMDb. А если TMDb пишет «завершён», а TVmaze —
+    # «идёт» (у «Re:Zero» TMDb «Ended», TVmaze «Running», нового сезона никто не объявлял),
+    # — не «Завершён»: кончилось только то, что объявлено.
     announced = any(season_state(title, s.number)[0] == ANNOUNCE for s in title.seasons)
     if title.status in DONE_STATUS and not announced and not title.next_air[0]:
+        if title.numbering.status in ("Running", "To Be Determined"):
+            return "Продолжение пока не объявлено"
         return DONE_STATUS[title.status]
     season, episode, date = title.next_air
     when = short_date(date, today)

@@ -48,9 +48,9 @@ def test_last_season_grows_with_tmdb(monkeypatch):
     assert nb.span(3).count == 24 and nb.from_tmdb(1, 70) == (3, 22)
 
 
-def _maze(counts, announced=0, dates=None):
-    """Ответ TVmaze: сезоны с сериями по `counts`; `announced` — ещё сезонов без дат
-    (у TVmaze там серия-заготовка без airdate)."""
+def _maze(counts, announced=0, dates=None, premiere=None):
+    """Ответ TVmaze: сезоны с сериями по `counts`; `announced` — ещё сезонов без вышедших
+    серий (серия-заготовка без airdate), `premiere` — их дата премьеры, если объявлена."""
     seasons, episodes = [], []
     for i, count in enumerate(counts, start=1):
         seasons.append({"number": i, "episodeOrder": None, "premiereDate": f"{2015 + i}-04-01"})
@@ -59,16 +59,21 @@ def _maze(counts, announced=0, dates=None):
                              "airdate": (dates or {}).get((i, n), f"{2015 + i}-05-{min(n, 28):02d}")})
     for j in range(announced):
         number = len(counts) + 1 + j
-        seasons.append({"number": number, "episodeOrder": None, "premiereDate": None})
+        seasons.append({"number": number, "episodeOrder": None, "premiereDate": premiere})
         episodes.append({"season": number, "number": 1, "airdate": ""})
     return {"_embedded": {"seasons": seasons, "episodes": episodes}}
 
 
 def test_tvmaze_seasons_with_announced_one():
+    # Пустая заготовка 5-го сезона (без даты и серий, как у «Re:Zero») — не анонс.
     nb = numbering.from_tvmaze(_maze([25, 25, 16, 19], announced=1), 1, 85, "2026-11-07")
     assert [(s.season, s.first, s.count) for s in nb.spans] == [
-        (1, 1, 25), (2, 26, 25), (3, 51, 16), (4, 67, 19), (5, 86, 0)]   # 5-й — анонс
+        (1, 1, 25), (2, 26, 25), (3, 51, 16), (4, 67, 19)]
     assert nb.source == numbering.TVMAZE and nb.last == (4, 19) and nb.next == (0, 0, "")
+    # С датой премьеры — анонс: сезон без серий.
+    nb = numbering.from_tvmaze(_maze([25, 25, 16, 19], announced=1, premiere="2027-04-07"),
+                               1, 85, "2026-11-07")
+    assert (nb.spans[-1].season, nb.spans[-1].first, nb.spans[-1].count, nb.spans[-1].year) == (5, 86, 0, 2027)
     # Идёт сезон: последняя вышедшая и следующая — по датам TVmaze.
     airing = numbering.from_tvmaze(_maze([12, 3], dates={(2, 2): "2026-11-01", (2, 3): "2026-11-14"}),
                                    1, 14, "2026-11-07")
@@ -83,7 +88,8 @@ def test_tvmaze_wins_when_tmdb_group_lags_or_missing(monkeypatch):
     monkeypatch.setattr(tvmaze, "show", lambda tvdb_id=None, imdb_id=None: _maze([24, 24, 12]))
     assert numbering.load(details, 220542, "k").source == "группа TMDb «Seasons»"   # согласны
     # TVmaze уже завёл 4-й сезон, а группу TMDb не поправили — сезоны TVmaze.
-    monkeypatch.setattr(tvmaze, "show", lambda tvdb_id=None, imdb_id=None: _maze([24, 24, 12], 1))
+    monkeypatch.setattr(tvmaze, "show", lambda tvdb_id=None, imdb_id=None:
+                        _maze([24, 24, 12], 1, premiere="2027-01-09"))
     nb = numbering.load(details, 220542, "k")
     assert nb.source == numbering.TVMAZE and [s.count for s in nb.spans] == [24, 24, 12, 0]
     # Группы в TMDb нет вовсе («Blue Lock»: 38 серий одним сезоном).

@@ -54,6 +54,7 @@ class Numbering:
     # заводит позже): (сезон, серия) последней вышедшей и (сезон, серия, дата) следующей.
     last: tuple[int, int] = (0, 0)
     next: tuple[int, int, str] = (0, 0, "")
+    status: str = ""           # статус сериала у TVmaze («Running», «Ended»), если спрашивали
 
     def span(self, season: int) -> Span | None:
         return next((s for s in self.spans if s.season == season), None)
@@ -191,9 +192,11 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
 
 def from_tvmaze(data: dict, tmdb_season: int, tmdb_total: int, today: str) -> Numbering | None:
     """Сезоны TVmaze поверх единственного сезона TMDb: сезон k — серии TMDb подряд после
-    предыдущих. Серия без даты — заготовка анонса, не в счёт; сезон без датированных
-    серий — анонс (0 серий), а «из 12» TVmaze знает и до выхода (`episodeOrder`).
-    Сезон один — None: делить нечего. `today` — «2026-11-07», для расписания."""
+    предыдущих. Серия без даты — заготовка, не в счёт. Сезон с датой премьеры, но без
+    вышедших серий — анонс (0 серий; «из 12» TVmaze знает и до выхода — `episodeOrder`).
+    Сезон без даты и без серий — пустая заготовка редактора, не анонс: у «Re:Zero» TVmaze
+    завёл 5-й сезон, которого никто не объявлял. Сезон один — None: делить нечего.
+    `today` — «2026-11-07», для расписания."""
     embedded = data.get("_embedded") or {}
     dated = sorted((str(e["airdate"]), int(e["season"]), int(e["number"]))
                    for e in embedded.get("episodes") or []
@@ -204,9 +207,9 @@ def from_tvmaze(data: dict, tmdb_season: int, tmdb_total: int, today: str) -> Nu
     spans, first = [], 1
     for s in sorted(embedded.get("seasons") or [], key=lambda s: int(s.get("number") or 0)):
         number = int(s.get("number") or 0)
-        if number <= 0:
-            continue
         count = max(last_number.get(number, 0), int(s.get("episodeOrder") or 0))
+        if number <= 0 or (not count and not s.get("premiereDate")):
+            continue
         spans.append(Span(number, tmdb_season, first, count, _year(s.get("premiereDate"))))
         first += count
     if len(spans) < 2:
@@ -226,17 +229,16 @@ def from_tvmaze(data: dict, tmdb_season: int, tmdb_total: int, today: str) -> Nu
     return nb
 
 
-def _tvmaze(details: dict, seasons) -> Numbering | None:
-    """Сезоны из TVmaze — только у сериала, где в TMDb один длинный сезон (почти всегда
-    аниме): у остальных сезоны TMDb и так как у трекеров. Не ответил — None."""
+def _tvmaze(details: dict, seasons) -> dict:
+    """Сериал в TVmaze — только если в TMDb один длинный сезон (почти всегда аниме): у
+    остальных сезоны TMDb и так как у трекеров. Не нашёлся, не ответил — {}."""
     if len(seasons) != 1 or seasons[0][1] < LONG_SEASON:
-        return None
+        return {}
     ids = details.get("external_ids") or {}
     try:
-        data = tvmaze.show(ids.get("tvdb_id"), ids.get("imdb_id"))
+        return tvmaze.show(ids.get("tvdb_id"), ids.get("imdb_id")) or {}
     except net.NetError:
-        return None
-    return from_tvmaze(data, seasons[0][0], seasons[0][1], date.today().isoformat()) if data else None
+        return {}
 
 
 def load(details: dict, tmdb_id: int, api_key: str) -> Numbering:
@@ -249,10 +251,14 @@ def load(details: dict, tmdb_id: int, api_key: str) -> Numbering:
                for s in details.get("seasons") or []
                if isinstance(s.get("season_number"), int) and s["season_number"] > 0]
     group = grouped(tmdb_id, api_key, seasons)
-    maze = _tvmaze(details, seasons)
+    data = _tvmaze(details, seasons)
+    maze = from_tvmaze(data, seasons[0][0], seasons[0][1], date.today().isoformat()) if data else None
     if maze is not None and (group is None or len(maze.spans) > len(group.spans)):
-        return maze
-    return group or regular(seasons)
+        nb = maze
+    else:
+        nb = group or regular(seasons)
+    nb.status = str(data.get("status") or "")
+    return nb
 
 
 def for_title(tmdb_id: int, api_key: str) -> Numbering:

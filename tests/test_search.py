@@ -990,6 +990,9 @@ def test_season_state_and_status_line():
     assert search.status_text(ended) == "Продлён: сезон 3 — дата пока неизвестна"
     ended.seasons = ended.seasons[:2]
     assert search.status_text(ended) == "Завершён"
+    # TMDb «Ended», а TVmaze — «Running» и нового сезона нет (как у «Re:Zero»).
+    ended.numbering.status = "Running"
+    assert search.status_text(ended) == "Продолжение пока не объявлено"
     # TMDb не знает, что вышло, — сезоны считаются вышедшими, как раньше.
     unknown = _airing(last=(0, 0), nxt=(0, 0, ""))
     assert search.season_state(unknown, 2) == ("aired", 19)
