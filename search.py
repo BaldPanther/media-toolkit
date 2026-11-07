@@ -169,6 +169,7 @@ class Title:
     names: list[str] = field(default_factory=list)   # все названия для поиска
     romaji: list[str] = field(default_factory=list)  # из них — запись японского латиницей
     original: str = ""
+    original_language: str = ""         # язык оригинала, код TMDb: «ja», «fr»
     seasons: list[Season] = field(default_factory=list)
     status: str = ""                    # у сериала: «Returning Series», «Ended»
     last_aired: tuple[int, int] = (0, 0)     # (сезон, серия) последней вышедшей
@@ -208,6 +209,7 @@ def title_info(kind: str, tmdb_id: int, api_key: str) -> Title:
     name = d.get("title") or d.get("name") or ""
     original = d.get("original_title") or d.get("original_name") or ""
     t = Title(kind=kind, tmdb_id=tmdb_id, title=name, original=original,
+              original_language=str(d.get("original_language") or ""),
               year=_year(d.get("release_date") or d.get("first_air_date")),
               status=d.get("status") or "")
     names = [name, original]
@@ -431,34 +433,59 @@ def _foreign_script(name: str) -> bool:
     """Есть буквы не латиницей и не кириллицей (японские, корейские). jac.red их
     выбросит: от «Re:ゼロから始める異世界生活» останется «re», а такой запрос перебирает
     всю его базу и падает (504). Диакритика — не в счёт: «ō» — это «o» со знаком."""
-    base = "".join(c for c in unicodedata.normalize("NFKD", name) if not unicodedata.combining(c))
-    return bool(re.search(r"[^\W\d_a-zа-яё]", base, re.I))
+    return bool(re.search(r"[^\W\d_a-zа-яё]", _no_accents(name), re.I))
+
+
+def _no_accents(name: str) -> str:
+    """Латиница без диакритики: «Pokémon» → «Pokemon». Кириллицу не трогает: «й» — не «и»."""
+    out = []
+    for c in name:
+        plain = "".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+        out.append(plain if plain.isascii() else c)
+    return "".join(out)
+
+
+def _pairs(names: list[str]) -> list[dict]:
+    """Точный поиск — по два названия за запрос: `search` и `altname`, найдёт по любому."""
+    return [{"search": a, "altname": b, "exact": "true"}
+            for a, b in zip(names[::2], names[1::2] + [""])]
 
 
 def _jacred_queries(title: Title) -> list[dict]:
     """Запросы к jac.red по названиям тайтла.
 
-    Точный поиск (`exact`) берёт два названия за раз — `search` и `altname` (найдёт по
-    любому), так что разных названий в нескольких запросах помещается вдвое больше: у
-    аниме их бывает десяток, и каждое находит свою часть раздач (kinozal пишет «Re: Жизнь в
-    альтернативном мире с нуля», rutracker — «Re:Zero — жизнь с нуля в другом мире»).
-    Ромадзи — неточным поиском: трекеры дописывают к нему сезон («… Isekai Seikatsu 4»,
-    «… 2nd Season»), и точный такие раздачи не находит. jac.red отвечает по одному
-    запросу за раз (два разом — 429), каждый — около секунды: запросов не больше
-    `JACRED_QUERIES`.
+    По очереди: русское, английское, ромадзи, российские альтернативные — качаем с русской
+    озвучкой, а русские трекеры пишут тайтл так; оригинал на другом языке (французский,
+    испанский) — последним: раздачи обычно пишут «Русское / Оригинал», но русское
+    название TMDb бывает не тем, что у трекеров («Бюро» — а раздачи «Бюро легенд / Le
+    Bureau des légendes»). Японскими и корейскими буквами jac.red не ищет вовсе
+    (`_foreign_script`). Название с диакритикой — ещё и без неё: «Pokémon» jac.red
+    превращает в «pokmon» и находит не то, что по «Pokemon».
+
+    Точный поиск берёт два названия за запрос (`_pairs`), так что разных названий
+    помещается вдвое больше: у аниме их бывает десяток, и каждое находит свою часть раздач
+    (kinozal пишет «Re: Жизнь в альтернативном мире с нуля», rutracker — «Re:Zero — жизнь
+    с нуля в другом мире»). Ромадзи — неточным поиском: трекеры дописывают к нему сезон
+    («… Isekai Seikatsu 4», «… 2nd Season»), и точный такие раздачи не находит. jac.red
+    отвечает по одному запросу за раз (два разом — 429), каждый — около секунды: запросов
+    не больше `JACRED_QUERIES`.
     """
+    native = title.original.strip() if title.original_language not in ("", "ru", "en") else ""
+    if _jacred_key(native) == _jacred_key(title.title):
+        native = ""         # русского названия у TMDb нет — оригинал и есть главное
+    ordered = [n for n in [title.title, title.original, *title.names]
+               if (n or "").strip() and n.strip() != native] + [native]
     names, seen = [], set()
-    for n in [title.title, title.original, *title.names]:
-        key = _jacred_key(n or "")
-        if key and key not in seen and not _foreign_script(n):
-            seen.add(key)
-            names.append(n.strip())
+    for n in ordered:
+        for v in dict.fromkeys((n.strip(), _no_accents(n.strip()))):
+            key = _jacred_key(v)
+            if key and key not in seen and not _foreign_script(v):
+                seen.add(key)
+                names.append(v)
     romaji = {_jacred_key(n) for n in title.romaji}
     wide = [n for n in names if _jacred_key(n) in romaji][:1]
-    exact = [n for n in names if n not in wide]
-    queries = [{"search": a, "altname": b, "exact": "true"}
-               for a, b in zip(exact[::2], exact[1::2] + [""])]
-    # Ромадзи — вторым: первый запрос (русское и оригинал) важнее всего.
+    queries = _pairs([n for n in names if n not in wide])
+    # Ромадзи — вторым: первый запрос (русское и английское) важнее всего.
     queries[1:1] = [{"search": n} for n in wide]
     return queries[:JACRED_QUERIES]
 
@@ -1128,8 +1155,9 @@ def numbering_note(title: Title, folder: str = "") -> str:
     where = (f"в TMDb один сезон из {total} серий подряд" if tmdb_count == 1
              else f"в TMDb сезонов {tmdb_count}")
     parts = ", ".join(f"{s.season} — {tmdb_range(title, s.season)}" for s in nb.spans)
-    text = (f"Нумерация разная: {where}, а трекеры делят на сезоны: {parts}. "
-            f"Программа сверяет сама.")
+    group = f" «{nb.source}»" if nb.source else ""
+    text = (f"Нумерация разная: {where}, а по сезонам, как у раздач, серии делит группа "
+            f"TMDb{group}: {parts}. Программа сверяет сама.")
     grouped_disk = numbering.library_grouped(nb, disk_episodes(folder) if folder else ())
     last = nb.spans[-1]
     tmdb_season, first = nb.to_tmdb(last.season, 1)

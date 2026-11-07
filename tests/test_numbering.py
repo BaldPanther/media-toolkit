@@ -26,7 +26,7 @@ def _cours_detail():
 
 def _patch_groups(monkeypatch, total=60):
     monkeypatch.setattr(tmdb, "episode_groups", lambda tid, key: [
-        {"id": "seasons", "group_count": 4}, {"id": "cours", "group_count": 4}])
+        {"id": "seasons", "name": "Seasons", "group_count": 4}, {"id": "cours", "group_count": 4}])
     monkeypatch.setattr(tmdb, "episode_group", lambda gid, key, language="en-US":
                         _group_detail() if gid == "seasons" else _cours_detail())
     return {"seasons": [{"season_number": 0, "episode_count": 54},
@@ -163,6 +163,7 @@ def test_numbering_note_says_how_seasons_map(tmp_path, monkeypatch):
     title = _title(monkeypatch)
     note = search.numbering_note(title)
     assert "один сезон из 60 серий" in note and "3 — серии 49–60" in note
+    assert "группа TMDb «Seasons»" in note               # деление — из TMDb, не из раздач
     assert "В медиатеку — по сезонам трекеров" in note     # тайтла в медиатеке нет
     show = tmp_path / "Show"
     (show / "Season 01").mkdir(parents=True)

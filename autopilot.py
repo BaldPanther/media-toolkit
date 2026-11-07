@@ -710,9 +710,11 @@ class Autopilot:
         overrides = {v: numbering.to_library(nb, s, e, grouped_disk)
                      for v, (s, e) in tracker.items() if v in videos}
         seasons = {nb.to_tmdb(s, e)[0] for s, e in tracker.values()}
-        if any(scan.season_of(v) == 0 for v in scan.videos):
-            seasons.add(0)
-        info = metadata.fetch(library.TV, tmdb_id, meta, seasons=sorted(seasons))
+        specials = {0} if any(scan.season_of(v) == 0 for v in scan.videos) else set()
+        # По сезонам трекеров — и постеры их сезонов (Season 02…), а не одного сезона TMDb.
+        art = sorted({s for s, _ in overrides.values()} | specials) if grouped_disk else None
+        info = metadata.fetch(library.TV, tmdb_id, meta, seasons=sorted(seasons | specials),
+                              art_seasons=art)
         if grouped_disk:
             # Описания серий — из TMDb, номера в .nfo — как в имени файла.
             for season, episode in overrides.values():

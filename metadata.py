@@ -629,13 +629,15 @@ def _season_episodes(tmdb_id: int, number: int, key: str, lang: str,
 
 
 def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
-          progress=None) -> MediaInfo:
+          progress=None, art_seasons=None) -> MediaInfo:
     """Полная карточка тайтла: метаданные на двух языках, рейтинги, арт.
 
     `seasons` — номера сезонов, которые реально есть на диске: серии и постеры
     качаем только для них, а не для всего сериала. `season_sizes` — сколько в
     каждом из них серий; по этим числам подбирается альтернативная разбивка,
-    если обычные сезоны TMDb с диском не сошлись.
+    если обычные сезоны TMDb с диском не сошлись. `art_seasons` — постеры не для
+    сезонов TMDb, а для этих: аниме со сквозной нумерацией, разложенное по сезонам
+    трекеров (у Fanart.tv сезоны — по TheTVDB, они делят так же).
     """
     key = settings.tmdb_key
     lang = settings.meta_language
@@ -756,7 +758,8 @@ def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
             info.runtime = lengths[len(lengths) // 2]     # медиана, а не первая серия:
                                                           # пилот и финал часто длиннее
     step("Картинки…")
-    info.art = _collect_tmdb_art(kind, tmdb_id, key, season_numbers, settings,
+    art_numbers = season_numbers if art_seasons is None else sorted({int(s) for s in art_seasons})
+    info.art = _collect_tmdb_art(kind, tmdb_id, key, art_numbers, settings,
                                  info.original_language)
-    info.art += _collect_fanart_art(kind, ids, season_numbers, settings)
+    info.art += _collect_fanart_art(kind, ids, art_numbers, settings)
     return info

@@ -153,10 +153,10 @@ def _rezero():
 
 
 def test_jacred_queries_pair_names_and_skip_foreign_script():
-    qs = search._jacred_queries(_rezero())
+    queries = search._jacred_queries(_rezero())
     # Японское jac.red превратил бы в «re» (504); «Re:Zero. Жизнь…» для него — то же, что
     # первое; ромадзи — неточным поиском, вторым.
-    assert qs == [
+    assert queries == [
         {"search": "Re:ZERO – Жизнь с нуля в альтернативном мире",
          "altname": "Re:ZERO -Starting Life in Another World-", "exact": "true"},
         {"search": "Re:Zero kara Hajimeru Isekai Seikatsu"},
@@ -166,6 +166,22 @@ def test_jacred_queries_pair_names_and_skip_foreign_script():
          "altname": "Жизнь в альтернативном мире с нуля", "exact": "true"},
     ]                                                   # запросов — не больше JACRED_QUERIES
     assert not search._foreign_script("Shōgun") and search._foreign_script("오징어 게임")
+    assert search._no_accents("Pokémon") == "Pokemon"
+    assert search._no_accents("Настоящий детектив") == "Настоящий детектив"   # «й» — не «и»
+
+
+def _bureau():
+    return search.Title(kind=library.TV, tmdb_id=62480, title="Бюро", year=2015,
+                        original="Le Bureau des légendes", original_language="fr",
+                        names=["Бюро", "Le Bureau des légendes", "The Bureau"])
+
+
+def test_jacred_original_in_other_language_goes_last():
+    # Русское и английское — первыми, французский оригинал — после них (и без диакритики:
+    # jac.red её выбрасывает, «lgendes» и «legendes» — разные названия).
+    assert search._jacred_queries(_bureau()) == [
+        {"search": "Бюро", "altname": "The Bureau", "exact": "true"},
+        {"search": "Le Bureau des légendes", "altname": "Le Bureau des legendes", "exact": "true"}]
 
 
 def test_jacred_survives_failed_query(monkeypatch):

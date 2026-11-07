@@ -42,6 +42,7 @@ class Span:
 class Numbering:
     spans: list[Span] = field(default_factory=list)
     grouped: bool = False      # сезоны из episode group, а не обычные сезоны TMDb
+    source: str = ""           # её название в TMDb («Seasons»)
 
     def span(self, season: int) -> Span | None:
         return next((s for s in self.spans if s.season == season), None)
@@ -151,6 +152,7 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
     except net.NetError:
         return None
     best: list[Span] | None = None
+    source = ""
     for meta in groups[:limit]:
         if not meta.get("id") or int(meta.get("group_count") or 0) <= len(counts):
             continue
@@ -162,7 +164,7 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
         if not spans or len(spans) <= len(counts) or not {s.tmdb_season for s in spans} <= set(counts):
             continue
         if best is None or (len(spans), sum(s.count for s in spans)) > (len(best), sum(s.count for s in best)):
-            best = spans
+            best, source = spans, str(meta.get("name") or detail.get("name") or "")
     if best is None:
         return None
     # Новые серии TMDb добавляет в свой сезон раньше, чем кто-то правит группу:
@@ -172,7 +174,7 @@ def grouped(tmdb_id: int, api_key: str, seasons, limit: int = 4) -> Numbering | 
                    default=None)
         if last is not None and last.first + last.count - 1 < total:
             last.count = total - last.first + 1
-    return Numbering(best, grouped=True)
+    return Numbering(best, grouped=True, source=source)
 
 
 def load(details: dict, tmdb_id: int, api_key: str) -> Numbering:
