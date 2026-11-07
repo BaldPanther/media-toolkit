@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-win/
 
 # Машинно-зависимый ярлык (воссоздаётся make_shortcut.ps1)
 *.lnk

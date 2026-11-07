@@ -150,6 +150,9 @@ Compose-файлы тянут `:latest`: после релиза на ZimaOS —
 ```bash
 python -m pytest tests/ -q
 ```
+Окружения разные по системам: `.venv` — на маке, `.venv-win` — на Windows
+(`.venv-win/Scripts/python -m pytest tests -q`; создать — `python -m venv .venv-win` и
+`pip install -r requirements.txt pytest`). Пакеты одного в другом не работают (numpy).
 Не трогают реальные MKV и не ходят в сеть (кроме `test_trim.py`, который сам собирает
 маленький MKV, если есть ffmpeg и mkvmerge). API веб-интерфейса — `tests/test_web_*.py`
 через тестовый клиент Flask; настройки в них подменяются на временную папку
