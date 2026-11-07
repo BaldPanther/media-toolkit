@@ -95,6 +95,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn-danger { background: var(--danger-bg); border-color: var(--danger-bg); color: #fff; }
 .btn-danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+/* Второе действие рядом с основным («Всю раздачу» рядом со «Скачать»): видно, что кнопка, но спокойнее синей. */
+.btn-ok { background: var(--ok-soft); border-color: rgba(52, 211, 153, 0.45); color: var(--ok); }
+.btn-ok:hover:not(:disabled) { background: rgba(52, 211, 153, 0.22); border-color: var(--ok); }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
 .btn-sm { height: var(--h-sm); padding: 0 10px; font-size: 12.5px; }
 .btn-icon { width: var(--h); padding: 0; }
