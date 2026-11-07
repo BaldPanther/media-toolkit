@@ -40,6 +40,9 @@ SIDECAR_EXTS = {".nfo", ".edl"} | SUB_EXTS
 SIDECAR_SUFFIXES = ("-thumb.jpg", "-fanart.jpg", "-thumb.png")
 
 SPECIALS_DIR = "Specials"
+# Свой .nfo и превью каждой серии файла из нескольких серий (Kodi 22):
+# «Show - S01E02-E03 - Title-S01E02.nfo», «…-S01E02-thumb.jpg».
+_EPISODE_SIDECAR = re.compile(r"(?i)^-S\d{2,}E\d{2,}(?:\.nfo|-thumb\.(?:jpe?g|png))$")
 
 # Артефакты медиатеки: не мусор, но и не спутники — переезжают в корень тайтла.
 _ART_EXACT = {
@@ -354,7 +357,7 @@ def find_sidecars(video: Path, siblings=None) -> list[Path]:
         if not name.startswith(stem):
             continue
         rest = name[len(stem):]
-        if rest.lower().endswith(SIDECAR_SUFFIXES):
+        if rest.lower().endswith(SIDECAR_SUFFIXES) or _EPISODE_SIDECAR.match(rest):
             out.append(p)
         elif rest.startswith(".") and p.suffix.lower() in SIDECAR_EXTS:
             out.append(p)

@@ -306,6 +306,12 @@ def make_episode_nfo(info, episode, preserve: dict | None = None) -> str:
     _text(root, "showtitle", info.title or info.title_en)
     _text(root, "season", episode.season)
     _text(root, "episode", episode.episode)
+    # Спецвыпуск — ещё и внутри сезона, где он вышел (Kodi: и при «flatten» = Never).
+    if episode.display_after:
+        _text(root, "displayafterseason", episode.display_after)
+    elif episode.display_season is not None:
+        _text(root, "displayseason", episode.display_season)
+        _text(root, "displayepisode", episode.display_episode)
     if episode.tmdb_id:
         _text(root, "uniqueid", episode.tmdb_id, type="tmdb", default="true")
     block = ET.SubElement(root, "ratings")

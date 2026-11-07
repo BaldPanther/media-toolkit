@@ -22,6 +22,8 @@
   («Break Time 03.01»), со спецвыпусками TMDb не совпадают. Совпало название — его
   номер, иначе — в Specials следующими номерами после последнего спецвыпуска TMDb,
   с названием из имени файла (`specials`).
+- Спецвыпуск встаёт между сериями по дате выхода (`place`): в его .nfo — перед какой
+  серией он вышел; Kodi показывает его и внутри сезона, а не только в Specials.
 """
 from __future__ import annotations
 
@@ -184,7 +186,7 @@ def minis(scan) -> set[Path]:
     return {v for v in scan.videos if not _is_episode(scan, v) and scan.size_of(v) < limit}
 
 
-def specials(scan, info, taken=()) -> dict[Path, tuple[int, list[int]]]:
+def specials(scan, info, taken=()) -> tuple[dict[Path, tuple[int, list[int]]], dict[int, str]]:
     """Спецвыпуски раздачи, у которых нет номера спецвыпуска TMDb: без номера (OVA) или
     с номером, угаданным по соседним файлам («Break Time 03.01» → «1») — такие номера
     раздача придумала сама. Явный «S00E05» в имени — как есть.
@@ -193,12 +195,13 @@ def specials(scan, info, taken=()) -> dict[Path, tuple[int, list[int]]]:
     Manner Movie») — его номер. Иначе — следующий после последнего спецвыпуска TMDb и
     номеров `taken` (уже в медиатеке), по году в пути, затем по имени; в `info.episodes`
     добавляется серия с названием из имени файла — для имени и .nfo.
-    → {видео: (0, [номер])}."""
+    → ({видео: (0, [номер])}, {номер: «2018-12-31»} — когда вышли добавленные: даты у
+    них нет, только год из пути, — конец года; для `place`)."""
     loose = [v for v in scan.videos
              if scan.season_of(v) == 0 and library.parse_episodes(v)[0] is None
              and (not library.parse_episodes(v)[1] or v in scan.guessed)]
     if not loose:
-        return {}
+        return {}, {}
     prefix = _show_prefix(scan)
     known = {n: ep for (s, n), ep in info.episodes.items() if s == 0}
     used = set(known) | set(taken)
@@ -213,12 +216,50 @@ def specials(scan, info, taken=()) -> dict[Path, tuple[int, list[int]]]:
         else:
             out[v] = (0, [n])
     nxt = max(used | explicit, default=0)
+    dates: dict[int, str] = {}
     for v in sorted(rest, key=lambda v: (_year_of(v, scan.root), str(v))):
         nxt += 1
         title = _title(v, prefix) or v.stem
         info.episodes[(0, nxt)] = _episode(nxt, title)
         out[v] = (0, [nxt])
-    return out
+        year = _year_of(v, scan.root)
+        if year != 9999:
+            dates[nxt] = f"{year}-12-31"
+    return out, dates
+
+
+def place(plan, info, dates=None) -> None:
+    """Спецвыпуски плана — между сериями по дате выхода: в `info.episodes` им ставится,
+    перед какой серией этого плана они вышли (`display_season`/`display_episode`), а
+    вышли после всех — после её сезона (`display_after`). В .nfo это теги Kodi
+    `displayseason`/`displayepisode`/`displayafterseason`: спецвыпуск виден и внутри
+    сезона, и «следующая серия» после первого сезона «Re:Zero» — Memory Snow.
+    Дата — из TMDb или из `dates` ({номер: дата} от `specials`); нет даты или в плане
+    нет серий с датами — не трогаем."""
+    dates = dates or {}
+    regular, specials_here = [], []
+    for row in plan.rows:
+        if row.what != "video" or row.dst is None or row.action == library.A_SKIP:
+            continue
+        season, numbers = library.parse_episodes(row.dst)
+        if season == 0:
+            specials_here += numbers
+        elif season:
+            regular += [(ep.aired, season, n) for n in numbers
+                        for ep in [info.episodes.get((season, n))] if ep and ep.aired]
+    if not regular:
+        return
+    regular.sort()
+    for n in specials_here:
+        ep = info.episodes.get((0, n))
+        when = dates.get(n) or (ep.aired if ep else "")
+        if ep is None or not when:
+            continue
+        later = next((r for r in regular if r[0] > when), None)
+        if later is not None:
+            ep.display_season, ep.display_episode = later[1], later[2]
+        else:
+            ep.display_after = regular[-1][1]
 
 
 def _episode(number: int, title: str) -> metadata.EpisodeInfo:

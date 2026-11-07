@@ -136,6 +136,12 @@ class EpisodeInfo:
     runtime: int | None = None
     rating: Rating = field(default_factory=Rating)
     tmdb_id: int | None = None
+    # Спецвыпуск между сериями по дате выхода (`packs.place`): Kodi покажет его и внутри
+    # сезона — перед серией display_episode сезона display_season или после сезона
+    # display_after.
+    display_season: int | None = None
+    display_episode: int | None = None
+    display_after: int | None = None
     # Съёмочная группа и приглашённые актёры конкретной серии — приходят внутри
     # ответа по сезону, отдельных запросов не требуют.
     directors: list[Person] = field(default_factory=list)

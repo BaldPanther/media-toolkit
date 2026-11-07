@@ -87,9 +87,31 @@ def test_specials_match_title_or_go_after_tmdb(tmp_path):
     info = metadata.MediaInfo(kind=library.TV, tmdb_id=1, title="Show")
     info.episodes[(0, 1)] = metadata.EpisodeInfo(0, 1, title_en="Memory Snow: Manner Movie")
     info.episodes[(0, 2)] = metadata.EpisodeInfo(0, 2, title_en="Recap")
-    got = {p.name: v for p, v in packs.specials(scan, info, taken={3}).items()}
+    found, dates = packs.specials(scan, info, taken={3})
+    got = {p.name: v for p, v in found.items()}
     assert got["Show Memory Snow Manner Movie.mkv"] == (0, [1])
     # Не совпало — после спецвыпусков TMDb и уже лежащих в медиатеке, по году.
     assert got["Show Memory Snow.mkv"] == (0, [4])
     assert got["Show Frozen Bond.mkv"] == (0, [5])
     assert info.episodes[(0, 4)].title_en == "Memory Snow"
+    assert dates == {4: "2018-12-31", 5: "2019-12-31"}
+
+
+def test_episode_sidecars_of_multi_episode_file(tmp_path):
+    video = tmp_path / "Show - S01E02-E03 - Title.mkv"
+    names = ["Show - S01E02-E03 - Title.nfo", "Show - S01E02-E03 - Title-S01E02.nfo",
+             "Show - S01E02-E03 - Title-S01E03-thumb.jpg", "Show - S01E02-E03 - Title-extra.mkv"]
+    for n in [video.name] + names:
+        (tmp_path / n).write_bytes(b"x")
+    got = {p.name for p in library.find_sidecars(video)}
+    assert got == set(names[:3])
+
+
+def test_display_tags_in_episode_nfo():
+    import nfo
+    info = metadata.MediaInfo(kind=library.TV, tmdb_id=1, title="Show")
+    ep = metadata.EpisodeInfo(0, 4, title_en="Memory Snow", display_season=2, display_episode=1)
+    text = nfo.make_episode_nfo(info, ep)
+    assert "<displayseason>2</displayseason>" in text and "<displayepisode>1</displayepisode>" in text
+    ep = metadata.EpisodeInfo(0, 5, title_en="OVA", display_after=1)
+    assert "<displayafterseason>1</displayafterseason>" in nfo.make_episode_nfo(info, ep)

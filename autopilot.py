@@ -629,7 +629,7 @@ class Autopilot:
             self._fail(item, "у раздачи нет своей папки — разложите на вкладке «Медиатека»")
             return
         try:
-            extra, overrides = files.extra(), {}
+            extra, overrides, dates = files.extra(), {}, {}
             if item.kind == library.TV:
                 full = library.scan_folder(folder, extra)
                 nb = numbering.for_title(tmdb_id, meta.tmdb_key)
@@ -648,8 +648,8 @@ class Autopilot:
                                           season_sizes=scan.season_sizes())
                     videos = set(scan.videos)
                     overrides = {v: se for v, se in tracker.items() if v in videos}
-                overrides.update(packs.specials(scan, info, self._specials_taken(
-                    tmdb_id, meta, files)))
+                loose, dates = packs.specials(scan, info, self._specials_taken(tmdb_id, meta, files))
+                overrides.update(loose)
             else:
                 info = metadata.fetch(item.kind, tmdb_id, meta)
             arrange.resolve_name_language(info, meta)
@@ -657,6 +657,8 @@ class Autopilot:
                 info, arrange.art_languages(meta.art_languages, info.original_language))
             plan = library.build_plan(folder, item.kind, info, meta, overrides=overrides,
                                       extra=extra)
+            if item.kind == library.TV:
+                packs.place(plan, info, dates)
             if any(r.status == library.S_COLLECTION for r in plan.rows):
                 self._fail(item, "в раздаче несколько фильмов — разложите вручную")
                 return

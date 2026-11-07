@@ -314,7 +314,10 @@ def _vcb(env, monkeypatch):
         n: 50 if n == 1 else 25 for n in range(1, 67)})
     info = _info()
     for n in range(1, 67):
-        info.episodes[(1, n)] = metadata.EpisodeInfo(1, n, title=f"Э{n}", title_en=f"Ep {n}")
+        aired = (f"2016-05-{n:02d}" if n <= 25 else f"2020-07-{n - 25:02d}" if n <= 50
+                 else f"2024-10-{n - 50:02d}")
+        info.episodes[(1, n)] = metadata.EpisodeInfo(1, n, title=f"Э{n}", title_en=f"Ep {n}",
+                                                     aired=aired)
     for n, name in enumerate(["Recap", "Break Time from Zero - Party - 1",
                               "Memory Snow: Manner Movie"], start=1):
         info.episodes[(0, n)] = metadata.EpisodeInfo(0, n, title=name, title_en=name)
@@ -372,6 +375,13 @@ def test_vcb_pack_whole_director_cut_merged_and_seasons_shifted(env, monkeypatch
     text = (tv / "Show (2026)/Season 01/Show - S01E02-E03 - Ep 2.nfo").read_text(encoding="utf-8")
     assert text.count("<episodedetails>") == 2
     assert "<episode>2</episode>" in text and "<episode>3</episode>" in text
+    # Kodi 22 — свой .nfo у каждой серии файла.
+    for n in (2, 3):
+        own = tv / f"Show (2026)/Season 01/Show - S01E02-E03 - Ep 2-S01E0{n}.nfo"
+        assert f"<episode>{n}</episode>" in own.read_text(encoding="utf-8")
+    # OVA вышли между первым и вторым сезоном — в Kodi встанут перед S02E01.
+    ova = (tv / "Show (2026)/Specials/Show - S00E04 - Memory Snow.nfo").read_text(encoding="utf-8")
+    assert "<displayseason>2</displayseason>" in ova and "<displayepisode>1</displayepisode>" in ova
 
 
 def test_vcb_pack_first_season_only(env, monkeypatch):
@@ -389,6 +399,9 @@ def test_vcb_pack_first_season_only(env, monkeypatch):
     renamed = [new for _, new in fake.renamed]
     assert sum("/Season 01/" in n for n in renamed) == 13
     assert not any("/Season 02/" in n or "/Season 03/" in n for n in renamed)
+    # Второго сезона в медиатеке не будет — OVA после первого.
+    ova = (tv / "Show (2026)/Specials/Show - S00E04 - Memory Snow.nfo").read_text(encoding="utf-8")
+    assert "<displayafterseason>1</displayafterseason>" in ova
 
 
 def test_vcb_pack_minis_when_asked(env, monkeypatch):
