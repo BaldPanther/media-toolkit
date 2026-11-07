@@ -883,6 +883,10 @@ def build_movie_plan(path, info, settings, overrides=None, extra=None) -> Plan:
     # один и тот же `…/movies/Deadpool & Wolverine (2024)`.
     target_name = title_with_year(info.folder_title, info.year)
     movie_root = path.parent / target_name
+    if path.suffix and norm(path.parent.name) == norm(target_name):
+        # Одиночный файл уже в папке фильма (раздача из одного файла, разложенная
+        # раньше): папка — она же, а не вложенная «Фильм (2026)/Фильм (2026)».
+        movie_root = path.parent
 
     plan = Plan(kind=MOVIE, root=movie_root)
 

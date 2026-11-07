@@ -292,6 +292,16 @@ def test_movie_plan_from_loose_file(tmp_path):
     assert dst_of(plan, ".mkv") == target / "Deadpool & Wolverine (2024).mkv"
 
 
+def test_movie_plan_single_file_already_in_its_folder(tmp_path):
+    # Раздача из одного файла, разложенная раньше: «Фильм (2024)/Фильм (2024).mkv» —
+    # на месте, а не во вложенной «Фильм (2024)/Фильм (2024)».
+    target = tmp_path / "movies" / "Deadpool & Wolverine (2024)"
+    video = touch(target / "Deadpool & Wolverine (2024).mkv")
+    plan = library.build_movie_plan(video, movie_info(), make_settings())
+    assert plan.root == target
+    assert [r.action for r in plan.rows if r.what == "video"] == [library.A_KEEP]
+
+
 def test_movie_plan_extra_video_goes_to_extras(tmp_path):
     movies = tmp_path / "movies"
     src = movies / "Deadpool.2024"
