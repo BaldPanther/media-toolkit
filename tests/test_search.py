@@ -184,6 +184,25 @@ def test_jacred_original_in_other_language_goes_last():
         {"search": "Le Bureau des légendes", "altname": "Le Bureau des legendes", "exact": "true"}]
 
 
+def test_find_checks_rutracker_while_jacred_answers(monkeypatch):
+    # После каждого запроса — только новые раздачи; rutracker о них спрошен ещё до конца
+    # поиска (check_alive потом берёт ответ из кэша).
+    answers = iter([[_item("rutracker", "Re:Zero [ТВ-1]", h="1" * 40, year=2016, types=("anime",))],
+                    [_item("rutracker", "Re:Zero [ТВ-1]", h="1" * 40, year=2016, types=("anime",)),
+                     _item("rutor", "Re:Zero [ТВ-2]", h="2" * 40, year=2020, types=("anime",))]])
+    monkeypatch.setattr(search.net, "get_json", lambda url, timeout=None, **kw: next(answers, []))
+    got = []
+    search._jacred({"url": "https://jac.red"}, _rezero(), on_found=lambda rels: got.append(
+        [r.hash[0] for r in rels]))
+    # Японский оригинал с «Re» — не латинское название: раздачи без ромадзи — не чужие.
+    assert got == [["1"], ["2"]]
+    answers = iter([[_item("rutracker", "Re:Zero [ТВ-1]", h="1" * 40, year=2016, types=("anime",))]])
+    warmed = []
+    monkeypatch.setattr(search.swarm, "rutracker", lambda hs: warmed.append(list(hs)) or {})
+    search.find(_rezero(), sources=[{"type": "jacred", "url": "https://jac.red"}])
+    assert warmed[0] == ["1" * 40] and len(warmed) == 2          # заранее и в check_alive
+
+
 def test_jacred_survives_failed_query(monkeypatch):
     def fake_get_json(url, timeout=None, **kw):
         if "altname" in url and "Starting" in url:

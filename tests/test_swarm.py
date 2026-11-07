@@ -94,8 +94,10 @@ def test_announce_started_then_stopped(monkeypatch):
         return b"d8:intervali60e5:peers12:" + bytes(12) + b"e" if "started" in url else b"d8:intervali60ee"
 
     monkeypatch.setattr(swarm.net, "get_bytes", get)
+    left = []
+    monkeypatch.setattr(swarm._leaving, "submit", lambda fn, *a: left.append(a) or fn(*a))
     assert swarm._ask_rutracker(H1, True) == swarm.Tracked(True, 2)
-    assert sent == ["started", "stopped"]                # сразу «ушёл»
+    assert sent == ["started", "stopped"] and left == [(H1,)]   # сразу «ушёл», не дожидаясь
     sent.clear()
     assert swarm._ask_rutracker(H1, False) == swarm.Tracked(True)
     assert sent == ["stopped"]                           # только «знает ли» — не подключаясь

@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import html
 import re
+import threading
 import unicodedata
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -522,10 +523,11 @@ def _jacred_queries(title: Title) -> list[dict]:
     return queries[:JACRED_QUERIES]
 
 
-def _jacred(source: dict, title: Title, log=None) -> list[Release]:
+def _jacred(source: dict, title: Title, log=None, on_found=None) -> list[Release]:
     """Раздачи из jac.red. Запрос, на который он не ответил (504 бывает и на отдельные
     названия), — в журнал, остальные всё равно в деле; не ответил ни на один — ошибка
-    источника."""
+    источника. `on_found` получает новые раздачи после каждого запроса — их можно
+    проверять, пока идут следующие."""
     base = str(source["url"]).rstrip("/")
     found: dict[tuple, Release] = {}
     failed = []
@@ -540,10 +542,16 @@ def _jacred(source: dict, title: Title, log=None) -> list[Release]:
         except net.NetError as e:
             failed.append((q, e))
             continue
+        new = []
         for item in data if isinstance(data, list) else []:
             rel = _from_jacred(item)
             if rel is not None and not _other_title(item, title):
-                found.setdefault((rel.trackers[0][0], rel.trackers[0][1], rel.hash), rel)
+                key = (rel.trackers[0][0], rel.trackers[0][1], rel.hash)
+                if key not in found:
+                    found[key] = rel
+                    new.append(rel)
+        if on_found and new:
+            on_found(new)
     if failed and len(failed) == len(queries):
         raise failed[0][1]
     for q, e in failed:
@@ -565,8 +573,10 @@ def _other_title(item: dict, title: Title) -> bool:
     отсеют), «Бумажный дом» — и турецкий сериал. Раздача зарубежного тайтла называет и
     оригинал — в названии или в `originalname` jac.red; не называет ни одного его
     латинского названия — чужая. Тайтлы с оригиналом не латиницей (русские, аниме) так
-    не проверяются: их раздачи латинского названия могут и не писать."""
-    if not _LATIN.search(title.original) or _CYRILLIC.search(title.original):
+    не проверяются: их раздачи латинского названия могут и не писать. В том числе
+    японский оригинал с латинскими буквами: «Re:ゼロから始める異世界生活»."""
+    if (not _LATIN.search(title.original) or _CYRILLIC.search(title.original)
+            or _foreign_script(title.original)):
         return False
     names = {_plain(n) for n in [title.original] + title.names
              if _LATIN.search(n) and not _CYRILLIC.search(n)}
@@ -818,6 +828,33 @@ def _merge_twins(cards: list[Release]) -> list[Release]:
 _CLOSED = {"rutracker", "kinozal", "nnmclub"}
 
 
+def _check_order(cards: list[Release], seasons=()) -> list[Release]:
+    """Кого спрашивать первыми: раздачи выбранных сезонов, потом — по сидам."""
+    wanted = set(seasons)
+    return sorted(cards, key=lambda c: (bool(wanted and c.seasons and not wanted & set(c.seasons)),
+                                        -c.seeds))
+
+
+def _closed(order: list[Release]) -> list[str]:
+    """Хеши раздач rutracker (и закрытых сайтов, что делят с ним торренты)."""
+    return [c.hash for c in order if {tr[0] for tr in c.trackers} & _CLOSED or "t-ru.org" in c.magnet]
+
+
+def _warm(rels: list[Release], seasons=()) -> None:
+    """Заранее, пока jac.red отвечает на остальные запросы: rutracker и nnm-club — самые
+    долгие проверки (2–3,5 с), `check_alive` потом возьмёт их ответы из кэша `swarm`.
+    Открытые трекеры — нет: opentor после пары пакетов замолкает, его спрашивают один
+    раз, в `check_alive`, раздачами rutor вперёд."""
+    order = _check_order(rels, seasons)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            asking_nnm = pool.submit(swarm.nnm, [r.hash for r in order])
+            swarm.rutracker(_closed(order))
+            asking_nnm.result()
+    except Exception:  # noqa: BLE001 — проверка заранее не обязательна: check_alive спросит сам
+        pass
+
+
 def check_alive(cards: list[Release], seasons=()) -> None:
     """Живы ли ссылки — у самих трекеров (`swarm`), а не по памяти источника.
 
@@ -836,13 +873,10 @@ def check_alive(cards: list[Release], seasons=()) -> None:
 
     `seasons` — выбранные сезоны: их раздачи спрашиваются первыми (участников rutracker
     программа узнаёт не у всех, см. `swarm.RUTRACKER_COUNT`)."""
-    wanted = set(seasons)
-    order = sorted(cards, key=lambda c: (bool(wanted and c.seasons and not wanted & set(c.seasons)),
-                                         -c.seeds))
+    order = _check_order(cards, seasons)
     everything = [c.hash for c in order]
     rutor = [c.hash for c in order if any(tr[0] == "rutor" for tr in c.trackers)]
-    closed = [c.hash for c in order
-              if {tr[0] for tr in c.trackers} & _CLOSED or "t-ru.org" in c.magnet]
+    closed = _closed(order)
     # Все вопросы разом. Раздачи rutor — первыми: opentor спрашивается об одной пачке.
     with ThreadPoolExecutor(max_workers=3) as pool:
         scraping = pool.submit(swarm.scrape, rutor + everything)
@@ -901,9 +935,40 @@ def find(title: Title, sources=None, log=None, seasons=()) -> list[Release]:
     if sources is None:
         sources = load_sources() + ([KNABEN] if load_prefs().english else [])
     readers = {"jacred": _jacred, "torznab": _torznab, "knaben": _knaben}
+    # jac.red отвечает по запросу за раз — пока идут следующие, уже найденное проверяется
+    # у rutracker и nnm-club (`_warm`) одним потоком. Найденное, пока он занят, копится и
+    # идёт одной порцией: rutracker отвечает около секунды и на одну раздачу, и на сорок.
+    # jac.red закончил — новых порций нет: остаток спросит check_alive, разом со всеми.
+    warming = ThreadPoolExecutor(max_workers=1)
+    asked: set[str] = set()
+    pending: list[Release] = []
+    state = {"busy": False, "done": False}
+    lock = threading.Lock()
+
+    def drain() -> None:
+        while True:
+            with lock:
+                if state["done"] or not pending:
+                    state["busy"] = False
+                    return
+                batch = pending[:]
+                pending.clear()
+            _warm(batch, seasons)
+
+    def warm(found: list[Release]) -> None:
+        with lock:
+            fresh = [r for r in found if r.hash not in asked and fits(r, title)]
+            asked.update(r.hash for r in fresh)
+            pending.extend(fresh)
+            if state["busy"] or state["done"] or not fresh:
+                return
+            state["busy"] = True
+        warming.submit(drain)
 
     def read(source: dict) -> list[Release]:
         try:
+            if source["type"] == "jacred":
+                return _jacred(source, title, log, on_found=warm)
             return readers[source["type"]](source, title, log)
         except (net.NetError, OSError) as e:
             log(f"⚠ Поиск: {source.get('url')}: {e}")
@@ -911,6 +976,10 @@ def find(title: Title, sources=None, log=None, seasons=()) -> list[Release]:
 
     with ThreadPoolExecutor(max_workers=max(1, len(sources))) as pool:
         parts = list(pool.map(read, [s for s in sources if s.get("type") in readers]))
+    with lock:
+        state["done"] = True
+    warming.shutdown(wait=True)     # начатую порцию — дождаться: иначе check_alive спросил бы
+                                    # о тех же хешах ещё раз
     items = [r for part in parts for r in part]
     for r in items:
         r.seeds_at = r.seeds_at or r.updated

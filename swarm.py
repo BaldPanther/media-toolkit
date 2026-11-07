@@ -195,6 +195,16 @@ def _announce(h: str, event: str, numwant: int) -> bytes:
     return net.get_bytes(url, timeout=TIMEOUT)
 
 
+_leaving = ThreadPoolExecutor(max_workers=6, thread_name_prefix="rutracker-stopped")
+
+
+def _leave(h: str) -> None:
+    try:
+        _announce(h, "stopped", 0)
+    except (net.NetError, OSError):
+        pass
+
+
 def _ask_rutracker(h: str, count: bool) -> Tracked | None:
     try:
         if not count:
@@ -203,10 +213,9 @@ def _ask_rutracker(h: str, count: bool) -> Tracked | None:
         body = _announce(h, "started", 50)
         known = _registered_reply(body)
         if known:
-            try:
-                _announce(h, "stopped", 0)  # сразу «ушёл»: из списка участников — вон
-            except (net.NetError, OSError):
-                pass
+            # Сразу «ушёл»: из списка участников — вон. Ответ не нужен — не ждём его,
+            # иначе каждая раздача стоила бы два ожидания подряд.
+            _leaving.submit(_leave, h)
         return None if known is None else Tracked(known, _peer_count(body) if known else None)
     except (net.NetError, OSError, ValueError):
         return None
