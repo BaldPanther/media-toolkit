@@ -15,7 +15,7 @@ def lib(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
     monkeypatch.setattr(paths, "_LEGACY_DIR", tmp_path / "legacy")
     kodi.save_settings(kodi.Settings(url="http://tv:8080", remove_folders=True))
-    drive = tmp_path / "nas"
+    drive = tmp_path / "disk"
     tv, movies = drive / "media" / "tv", drive / "media" / "movies"
     tv.mkdir(parents=True)
     movies.mkdir(parents=True)
@@ -130,3 +130,52 @@ def test_remove_folder_without_drive_trash(tmp_path, monkeypatch):
     monkeypatch.setattr(kodisync.sys, "platform", "linux")
     folder = put(tmp_path / "Film (1999)" / "movie.nfo").parent
     assert kodisync.remove_folder(folder) == "насовсем" and not folder.exists()
+
+
+class FakeKodi:
+    sent: list = []
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def busy(self):
+        return False
+
+    def sources(self):
+        return ["smb://nas/media/tv/", "smb://nas/media/movies/"]
+
+    def scan(self, directory=""):
+        FakeKodi.sent.append(("scan", directory))
+
+    def clean(self, directory=""):
+        FakeKodi.sent.append(("clean", directory))
+
+
+def test_flush_one_by_one_and_never_whole_library_clean(lib, monkeypatch):
+    drive, tv, movies = lib
+    FakeKodi.sent = []
+    monkeypatch.setattr(kodi, "Client", FakeKodi)
+    sync = kodisync.KodiSync()
+    away = drive.parent / "downloads" / "Show.S01"          # раздача до раскладки
+    sync.request(away)
+    sync.request(away, kodisync.CLEAN)
+    sync.request(tv / "Show (2016)", kodisync.SCAN)
+    roots = [str(tv), str(movies)]
+    sync.flush(roots)                                      # вне медиатеки — очистка отброшена
+    assert FakeKodi.sent == []
+    sync.flush(roots)                                      # скан вне медиатеки — вся медиатека
+    sync.flush(roots)
+    assert FakeKodi.sent == [("scan", ""), ("scan", "smb://nas/media/tv/Show (2016)/")]
+    assert sync.queue == []
+
+
+def test_library_tab_apply_asks_kodi(lib, monkeypatch):
+    from types import SimpleNamespace
+    from web import tab_library
+    _, tv, _ = lib
+    sync = kodisync.KodiSync()
+    monkeypatch.setattr(sync, "flush", lambda roots, now=None: None)
+    st = SimpleNamespace(tabs={"torrents": SimpleNamespace(autopilot=SimpleNamespace(kodi=sync))})
+    old, new = Path("/downloads/Show.S01"), tv / "Show (2016)"
+    tab_library._kodi_after(st, old, new)
+    assert sync.queue == [["clean", str(old)], ["clean", str(new)], ["scan", str(new)]]

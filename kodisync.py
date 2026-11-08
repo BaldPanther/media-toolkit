@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -137,6 +138,8 @@ def _drive_trash(folder: Path) -> Path | None:
 class KodiSync:
     def __init__(self, log=None):
         self.log = log or (lambda text: None)
+        # Очередь трогают поток автоматики и вкладка «Медиатека».
+        self._lock = threading.RLock()
         self.queue: list[list[str]] = []        # [[SCAN|CLEAN, папка тайтла], …]
         self.last_check = 0.0
         self._offline = False                   # Kodi не отвечал — сказали и ждём
@@ -151,9 +154,10 @@ class KodiSync:
     def request(self, folder, op: str = SCAN) -> None:
         """Поставить папку тайтла в очередь на скан или очистку в Kodi."""
         item = [op, str(folder)]
-        if item not in self.queue:
-            self.queue.append(item)
-            self._save()
+        with self._lock:
+            if item not in self.queue:
+                self.queue.append(item)
+                self._save()
 
     def _save(self) -> None:
         try:
@@ -168,7 +172,10 @@ class KodiSync:
 
     def flush(self, roots, now: float | None = None) -> None:
         """Отправить в Kodi одно дело из очереди, если он включён и свободен."""
-        now = time.time() if now is None else now
+        with self._lock:
+            self._flush(roots, time.time() if now is None else now)
+
+    def _flush(self, roots, now: float) -> None:
         s = kodi.load_settings()
         if not s.configured():
             if self.queue:
@@ -190,6 +197,12 @@ class KodiSync:
             pmap = kodi.detect_map(client.sources(), roots)
             op, folder = item = self._next()
             target = (pmap.to_kodi(folder) if pmap else None) or ""
+            if op == CLEAN and not target:
+                # Папка вне медиатеки Kodi (раздача до раскладки) — чистить нечего, а пустая
+                # папка значила бы очистку всей медиатеки.
+                self.queue.remove(item)
+                self._save()
+                return
             if op == CLEAN:
                 client.clean(target)
             else:
@@ -219,7 +232,11 @@ class KodiSync:
         now = time.time() if now is None else now
         if now - self.last_check < CHECK:
             return
-        self.last_check = now
+        with self._lock:
+            self.last_check = now
+            self._check(tv_roots, movies_roots, extras_name, owned)
+
+    def _check(self, tv_roots, movies_roots, extras_name: str, owned) -> None:
         s = kodi.load_settings()
         if not s.configured():
             return

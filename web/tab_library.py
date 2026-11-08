@@ -13,6 +13,7 @@ import arrange
 import artwork
 import core
 import edl
+import kodisync
 import library
 import metaconf
 import metadata
@@ -760,6 +761,7 @@ def apply():
                                  ("Оставить как есть", metaconf.POLICY_MISSING, "secondary"),
                                  ("Перезаписать", metaconf.POLICY_OVERWRITE, "primary")])
     plan, recursive = t.plan, st.recursive
+    before = Path(st.path) if st.path else None
 
     def work(job):
         stop = job.cancelled
@@ -799,6 +801,7 @@ def apply():
         summary = "Готово: " + ", ".join(parts)
         st.log.add(summary)
         job.summary = t.status = summary
+        _kodi_after(st, before, plan.root)
         # Путь в общем поле теперь другой — иначе вкладки «Дорожки» и «EDL»
         # остались бы со старым именем папки. Меняем его сами, без сброса
         # тайтла: итог прогона должен остаться на экране.
@@ -824,6 +827,20 @@ def apply():
 
     job = st.jobs.start("Применение плана", work, on_done=done)
     return jsonify({"job": job.to_dict()})
+
+
+def _kodi_after(st, before: Path | None, root: Path) -> None:
+    """Kodi после раскладки: записи о старых именах и прежней папке — очистить, новое —
+    просканировать. Очередью автоматики (`kodisync`): уйдёт, когда Kodi свободен."""
+    torrents = st.tabs.get("torrents")
+    sync = getattr(getattr(torrents, "autopilot", None), "kodi", None)
+    if sync is None:
+        return
+    for folder in dict.fromkeys(f for f in (before, root) if f is not None):
+        sync.request(folder, kodisync.CLEAN)
+    sync.request(root, kodisync.SCAN)
+    meta = metaconf.load_settings()
+    sync.flush(meta.tv_roots + meta.movies_roots)
 
 
 # ------------------------------------------------ что в библиотеке не готово --
