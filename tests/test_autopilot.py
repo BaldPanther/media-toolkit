@@ -504,11 +504,41 @@ def test_not_found_is_error_and_retry_requeues(env, monkeypatch):
     assert ap.items["h1"].status == autopilot.DONE
 
 
-def test_finished_download_is_reported_once_and_kodi_scans(env, monkeypatch):
+class FakeKodi:
+    """Kodi для тестов: что отправлено, занят ли, включён ли."""
+    sent: list = []
+    off = False
+    scanning = False
+
+    def __init__(self, url, username="", password="", timeout=None):
+        pass
+
+    def busy(self):
+        if FakeKodi.off:
+            raise kodi.KodiOffline("Kodi недоступен")
+        return FakeKodi.scanning
+
+    def sources(self):
+        return ["smb://nas/tv/"]
+
+    def scan(self, directory=""):
+        FakeKodi.sent.append(("scan", directory))
+
+    def clean(self, directory=""):
+        FakeKodi.sent.append(("clean", directory))
+
+
+@pytest.fixture
+def fake_kodi(env, monkeypatch):
+    kodi.save_settings(kodi.Settings(url="http://tv:8080"))
+    FakeKodi.sent, FakeKodi.off, FakeKodi.scanning = [], False, False
+    monkeypatch.setattr(kodi, "Client", FakeKodi)
+    return FakeKodi
+
+
+def test_finished_download_is_reported_once_and_kodi_scans(env, fake_kodi):
     tv, fake, _ = env
     _add(tv, fake)
-    scanned = []
-    monkeypatch.setattr(kodi, "scan", lambda path, roots, settings=None: scanned.append(path) or "x")
     logged = []
     ap = autopilot.Autopilot(log=logged.append)
     ap.tick()
@@ -516,30 +546,34 @@ def test_finished_download_is_reported_once_and_kodi_scans(env, monkeypatch):
     ap.tick()
     ap.tick()
     assert sum("скачано" in t for t in logged) == 1
-    assert len(scanned) == 2            # после раскладки и после докачки
+    assert fake_kodi.sent == [("scan", "smb://nas/tv/Show (2026)/")] * 2   # раскладка, докачка
 
 
-def test_kodi_offline_is_said_once(env, monkeypatch):
+def test_kodi_busy_or_offline_scan_waits_in_queue(env, fake_kodi):
+    # Kodi сканирует сам — скан из программы оборвал бы его: ждём, пока освободится.
     tv, fake, _ = env
     _add(tv, fake)
-    state = {"off": True}
-
-    def scan(path, roots, settings=None):
-        if state["off"]:
-            raise kodi.KodiOffline("Kodi недоступен")
-        return "smb://nas/tv/"
-
-    monkeypatch.setattr(kodi, "scan", scan)
     logged = []
     ap = autopilot.Autopilot(log=logged.append)
-    ap.tick()                           # после раскладки
+    fake_kodi.scanning = True
+    ap.tick()
+    assert fake_kodi.sent == [] and len(ap.kodi.queue) == 1
+    fake_kodi.scanning = False
+    ap.kodi.flush([str(tv)])
+    assert fake_kodi.sent == [("scan", "smb://nas/tv/Show (2026)/")] and ap.kodi.queue == []
+    # Выключен — сказать раз; включился — дать ему обновиться самому, потом отправить.
+    fake_kodi.sent.clear()
+    fake_kodi.off = True
     fake.progress = 1.0
-    ap.tick()                           # после докачки
+    ap.tick()
+    ap.kodi.flush([str(tv)], now=1000)
     assert sum("Kodi не отвечает" in t for t in logged) == 1
     assert not any(t.startswith("⚠") for t in logged)
-    state["off"] = False
-    ap.retry("h1")
-    ap.tick()
+    fake_kodi.off = False
+    ap.kodi.flush([str(tv)], now=2000)
+    assert fake_kodi.sent == []                        # только включился
+    ap.kodi.flush([str(tv)], now=2000 + autopilot.kodisync.GRACE + 1)
+    assert fake_kodi.sent == [("scan", "smb://nas/tv/Show (2026)/")]
     assert any("Kodi: сканирование" in t for t in logged)
 
 

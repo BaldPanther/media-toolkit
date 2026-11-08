@@ -44,7 +44,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import arrange
-import kodi
+import kodisync
 import library
 import metaconf
 import metadata
@@ -244,7 +244,8 @@ class Autopilot:
         self._wake = threading.Event()
         self._answers: list[tuple[str, int]] = []     # (hash, номер кандидата | -1)
         self._thread: threading.Thread | None = None
-        self._kodi_off = False         # о выключенном Kodi уже сказали
+        # Сканы и очистки Kodi — очередью, когда он свободен; сверка медиатеки.
+        self.kodi = kodisync.KodiSync(self.log)
         self.load()
 
     # ------------------------------------------------------------ состояние --
@@ -295,6 +296,10 @@ class Autopilot:
             except Exception as e:  # noqa: BLE001 — фоновый поток не должен умирать
                 self.last_error = str(e)
                 self.log(f"⚠ Автоматика: {e}")
+            try:
+                self.library_tick()
+            except Exception as e:  # noqa: BLE001
+                self.log(f"⚠ Медиатека: {e}")
             self._wake.wait(FAST if self.waiting() else INTERVAL)
             self._wake.clear()
 
@@ -881,20 +886,46 @@ class Autopilot:
     # ------------------------------------------------------------ наружу --
 
     def _kodi(self, root: str, roots) -> None:
+        """Скан папки тайтла в Kodi — в очередь и сразу, если Kodi свободен (`kodisync`)."""
         if not root:
             return
-        try:
-            target = kodi.scan(root, roots)
-        except kodi.KodiOffline:
-            # Приставка выключена — дело обычное: сказать раз и молчать, пока не ответит.
-            if not self._kodi_off:
-                self.log("Kodi не отвечает (приставка выключена?) — сканирование пропускаю, "
-                         "пока не появится")
-            self._kodi_off = True
-            return
-        except kodi.KodiError as e:
-            self.log(f"⚠ {e}")
-            return
-        self._kodi_off = False
-        if target:
-            self.log(f"Kodi: сканирование — {target}")
+        self.kodi.request(root)
+        self.kodi.flush(roots)
+
+    def library_tick(self, now: float | None = None) -> None:
+        """Очередь Kodi и сверка медиатеки — каждый круг, и при выключенной автоматике."""
+        meta = metaconf.load_settings()
+        roots = meta.tv_roots + meta.movies_roots
+        self.kodi.check(meta.tv_roots, meta.movies_roots, meta.extras_folder,
+                        self._torrent_owned(roots), now)
+        self.kodi.flush(roots, now)
+
+    @staticmethod
+    def _torrent_owned(roots):
+        """→ owned(папка) для `kodisync`: лежит ли там раздача qBittorrent — её папку не
+        убирать, даже если видео там ещё нет. qBittorrent спрашивается при первом вопросе;
+        не ответил — «да» (не трогать)."""
+        cache: list = []
+
+        def places():
+            qs = qbit.load_settings()
+            if not qs.configured():
+                return []
+            try:
+                client = qbit.connect(qs)
+                pmap = qbit.resolve_map(client, qs, roots)
+                return [p for i in client.torrents()
+                        for p in [pmap.to_local(str(i.get("content_path") or ""))] if p]
+            except qbit.QbitError:
+                return None
+
+        def owned(folder: Path) -> bool:
+            if not cache:
+                cache.append(places())
+            if cache[0] is None:
+                return True
+            folder = Path(folder)
+            return any(p == folder or folder in p.parents or p in folder.parents
+                       for p in cache[0])
+
+        return owned

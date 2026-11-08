@@ -1,4 +1,5 @@
-"""Kodi: обновить медиатеку сразу после раскладки.
+"""Kodi: обновить медиатеку после раскладки — клиент JSON-RPC и настройки. Когда и что
+отправлять, решает очередь `kodisync.py` (Kodi нельзя дёргать, пока он сканирует).
 
 Kodi принимает команды по сети (JSON-RPC; в Kodi: «Настройки» → «Службы» →
 «Управление» → «Разрешить удалённое управление по HTTP»). `VideoLibrary.Scan` с
@@ -39,6 +40,8 @@ class Settings:
     url: str = ""              # http://192.168.1.20:8080
     username: str = "kodi"
     password: str = ""
+    # Удалили фильм в Kodi (он стирает только видео) — убрать и его папку (`kodisync`).
+    remove_folders: bool = False
 
     def configured(self) -> bool:
         return bool(self.url.strip())
@@ -51,7 +54,8 @@ def load_settings() -> Settings:
             base = Settings()
             return Settings(url=str(d.get("url", "")),
                             username=str(d.get("username", base.username)),
-                            password=str(d.get("password", "")))
+                            password=str(d.get("password", "")),
+                            remove_folders=bool(d.get("remove_folders", base.remove_folders)))
         except Exception:  # noqa: BLE001 — поле неожиданного типа: значения по умолчанию
             pass
     return Settings()
@@ -102,10 +106,24 @@ class Client:
         return [str(s.get("file", "")) for s in result.get("sources", []) if s.get("file")]
 
     def scan(self, directory: str = "") -> None:
+        """Скан папки (или всей медиатеки). ⚠ Kodi уже сканирует — этот вызов его
+        скан обрывает, а свой не начинает: сначала `busy()` (см. `kodisync`)."""
         if directory:
-            self.rpc("VideoLibrary.Scan", directory=directory)
+            self.rpc("VideoLibrary.Scan", directory=directory, showdialogs=False)
         else:
-            self.rpc("VideoLibrary.Scan")
+            self.rpc("VideoLibrary.Scan", showdialogs=False)
+
+    def clean(self, directory: str = "") -> None:
+        """Убрать из медиатеки записи о пропавших файлах — в папке или во всей."""
+        if directory:
+            self.rpc("VideoLibrary.Clean", directory=directory, showdialogs=False)
+        else:
+            self.rpc("VideoLibrary.Clean", showdialogs=False)
+
+    def busy(self) -> bool:
+        """Kodi сканирует или чистит медиатеку (`Library.IsScanningVideo`)."""
+        result = self.rpc("XBMC.GetInfoBooleans", booleans=["Library.IsScanningVideo"]) or {}
+        return bool(result.get("Library.IsScanningVideo"))
 
 
 def _segments(path: str) -> list[str]:
@@ -145,18 +163,6 @@ def detect_map(sources, local_roots) -> PathMap | None:
                 remote = scheme + "/".join(remote_head) + ("/" if remote_head else "")
                 best = PathMap(str(loc.parents[n - 1]), remote)
     return best
-
-
-def scan(path, library_roots, settings: Settings | None = None) -> str:
-    """Просканировать в Kodi папку тайтла. → что именно отправлено (для журнала)."""
-    s = settings or load_settings()
-    if not s.configured():
-        return ""
-    client = Client(s.url, s.username, s.password)
-    pmap = detect_map(client.sources(), library_roots)
-    target = pmap.to_kodi(path) if pmap else None
-    client.scan(target or "")
-    return target or "вся медиатека"
 
 
 def check(settings: Settings, library_roots) -> str:

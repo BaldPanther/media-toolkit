@@ -227,8 +227,10 @@
             <!-- Kodi -->
             <div class="stack" x-show="section === 'kodi'">
               <p class="muted">После раскладки программа просит Kodi просканировать папку сериала или фильма — новинка
-                появляется в медиатеке сразу. В Kodi: «Настройки» → «Службы» → «Управление» → «Разрешить удалённое
-                управление по HTTP»; там же порт, логин и пароль. Без адреса программа Kodi не трогает.</p>
+                появляется в медиатеке сразу. Удалённое с диска убирается и из медиатеки Kodi. Пока Kodi сам
+                сканирует или выключен, просьбы ждут в очереди. В Kodi: «Настройки» → «Службы» → «Управление» →
+                «Разрешить удалённое управление по HTTP»; там же порт, логин и пароль. Без адреса программа Kodi не
+                трогает.</p>
               <div class="field">
                 <label for="kodi-url">Адрес Kodi</label>
                 <input id="kodi-url" class="input mono" type="text" x-model="data.kodi.url"
@@ -253,6 +255,13 @@
                 <span class="small grow" :class="kodiResult && kodiResult.ok ? 'ok-text' : 'danger-text'"
                       x-text="kodiResult ? kodiResult.text : ''"></span>
               </div>
+              <label class="check">
+                <input type="checkbox" x-model="data.kodi.remove_folders">
+                Удалили в Kodi — убирать папку целиком
+              </label>
+              <span class="hint">Kodi, удаляя фильм, стирает только видео, а папка с описанием и картинками остаётся.
+                Программа убирает её в корзину накопителя — минут через десять после удаления. Папки, куда качает
+                qBittorrent, не трогаются.</span>
             </div>
 
             <!-- Поиск -->

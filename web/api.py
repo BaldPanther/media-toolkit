@@ -156,7 +156,8 @@ def _settings_dict() -> dict:
                  "auto": qb.auto, "tv_category": qb.tv_category,
                  "movies_category": qb.movies_category},
         "telegram": {"token": tg.token, "bound": tg.configured() and bool(tg.chat_id)},
-        "kodi": {"url": kd.url, "username": kd.username, "password": kd.password},
+        "kodi": {"url": kd.url, "username": kd.username, "password": kd.password,
+                 "remove_folders": kd.remove_folders},
         "search": {"voices": search.load_prefs().voices,
                    "sources": [s.get("url", "") + (f" ({s['type']})" if s.get("type") != "jacred" else "")
                                for s in search.load_sources()],
@@ -202,7 +203,8 @@ def _qbit_from(data: dict, old: qbit.Settings) -> qbit.Settings:
 
 def _kodi_from(data: dict, old: kodi.Settings) -> kodi.Settings:
     return kodi.Settings(url=_text(data, old, "url"), username=_text(data, old, "username"),
-                         password=_text(data, old, "password"))
+                         password=_text(data, old, "password"),
+                         remove_folders=bool(data.get("remove_folders", old.remove_folders)))
 
 
 def _roots(data: dict) -> list[str]:
