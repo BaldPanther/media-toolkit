@@ -40,8 +40,9 @@ SIDECAR_EXTS = {".nfo", ".edl"} | SUB_EXTS
 SIDECAR_SUFFIXES = ("-thumb.jpg", "-fanart.jpg", "-thumb.png")
 
 SPECIALS_DIR = "Specials"
-# Свой .nfo и превью каждой серии файла из нескольких серий (Kodi 22):
-# «Show - S01E02-E03 - Title-S01E02.nfo», «…-S01E02-thumb.jpg».
+# .nfo и превью одной серии многосерийного файла: «Show - S01E02-E03 - Title-S01E02.nfo»,
+# «…-S01E02-thumb.jpg» (так их пишет экспорт Kodi). Переезжают вместе с видео; у файла
+# «S01E02+E03» лишние — их убирает запись .nfo (`arrange.write_episode_nfo`).
 _EPISODE_SIDECAR = re.compile(r"(?i)^-S\d{2,}E\d{2,}(?:\.nfo|-thumb\.(?:jpe?g|png))$")
 
 # Артефакты медиатеки: не мусор, но и не спутники — переезжают в корень тайтла.
@@ -161,13 +162,14 @@ def title_with_year(title: str, year: int | None) -> str:
 def episode_file_name(show: str, season: int, episodes, title: str, ext: str) -> str:
     """«Archer - S01E01 - Mole Hunt.mkv». Без названия серии — «Archer - S01E01.mkv».
 
-    `episodes` — номер или список номеров. Несколько серий в одном файле
-    записываются диапазоном «S14E09-E11», как это делает tinyMediaManager.
+    `episodes` — номер или список номеров. Несколько серий в одном файле — через «+»:
+    «S01E02+E03», «S14E09+E10+E11». Kodi читает из такого имени одну серию (первую) и
+    показывает файл одной карточкой; диапазон «S01E02-E03» он развернул бы в две
+    карточки на одно видео — и после первой проиграл бы его ещё раз. Какие серии в
+    файле, программа берёт из «+E03» (`parse_episodes`), Kodi — из .nfo.
     """
     nums = [episodes] if isinstance(episodes, int) else sorted(episodes)
-    tag = f"S{season:02d}E{nums[0]:02d}"
-    if len(nums) > 1:
-        tag += f"-E{nums[-1]:02d}"
+    tag = f"S{season:02d}" + "+".join(f"E{n:02d}" for n in nums)
     stem = f"{sanitize_name(show)} - {tag}"
     if title:
         stem += f" - {sanitize_name(title)}"
@@ -217,10 +219,11 @@ def guess_title_year(name: str) -> tuple[str, int | None]:
 # отсюда нужна только позиция, с которой искать продолжение.
 _SE_TAG = re.compile(r"[Ss]\d{1,2}[\s._-]*[Ee]\d{1,3}|(?<!\d)\d{1,2}[xX]\d{1,3}(?!\d)")
 
-# Продолжение номера серии после первого: «-E11», «E10», «.E11» или «-02».
-# Голый «-NN» принимается только вплотную к цифрам, иначе «S01E01 - 2 Girls»
-# было бы прочитано как вторая серия в файле.
-_MORE_EP = re.compile(r"(?:[\s._-]*[Ee][\s._]*(\d{1,3})|-(\d{1,3})(?=$|[\s._-]))")
+# Продолжение номера серии после первого: «-E11», «E10», «.E11», «-02» или «+E03»
+# (склеенные серии, `episode_file_name`). Голый «-NN» принимается только вплотную к
+# цифрам, иначе «S01E01 - 2 Girls» было бы прочитано как вторая серия в файле.
+_MORE_EP = re.compile(r"(?:[\s._-]*[Ee][\s._]*(\d{1,3})|-(\d{1,3})(?=$|[\s._-])"
+                      r"|\+[Ee]?(\d{1,3}))")
 
 # Номер серии без «S01E01» — типовое именование аниме:
 # «Koukaku Kidoutai - 01 [WEB-DL AMZN 1080p AVC EAC3]», «Show E05», «Show #7».
@@ -241,8 +244,8 @@ def parse_episodes(path) -> tuple[int | None, list[int]]:
     """(сезон, список серий) из имени файла. Один файл может нести несколько.
 
     «Archer - S14E09-E11 - Into the Cold.mkv» → (14, [9, 10, 11]): диапазон
-    раскрывается целиком, потому что в Kodi такому файлу нужен .nfo на каждую
-    серию, иначе две из трёх просто пропадут из медиатеки.
+    раскрывается целиком — уже имеющиеся серии считаются по номерам, и десятая с
+    одиннадцатой не должны выглядеть недостающими. «S01E02+E03» — так же (2, 3).
     """
     stem = Path(path).stem
     season, first = edl.parse_season_episode(path)
@@ -260,7 +263,7 @@ def parse_episodes(path) -> tuple[int | None, list[int]]:
         more = _MORE_EP.match(stem, pos)
         if not more:
             break
-        nums.append(int(more.group(1) or more.group(2)))
+        nums.append(int(more.group(1) or more.group(2) or more.group(3)))
         pos = more.end()
     if len(nums) > 1 and nums[-1] > nums[0]:
         return season, list(range(nums[0], nums[-1] + 1))
@@ -269,7 +272,7 @@ def parse_episodes(path) -> tuple[int | None, list[int]]:
 
 # «Show - S02E01 - Название» → «Название». Только строгий формат медиатеки:
 # хвост вроде «.2160p.NF.WEBRip» из имени раздачи названием не считается.
-_EXISTING_TITLE = re.compile(r" - [Ss]\d{1,2}[Ee]\d{1,3}(?:-[Ee]\d{1,3})? - (.+)$")
+_EXISTING_TITLE = re.compile(r" - [Ss]\d{1,2}[Ee]\d{1,3}(?:[-+][Ee]\d{1,3})* - (.+)$")
 
 
 def existing_episode_title(path) -> str:

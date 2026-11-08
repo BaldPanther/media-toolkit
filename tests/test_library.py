@@ -448,6 +448,10 @@ def test_parse_episodes_expands_range():
         (14, [9, 10, 11])
     assert library.parse_episodes("Show.S01E01-02.mkv") == (1, [1, 2])
     assert library.parse_episodes("Show.S01E01E02.mkv") == (1, [1, 2])
+    # Склеенные серии — одна карточка в Kodi, программе — обе.
+    assert library.parse_episodes("Archer - S14E09+E10+E11 - Into the Cold.mkv") == \
+        (14, [9, 10, 11])
+    assert library.parse_episodes("Show - S01E02+E03 - Title.mkv") == (1, [2, 3])
 
 
 def test_parse_episodes_does_not_eat_title_starting_with_digit():
@@ -455,9 +459,10 @@ def test_parse_episodes_does_not_eat_title_starting_with_digit():
     assert library.parse_episodes("Show - S01E01 - 2 Girls.mkv") == (1, [1])
 
 
-def test_multi_episode_file_name_matches_tinymediamanager():
+def test_multi_episode_file_name_is_one_kodi_episode():
+    # Диапазон «S14E09-E11» Kodi развернул бы в три карточки на одно видео.
     assert library.episode_file_name("Archer", 14, [9, 10, 11], "Into the Cold", ".mkv") == \
-        "Archer - S14E09-E11 - Into the Cold.mkv"
+        "Archer - S14E09+E10+E11 - Into the Cold.mkv"
 
 
 def test_multi_episode_plan_keeps_range(tmp_path):
@@ -466,7 +471,7 @@ def test_multi_episode_plan_keeps_range(tmp_path):
     info = show_info("Archer", 2009, [(14, 9, "Into the Cold"), (14, 10, "Into the Cold"),
                                       (14, 11, "Into the Cold")])
     plan = library.build_tv_plan(tmp_path / "tv" / "Archer (2009)", info, make_settings())
-    assert dst_of(plan, "S14E09").name == "Archer - S14E09-E11 - Into the Cold.mkv"
+    assert dst_of(plan, "S14E09").name == "Archer - S14E09+E10+E11 - Into the Cold.mkv"
 
 
 def test_nfd_and_nfc_names_are_the_same_file(tmp_path):
@@ -506,6 +511,8 @@ def test_missing_tmdb_episode_without_title_still_organised(tmp_path):
 def test_existing_episode_title_ignores_release_tail():
     assert library.existing_episode_title("Show - S01E01 - Pilot.mkv") == "Pilot"
     assert library.existing_episode_title("Archer - S14E09-E11 - Into the Cold.mkv") == \
+        "Into the Cold"
+    assert library.existing_episode_title("Archer - S14E09+E10+E11 - Into the Cold.mkv") == \
         "Into the Cold"
     assert library.existing_episode_title("Show.S01E01.2160p.NF.WEBRip.mkv") == ""
 

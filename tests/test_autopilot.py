@@ -40,6 +40,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(metadata, "fetch", lambda kind, tmdb_id, s, **kw: _info(tmdb_id))
     monkeypatch.setattr(artwork, "download", lambda tasks, stop=None, progress=None: [])
     monkeypatch.setattr(numbering, "for_title", lambda tmdb_id, key: numbering.Numbering())
+    monkeypatch.setattr(packs, "tmdb_movies", lambda info, key, language: lambda title, year: None)
     return tv, fake, hits
 
 
@@ -356,8 +357,8 @@ def test_vcb_pack_whole_director_cut_merged_and_seasons_shifted(env, monkeypatch
     assert item.status == autopilot.DONE, item.error
     got = _renamed(fake)
     assert got["[VCB-Studio] Show 01 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E01 - Ep 1.mkv"
-    assert got["[VCB-Studio] Show 02 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E02-E03 - Ep 2.mkv"
-    assert got["[VCB-Studio] Show 13 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E24-E25 - Ep 24.mkv"
+    assert got["[VCB-Studio] Show 02 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E02+E03 - Ep 2.mkv"
+    assert got["[VCB-Studio] Show 13 [BDRip].mkv"] == "Show (2026)/Season 01/Show - S01E24+E25 - Ep 24.mkv"
     assert got["[VCB-Studio] Show 14 [BDRip].mkv"] == "Show (2026)/Season 02/Show - S02E01 - Ep 26.mkv"
     assert got["[VCB-Studio] Show 38 [BDRip].mkv"] == "Show (2026)/Season 02/Show - S02E25 - Ep 50.mkv"
     assert got["[VCB-Studio] Show 39 [BDRip].mkv"] == "Show (2026)/Season 03/Show - S03E01 - Ep 51.mkv"
@@ -371,17 +372,43 @@ def test_vcb_pack_whole_director_cut_merged_and_seasons_shifted(env, monkeypatch
              or "Manner" in n]
     assert len(minis) == 7 and fake.priorities == [("vcb", minis, 0)]
     assert not any("Break Time" in old or "Manner" in old for old, _ in fake.renamed)
-    # Склеенная серия: одно видео — два описания в .nfo, Kodi покажет обе серии.
-    text = (tv / "Show (2026)/Season 01/Show - S01E02-E03 - Ep 2.nfo").read_text(encoding="utf-8")
-    assert text.count("<episodedetails>") == 2
-    assert "<episode>2</episode>" in text and "<episode>3</episode>" in text
-    # Kodi 22 — свой .nfo у каждой серии файла.
-    for n in (2, 3):
-        own = tv / f"Show (2026)/Season 01/Show - S01E02-E03 - Ep 2-S01E0{n}.nfo"
-        assert f"<episode>{n}</episode>" in own.read_text(encoding="utf-8")
-    # OVA вышли между первым и вторым сезоном — в Kodi встанут перед S02E01.
+    # Склеенная серия: одно видео — одна серия в Kodi, с обоими названиями.
+    season1 = tv / "Show (2026)/Season 01"
+    text = (season1 / "Show - S01E02+E03 - Ep 2.nfo").read_text(encoding="utf-8")
+    assert text.count("<episodedetails>") == 1
+    assert "<episode>2</episode>" in text and "<title>Э2 / Э3</title>" in text
+    assert not list(season1.glob("*-S01E0*.nfo"))
+    # OVA — только в Specials: внутрь сезонов не ставятся.
     ova = (tv / "Show (2026)/Specials/Show - S00E04 - Memory Snow.nfo").read_text(encoding="utf-8")
-    assert "<displayseason>2</displayseason>" in ova and "<displayepisode>1</displayepisode>" in ova
+    assert "displayseason" not in ova and "displayafterseason" not in ova
+
+
+def test_vcb_pack_ova_from_tmdb_movie(env, monkeypatch):
+    tv, fake = _vcb(env, monkeypatch)
+    asked = []
+
+    def movie(title, year):
+        asked.append((title, year))
+        if title != "Hyouketsu no Kizuna":
+            return None
+        return metadata.EpisodeInfo(0, 0, title="Замороженные узы", title_en="The Frozen Bond",
+                                    plot="Лес Элиор.", aired="2019-11-08", runtime=76,
+                                    thumb="https://image.tmdb.org/t/p/original/b.jpg")
+
+    monkeypatch.setattr(packs, "tmdb_movies", lambda info, key, language: movie)
+    ap = autopilot.Autopilot()
+    ap.expect("vcb", library.TV, 1, "Re:Zero [S01-03 + OVA + Specials]", seasons=[1, 2, 3])
+    ap.tick()
+    assert ap.items["vcb"].status == autopilot.DONE, ap.items["vcb"].error
+    assert ("Hyouketsu no Kizuna", 2019) in asked and ("Memory Snow", 2018) in asked
+    got = _renamed(fake)
+    assert got["[VCB-Studio] Show Hyouketsu no Kizuna [BDRip].mkv"] == \
+        "Show (2026)/Specials/Show - S00E05 - The Frozen Bond.mkv"
+    text = (tv / "Show (2026)/Specials/Show - S00E05 - The Frozen Bond.nfo").read_text(encoding="utf-8")
+    for part in ("<title>Замороженные узы</title>", "<episode>5</episode>",
+                 "<aired>2019-11-08</aired>", "<runtime>76</runtime>",
+                 "<thumb>https://image.tmdb.org/t/p/original/b.jpg</thumb>"):
+        assert part in text
 
 
 def test_vcb_pack_first_season_only(env, monkeypatch):
@@ -399,9 +426,6 @@ def test_vcb_pack_first_season_only(env, monkeypatch):
     renamed = [new for _, new in fake.renamed]
     assert sum("/Season 01/" in n for n in renamed) == 13
     assert not any("/Season 02/" in n or "/Season 03/" in n for n in renamed)
-    # Второго сезона в медиатеке не будет — OVA после первого.
-    ova = (tv / "Show (2026)/Specials/Show - S00E04 - Memory Snow.nfo").read_text(encoding="utf-8")
-    assert "<displayafterseason>1</displayafterseason>" in ova
 
 
 def test_vcb_pack_minis_when_asked(env, monkeypatch):

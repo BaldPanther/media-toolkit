@@ -284,21 +284,18 @@ def make_tvshow_nfo(info, art: dict | None = None, season_art: dict | None = Non
 # Серия
 # --------------------------------------------------------------------------- #
 
-def make_episodes_nfo(info, episodes, preserve: dict | None = None) -> str:
-    """`.nfo` для файла, в котором лежит несколько серий подряд.
-
-    Kodi ждёт в таком файле несколько корневых `<episodedetails>` друг за другом
-    (строго говоря, невалидный XML, но это его формат, и так же писал
-    tinyMediaManager). Декларация при этом одна, в начале файла.
-    """
-    blocks = [make_episode_nfo(info, e, preserve if i == 0 else None)
-              for i, e in enumerate(episodes)]
-    head, first = blocks[0].split("-->\n", 1)
-    rest = [b.split("-->\n", 1)[1] for b in blocks[1:]]
-    return head + "-->\n" + first + "".join(rest)
+def episode_blocks(path) -> int:
+    """Сколько `<episodedetails>` в .nfo серии. Больше одного — старый .nfo файла из
+    нескольких серий («S01E02-E03»: по блоку на серию, как ждал Kodi 21)."""
+    try:
+        return Path(path).read_text("utf-8", errors="replace").count("<episodedetails")
+    except OSError:
+        return 0
 
 
 def make_episode_nfo(info, episode, preserve: dict | None = None) -> str:
+    """`.nfo` серии. У файла из нескольких серий — тоже один блок: серии склеены
+    заранее (`metadata.join_episodes`), Kodi покажет файл одной карточкой."""
     root = ET.Element("episodedetails")
     _text(root, "title", metadata.real_title(episode.title, episode.title_en)
           or episode.title or episode.title_en)
@@ -306,12 +303,6 @@ def make_episode_nfo(info, episode, preserve: dict | None = None) -> str:
     _text(root, "showtitle", info.title or info.title_en)
     _text(root, "season", episode.season)
     _text(root, "episode", episode.episode)
-    # Спецвыпуск — ещё и внутри сезона, где он вышел (Kodi: и при «flatten» = Never).
-    if episode.display_after:
-        _text(root, "displayafterseason", episode.display_after)
-    elif episode.display_season is not None:
-        _text(root, "displayseason", episode.display_season)
-        _text(root, "displayepisode", episode.display_episode)
     if episode.tmdb_id:
         _text(root, "uniqueid", episode.tmdb_id, type="tmdb", default="true")
     block = ET.SubElement(root, "ratings")
@@ -326,6 +317,8 @@ def make_episode_nfo(info, episode, preserve: dict | None = None) -> str:
     _text(root, "mpaa", info.mpaa)
     _text(root, "premiered", episode.aired)
     _text(root, "aired", episode.aired)
+    if episode.thumb:
+        _text(root, "thumb", episode.thumb)
     _watch(root, preserve)
     for studio in info.studios:
         _text(root, "studio", studio)

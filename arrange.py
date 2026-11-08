@@ -80,31 +80,28 @@ def write_episode_nfo(plan, info, policy: str) -> int:
         if row.what != "video" or row.dst is None or row.action == library.A_SKIP:
             continue
         season, numbers = library.parse_episodes(row.dst)
-        # В одном файле может лежать несколько серий — тогда и блоков в
-        # .nfo должно быть столько же, иначе Kodi потеряет остальные.
         eps = [info.episodes[(season, n)] for n in numbers if (season, n) in info.episodes]
         if not eps:
             continue
         path = row.dst.with_suffix(".nfo")
-        if path.exists() and policy == metaconf.POLICY_MISSING:
+        # .nfo одной серии рядом с файлом («…-S01E02.nfo») Kodi 22 читает вместо общего —
+        # остался от прежнего вида «S01E02-E03» и описал бы только одну серию из двух.
+        for n in numbers:
+            own = row.dst.with_name(f"{row.dst.stem}-S{season:02d}E{n:02d}.nfo")
+            if own.is_file():
+                own.unlink()
+        # Старый .nfo файла из нескольких серий — по блоку на серию: Kodi взял бы первый.
+        if (path.exists() and policy == metaconf.POLICY_MISSING
+                and not (len(eps) > 1 and nfo.episode_blocks(path) > 1)):
             continue
         preserve = nfo.read_watch_state(path)
         if row.action == library.A_RENAME and row.src is not None:
             # Имя в раздаче («…WEB-DL.1080p…») — потом по нему видно источник.
             preserve.setdefault("original_filename", row.src.name)
-        text = (nfo.make_episode_nfo(info, eps[0], preserve=preserve) if len(eps) == 1
-                else nfo.make_episodes_nfo(info, eps, preserve=preserve))
-        nfo.write(path, text)
+        # Несколько серий в файле — одна серия для Kodi (`library.episode_file_name`).
+        ep = eps[0] if len(eps) == 1 else metadata.join_episodes(eps)
+        nfo.write(path, nfo.make_episode_nfo(info, ep, preserve=preserve))
         written += 1
-        if len(eps) > 1:
-            # Kodi 22 читает у файла из нескольких серий свой .nfo на каждую серию —
-            # «<имя файла>-S01E02.nfo» (общий, со всеми сериями, — для Kodi 21 и старше).
-            for ep in eps:
-                own = row.dst.with_name(f"{row.dst.stem}-S{ep.season:02d}E{ep.episode:02d}.nfo")
-                if own.exists() and policy == metaconf.POLICY_MISSING:
-                    continue
-                nfo.write(own, nfo.make_episode_nfo(info, ep, preserve=nfo.read_watch_state(own)))
-                written += 1
     return written
 
 

@@ -124,6 +124,37 @@ def real_title(*titles: str) -> str:
     return next((t for t in titles if t and not _PLACEHOLDER_EPISODE.match(t.strip())), "")
 
 
+def join_episodes(episodes) -> "EpisodeInfo":
+    """Серии одного файла («S01E02+E03») — одной серией, как её покажет Kodi: номер и
+    дата — первой, названия через « / », описания подряд, длительность — сумма,
+    оценка — средняя, люди — всех серий без повторов."""
+    first = episodes[0]
+
+    def names(*fields):
+        return " / ".join(t for t in (real_title(*(getattr(e, f) for f in fields))
+                                      for e in episodes) if t)
+
+    def people(attr):
+        seen, out = set(), []
+        for e in episodes:
+            for p in getattr(e, attr):
+                if p.name not in seen:
+                    seen.add(p.name)
+                    out.append(p)
+        return out
+
+    rated = [e.rating for e in episodes if e.rating]
+    rating = Rating(round(sum(r.value for r in rated) / len(rated), 2),
+                    sum(r.votes or 0 for r in rated)) if rated else Rating()
+    runtimes = [e.runtime for e in episodes]
+    return replace(first, title=names("title", "title_en"), title_en=names("title_en"),
+                   original_title=names("original_title"),
+                   plot="\n\n".join(e.plot for e in episodes if e.plot),
+                   runtime=sum(runtimes) if all(runtimes) else first.runtime, rating=rating,
+                   directors=people("directors"), writers=people("writers"),
+                   guests=people("guests"))
+
+
 @dataclass
 class EpisodeInfo:
     season: int
@@ -136,12 +167,7 @@ class EpisodeInfo:
     runtime: int | None = None
     rating: Rating = field(default_factory=Rating)
     tmdb_id: int | None = None
-    # Спецвыпуск между сериями по дате выхода (`packs.place`): Kodi покажет его и внутри
-    # сезона — перед серией display_episode сезона display_season или после сезона
-    # display_after.
-    display_season: int | None = None
-    display_episode: int | None = None
-    display_after: int | None = None
+    thumb: str = ""           # картинка серии в .nfo; у обычных серий кадр берёт сам Kodi
     # Съёмочная группа и приглашённые актёры конкретной серии — приходят внутри
     # ответа по сезону, отдельных запросов не требуют.
     directors: list[Person] = field(default_factory=list)

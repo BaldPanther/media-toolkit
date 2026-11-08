@@ -14,22 +14,22 @@
   больший числа серий сезона, — сквозной; сдвиг подбирается такой, чтобы все номера
   папки легли в сезон (`layout`).
 - Режиссёрская версия склеивает ТВ-серии: «02» — серии 2 и 3. В медиатеку такой файл
-  ложится как «S01E02-E03» с двумя описаниями в .nfo — так Kodi понимает файл из
-  нескольких серий. Какие серии склеены — по их длительности в TMDb (`merge`).
+  ложится как «S01E02+E03» — в Kodi одна серия с обоими названиями и описаниями
+  (`library.episode_file_name`). Какие серии склеены — по их длительности в TMDb (`merge`).
 - Мини-спецвыпуски (сценки, заставки без титров) — по размеру: меньше четверти
   обычной серии раздачи (`minis`). Качать ли их — галка «и мини-спецвыпуски» в поиске.
 - Спецвыпуски без номера (OVA) и с номерами, которые раздача придумала сама
   («Break Time 03.01»), со спецвыпусками TMDb не совпадают. Совпало название — его
-  номер, иначе — в Specials следующими номерами после последнего спецвыпуска TMDb,
-  с названием из имени файла (`specials`).
-- Спецвыпуск встаёт между сериями по дате выхода (`place`): в его .nfo — перед какой
-  серией он вышел; Kodi показывает его и внутри сезона, а не только в Specials.
+  номер, иначе — в Specials следующими номерами после последнего спецвыпуска TMDb
+  (`specials`). Описание — фильма TMDb, если OVA вышла фильмом («Memory Snow»), иначе
+  только название из имени файла.
 """
 from __future__ import annotations
 
 import re
 import statistics
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import library
@@ -186,7 +186,7 @@ def minis(scan) -> set[Path]:
     return {v for v in scan.videos if not _is_episode(scan, v) and scan.size_of(v) < limit}
 
 
-def specials(scan, info, taken=()) -> tuple[dict[Path, tuple[int, list[int]]], dict[int, str]]:
+def specials(scan, info, taken=(), movie=None) -> dict[Path, tuple[int, list[int]]]:
     """Спецвыпуски раздачи, у которых нет номера спецвыпуска TMDb: без номера (OVA) или
     с номером, угаданным по соседним файлам («Break Time 03.01» → «1») — такие номера
     раздача придумала сама. Явный «S00E05» в имени — как есть.
@@ -194,14 +194,14 @@ def specials(scan, info, taken=()) -> tuple[dict[Path, tuple[int, list[int]]], d
     Название совпало со спецвыпуском TMDb («Memory Snow Manner Movie» — «Memory Snow:
     Manner Movie») — его номер. Иначе — следующий после последнего спецвыпуска TMDb и
     номеров `taken` (уже в медиатеке), по году в пути, затем по имени; в `info.episodes`
-    добавляется серия с названием из имени файла — для имени и .nfo.
-    → ({видео: (0, [номер])}, {номер: «2018-12-31»} — когда вышли добавленные: даты у
-    них нет, только год из пути, — конец года; для `place`)."""
+    добавляется серия — для имени и .nfo: из фильма TMDb (`movie(название, год)` →
+    EpisodeInfo, см. `tmdb_movies`), а нет такого — с названием из имени файла.
+    → {видео: (0, [номер])}."""
     loose = [v for v in scan.videos
              if scan.season_of(v) == 0 and library.parse_episodes(v)[0] is None
              and (not library.parse_episodes(v)[1] or v in scan.guessed)]
     if not loose:
-        return {}, {}
+        return {}
     prefix = _show_prefix(scan)
     known = {n: ep for (s, n), ep in info.episodes.items() if s == 0}
     used = set(known) | set(taken)
@@ -216,50 +216,67 @@ def specials(scan, info, taken=()) -> tuple[dict[Path, tuple[int, list[int]]], d
         else:
             out[v] = (0, [n])
     nxt = max(used | explicit, default=0)
-    dates: dict[int, str] = {}
     for v in sorted(rest, key=lambda v: (_year_of(v, scan.root), str(v))):
         nxt += 1
         title = _title(v, prefix) or v.stem
-        info.episodes[(0, nxt)] = _episode(nxt, title)
-        out[v] = (0, [nxt])
         year = _year_of(v, scan.root)
-        if year != 9999:
-            dates[nxt] = f"{year}-12-31"
-    return out, dates
+        found = movie(title, None if year == 9999 else year) if movie and title else None
+        info.episodes[(0, nxt)] = (replace(found, season=0, episode=nxt) if found
+                                   else _episode(nxt, title))
+        out[v] = (0, [nxt])
+    return out
 
 
-def place(plan, info, dates=None) -> None:
-    """Спецвыпуски плана — между сериями по дате выхода: в `info.episodes` им ставится,
-    перед какой серией этого плана они вышли (`display_season`/`display_episode`), а
-    вышли после всех — после её сезона (`display_after`). В .nfo это теги Kodi
-    `displayseason`/`displayepisode`/`displayafterseason`: спецвыпуск виден и внутри
-    сезона, и «следующая серия» после первого сезона «Re:Zero» — Memory Snow.
-    Дата — из TMDb или из `dates` ({номер: дата} от `specials`); нет даты или в плане
-    нет серий с датами — не трогаем."""
-    dates = dates or {}
-    regular, specials_here = [], []
-    for row in plan.rows:
-        if row.what != "video" or row.dst is None or row.action == library.A_SKIP:
-            continue
-        season, numbers = library.parse_episodes(row.dst)
-        if season == 0:
-            specials_here += numbers
-        elif season:
-            regular += [(ep.aired, season, n) for n in numbers
-                        for ep in [info.episodes.get((season, n))] if ep and ep.aired]
-    if not regular:
-        return
-    regular.sort()
-    for n in specials_here:
-        ep = info.episodes.get((0, n))
-        when = dates.get(n) or (ep.aired if ep else "")
-        if ep is None or not when:
-            continue
-        later = next((r for r in regular if r[0] > when), None)
-        if later is not None:
-            ep.display_season, ep.display_episode = later[1], later[2]
-        else:
-            ep.display_after = regular[-1][1]
+def tmdb_movies(info, api_key: str, language: str):
+    """→ movie(название OVA, год) для `specials`: OVA, вышедшая фильмом, — фильм TMDb
+    этого тайтла («Re:ZERO … Memory Snow», 2018) как EpisodeInfo: название без имени
+    тайтла, описание, дата, длительность, оценка, задник — картинкой серии. Фильм
+    считается этим тайтлом, если его название начинается с названия тайтла (у аниме —
+    японского: «Re:ゼロから始める異世界生活 氷結の絆»). Нет такого — None."""
+    shows = [n.casefold() for n in (info.original_title, info.title_en, info.title) if n]
+
+    def ours(hit: dict) -> bool:
+        return any(str(hit.get(k) or "").casefold().startswith(s)
+                   for k in ("original_title", "title") for s in shows)
+
+    def movie(title: str, year: int | None) -> metadata.EpisodeInfo | None:
+        hit = None
+        for y in ([year, None] if year else [None]):
+            try:
+                hit = next((h for h in tmdb.search("movie", title, api_key, year=y) if ours(h)),
+                           None)
+            except net.NetError:
+                return None
+            if hit:
+                break
+        if hit is None:
+            return None
+        try:
+            local = tmdb.movie(int(hit["id"]), api_key, language=language)
+        except net.NetError:
+            local = {}
+        en = _part(str(hit.get("title") or ""), shows) or title
+        rating = metadata.Rating(float(hit["vote_average"]), int(hit.get("vote_count") or 0)) \
+            if hit.get("vote_count") else metadata.Rating()
+        return metadata.EpisodeInfo(
+            0, 0, title=_part(str(local.get("title") or ""), shows) or en, title_en=en,
+            original_title=str(hit.get("original_title") or ""),
+            plot=str(local.get("overview") or hit.get("overview") or ""),
+            aired=str(hit.get("release_date") or ""), runtime=local.get("runtime") or None,
+            rating=rating, thumb=tmdb.image_url(hit.get("backdrop_path")) or "")
+
+    return movie
+
+
+def _part(title: str, shows) -> str:
+    """Название фильма без названия тайтла: «Re:ZERO -Starting Life in Another World-
+    Memory Snow» → «Memory Snow», «Re: Жизнь в другом мире с нуля: Снежные
+    воспоминания» → «Снежные воспоминания»."""
+    low = title.casefold()
+    for show in shows:
+        if low.startswith(show) and title[len(show):].strip(" -–—:"):
+            return title[len(show):].strip(" -–—:")
+    return title.rsplit(": ", 1)[-1].strip()
 
 
 def _episode(number: int, title: str) -> metadata.EpisodeInfo:
