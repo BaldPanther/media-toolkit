@@ -36,6 +36,7 @@ import library
 import metadata
 import net
 import tmdb
+import tvmaze
 
 # Режиссёрская версия — в имени папки или файла.
 CUT = re.compile(r"(?i)director'?s?[\s._-]*cut|режисс[её]рск")
@@ -44,6 +45,8 @@ MINI_SHARE = 0.25
 # Склеенная серия режиссёрской версии — не дальше этой доли от средней длины.
 MERGE_SLACK = 0.35
 
+# После «Director's Cut» в названии спецвыпуска TVmaze: « - 2 - Название / Название».
+_CUT_NUMBER = re.compile(r"\D*?(\d+)\s*[-–—:.]?\s*(.*)$")
 _BRACKETS = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 _YEAR = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 _WORDS = re.compile(r"[^\W_]+")
@@ -53,13 +56,15 @@ _WORDS = re.compile(r"[^\W_]+")
 # Серии сезонов
 # --------------------------------------------------------------------------- #
 
-def layout(scan, nb, runtimes=None) -> dict[Path, tuple[int, list[int]]]:
+def layout(scan, nb, runtimes=None, maze=None) -> dict[Path, tuple[int, list[int]]]:
     """Серии в папках сезонов сборника, где номер в имени — не номер серии в сезоне.
     → {видео: (сезон, [серии])} в нумерации трекеров (`numbering`). Остальные видео
     (номер и так верный, «S02E01» в имени, спецвыпуски) сюда не попадают.
 
-    `nb` — нумерация тайтла (`numbering.Numbering`), `runtimes(tmdb_season)` →
-    {серия: минут} — для режиссёрской версии; без него она не склеивается."""
+    `nb` — нумерация тайтла (`numbering.Numbering`). Режиссёрская версия склеивается
+    по TVmaze (`maze()` → его спецвыпуски, `cut_parts`), а не знает он её — по
+    длительностям TMDb (`runtimes(tmdb_season)` → {серия: минут}, `merge`); нет ни того,
+    ни другого — не склеивается."""
     folders: dict[Path, list[tuple[Path, int]]] = {}
     for v in scan.videos:
         season = scan.season_dirs.get(v.parent)
@@ -95,10 +100,13 @@ def layout(scan, nb, runtimes=None) -> dict[Path, tuple[int, list[int]]]:
                 continue
         relative = {v: n - offset for v, n in files}
         groups = None
-        if (len(files) < span.count and runtimes is not None and _is_cut(folder, files)
+        if (len(files) < span.count and _is_cut(folder, files)
                 and sorted(relative.values()) == list(range(1, len(files) + 1))):
-            minutes = runtimes(span.tmdb_season) or {}
-            groups = merge([minutes.get(span.first + i) for i in range(span.count)], len(files))
+            groups = _split(cut_parts(maze(), season) if maze else [], span.count, len(files))
+            if groups is None and runtimes is not None:
+                minutes = runtimes(span.tmdb_season) or {}
+                groups = merge([minutes.get(span.first + i) for i in range(span.count)],
+                               len(files))
         if groups:
             for v, k in relative.items():
                 out[v] = (season, groups[k - 1])
@@ -110,6 +118,38 @@ def layout(scan, nb, runtimes=None) -> dict[Path, tuple[int, list[int]]]:
 
 def _is_cut(folder: Path, files) -> bool:
     return bool(CUT.search(folder.name)) or any(CUT.search(v.name) for v, _ in files)
+
+
+def cut_parts(specials, season: int) -> list[int]:
+    """Режиссёрская версия сезона по спецвыпускам TVmaze (`tvmaze.specials`): сколько
+    ТВ-серий в каждой её серии, по порядку. «Director's Cut - 2 - Reunion With The
+    Witch / Starting Life from Zero in Another World» — две. Номера серий режиссёрской
+    версии должны идти подряд с первой — иначе [] (не гадать)."""
+    cuts = []
+    for e in specials or []:
+        name = str(e.get("name") or "")
+        m = CUT.search(name)
+        if not m or e.get("season") != season:
+            continue
+        num = _CUT_NUMBER.match(name[m.end():])
+        if num:
+            cuts.append((int(num.group(1)), num.group(2)))
+    cuts.sort()
+    if [n for n, _ in cuts] != list(range(1, len(cuts) + 1)):
+        return []
+    return [max(1, sum(1 for t in title.split(" / ") if t.strip())) for _, title in cuts]
+
+
+def _split(parts, count: int, files: int) -> list[list[int]] | None:
+    """[1, 2, 2, …] → [[1], [2, 3], [4, 5], …] — если частей столько же, сколько файлов, и
+    вместе они — весь сезон."""
+    if not parts or len(parts) != files or sum(parts) != count:
+        return None
+    groups, start = [], 1
+    for p in parts:
+        groups.append(list(range(start, start + p)))
+        start += p
+    return groups
 
 
 def merge(minutes, parts: int) -> list[list[int]] | None:
@@ -186,7 +226,7 @@ def minis(scan) -> set[Path]:
     return {v for v in scan.videos if not _is_episode(scan, v) and scan.size_of(v) < limit}
 
 
-def specials(scan, info, taken=(), movie=None) -> dict[Path, tuple[int, list[int]]]:
+def specials(scan, info, taken=(), movie=None, maze=None) -> dict[Path, tuple[int, list[int]]]:
     """Спецвыпуски раздачи, у которых нет номера спецвыпуска TMDb: без номера (OVA) или
     с номером, угаданным по соседним файлам («Break Time 03.01» → «1») — такие номера
     раздача придумала сама. Явный «S00E05» в имени — как есть.
@@ -195,8 +235,9 @@ def specials(scan, info, taken=(), movie=None) -> dict[Path, tuple[int, list[int
     Manner Movie») — его номер. Иначе — следующий после последнего спецвыпуска TMDb и
     номеров `taken` (уже в медиатеке), по году в пути, затем по имени; в `info.episodes`
     добавляется серия — для имени и .nfo: из фильма TMDb (`movie(название, год)` →
-    EpisodeInfo, см. `tmdb_movies`), а нет такого — с названием из имени файла.
-    → {видео: (0, [номер])}."""
+    EpisodeInfo, см. `tmdb_movies`), нет такого — дата, длительность и английское
+    название из спецвыпусков TVmaze (`maze()`, см. `tvmaze_specials`), нет и там — с
+    названием из имени файла. → {видео: (0, [номер])}."""
     loose = [v for v in scan.videos
              if scan.season_of(v) == 0 and library.parse_episodes(v)[0] is None
              and (not library.parse_episodes(v)[1] or v in scan.guessed)]
@@ -220,11 +261,54 @@ def specials(scan, info, taken=(), movie=None) -> dict[Path, tuple[int, list[int
         nxt += 1
         title = _title(v, prefix) or v.stem
         year = _year_of(v, scan.root)
-        found = movie(title, None if year == 9999 else year) if movie and title else None
+        year = None if year == 9999 else year
+        found = movie(title, year) if movie and title else None
+        if found is None and maze and title:
+            found = _maze_special(maze(), title, year, _show_names(info))
         info.episodes[(0, nxt)] = (replace(found, season=0, episode=nxt) if found
                                    else _episode(nxt, title))
         out[v] = (0, [nxt])
     return out
+
+
+def tvmaze_specials(tmdb_id: int, api_key: str):
+    """→ maze() для `layout` и `specials`: спецвыпуски сериала в TVmaze
+    (`tvmaze.specials`) по его номерам TheTVDB/IMDb из TMDb. Спрашиваются один раз за
+    раскладку и только когда понадобились; не ответил — []."""
+    cache: list[list[dict]] = []
+
+    def maze() -> list[dict]:
+        if not cache:
+            try:
+                ids = tmdb.external_ids("tv", tmdb_id, api_key)
+                cache.append(tvmaze.specials(ids.get("tvdb_id"), ids.get("imdb_id")))
+            except net.NetError:
+                cache.append([])
+        return cache[0]
+
+    return maze
+
+
+def _maze_special(specials, title: str, year: int | None, shows) -> metadata.EpisodeInfo | None:
+    """Спецвыпуск TVmaze, чьё название (без названия тайтла) совпало с названием OVA из
+    имени файла словами — одно содержит все слова другого; год из пути, если есть, — тот
+    же (±1). Сначала фильмы и OVA («significant_special»), режиссёрская версия — никогда."""
+    want = _tokens(title)
+    order = sorted(specials or [], key=lambda e: e.get("type") != "significant_special")
+    for e in order:
+        name = str(e.get("name") or "")
+        if not want or CUT.search(name):
+            continue
+        own = _part(name, shows)
+        have = _tokens(own)
+        if not have or not (want <= have or have <= want):
+            continue
+        aired = str(e.get("airdate") or "")
+        if year and aired[:4].isdigit() and abs(int(aired[:4]) - year) > 1:
+            continue
+        return metadata.EpisodeInfo(0, 0, title=own, title_en=own, aired=aired,
+                                    runtime=e.get("runtime") or None)
+    return None
 
 
 def tmdb_movies(info, api_key: str, language: str):
@@ -233,7 +317,7 @@ def tmdb_movies(info, api_key: str, language: str):
     тайтла, описание, дата, длительность, оценка, задник — картинкой серии. Фильм
     считается этим тайтлом, если его название начинается с названия тайтла (у аниме —
     японского: «Re:ゼロから始める異世界生活 氷結の絆»). Нет такого — None."""
-    shows = [n.casefold() for n in (info.original_title, info.title_en, info.title) if n]
+    shows = _show_names(info)
 
     def ours(hit: dict) -> bool:
         return any(str(hit.get(k) or "").casefold().startswith(s)
@@ -268,15 +352,29 @@ def tmdb_movies(info, api_key: str, language: str):
     return movie
 
 
+def _show_names(info) -> list[str]:
+    return [n.casefold() for n in (info.original_title, info.title_en, info.title) if n]
+
+
 def _part(title: str, shows) -> str:
-    """Название фильма без названия тайтла: «Re:ZERO -Starting Life in Another World-
-    Memory Snow» → «Memory Snow», «Re: Жизнь в другом мире с нуля: Снежные
-    воспоминания» → «Снежные воспоминания»."""
+    """Название фильма или спецвыпуска без названия тайтла: «Re:ZERO -Starting Life in
+    Another World- Memory Snow» → «Memory Snow», «Re: Жизнь в другом мире с нуля:
+    Снежные воспоминания» → «Снежные воспоминания», у TVmaze «Re:Zero - Starting Life in
+    Another World - The Frozen Bond» → «The Frozen Bond»."""
     low = title.casefold()
     for show in shows:
         if low.startswith(show) and title[len(show):].strip(" -–—:"):
             return title[len(show):].strip(" -–—:")
-    return title.rsplit(": ", 1)[-1].strip()
+    if ": " in title:
+        return title.rsplit(": ", 1)[-1].strip()
+    # Название тайтла записано иначе («Re:Zero - Starting …» вместо «Re:ZERO -Starting …»):
+    # снять в начале слова, которые все есть в названии тайтла.
+    known = set().union(*(_tokens(s) for s in shows)) if shows else set()
+    for m in _WORDS.finditer(title):
+        if m.group(0).casefold() not in known:
+            rest = title[m.start():].strip(" -–—:")
+            return rest if m.start() else title
+    return title
 
 
 def _episode(number: int, title: str) -> metadata.EpisodeInfo:

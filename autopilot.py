@@ -635,7 +635,8 @@ class Autopilot:
                 nb = numbering.for_title(tmdb_id, meta.tmdb_key)
                 # Сборник со своей нумерацией (VCB-Studio): сезоны из пометок папок,
                 # режиссёрская версия — склеенными сериями (`packs`).
-                pack = packs.layout(full, nb, packs.tmdb_runtimes(tmdb_id, meta.tmdb_key))
+                maze = packs.tvmaze_specials(tmdb_id, meta.tmdb_key)
+                pack = packs.layout(full, nb, packs.tmdb_runtimes(tmdb_id, meta.tmdb_key), maze)
                 tracker = self._tracker_episodes(item, full, nb, pack) if nb.grouped else pack
                 minis = set() if search.load_prefs().minis else packs.minis(full)
                 skipped = self._skip_unwanted(item, torrent, client, tracker, minis)
@@ -650,7 +651,7 @@ class Autopilot:
                     overrides = {v: se for v, se in tracker.items() if v in videos}
                 overrides.update(packs.specials(
                     scan, info, self._specials_taken(tmdb_id, meta, files),
-                    packs.tmdb_movies(info, meta.tmdb_key, meta.meta_language)))
+                    packs.tmdb_movies(info, meta.tmdb_key, meta.meta_language), maze))
             else:
                 info = metadata.fetch(item.kind, tmdb_id, meta)
             arrange.resolve_name_language(info, meta)

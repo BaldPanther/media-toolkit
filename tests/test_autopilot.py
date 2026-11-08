@@ -41,6 +41,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(artwork, "download", lambda tasks, stop=None, progress=None: [])
     monkeypatch.setattr(numbering, "for_title", lambda tmdb_id, key: numbering.Numbering())
     monkeypatch.setattr(packs, "tmdb_movies", lambda info, key, language: lambda title, year: None)
+    monkeypatch.setattr(packs, "tvmaze_specials", lambda tmdb_id, key: lambda: [])
     return tv, fake, hits
 
 

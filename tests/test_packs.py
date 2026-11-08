@@ -71,6 +71,72 @@ def test_layout_leaves_partial_season_alone(tmp_path):
     assert packs.layout(_scan(tmp_path, files), nb) == {}
 
 
+# Спецвыпуски «Re:Zero» в TVmaze (`tvmaze.specials`), сокращённо: режиссёрская версия
+# первого сезона из 13 серий (1, 2–3, …, 24–25) и два фильма.
+_MAZE = [
+    {"season": 1, "type": "significant_special", "airdate": "2018-10-06", "runtime": 60,
+     "name": "Re:Zero - Starting Life in Another World - Memory Snow"},
+    {"season": 1, "type": "significant_special", "airdate": "2019-11-08", "runtime": 76,
+     "name": "Re:Zero - Starting Life in Another World - The Frozen Bond"},
+    {"season": 1, "type": "insignificant_special", "airdate": "2020-01-01", "runtime": 50,
+     "name": "Director's Cut - 1 - The End of the Beginning and the Beginning of the End"},
+] + [{"season": 1, "type": "insignificant_special", "airdate": "2020-01-08", "runtime": 50,
+      "name": f"Director's Cut - {n} - Part {2 * n - 2} / Part {2 * n - 1}"} for n in range(2, 14)]
+
+
+def test_cut_parts_from_tvmaze():
+    assert packs.cut_parts(_MAZE, 1) == [1] + [2] * 12
+    assert packs.cut_parts(_MAZE, 2) == []                     # у второго сезона её нет
+    assert packs.cut_parts(_MAZE[:3] + _MAZE[4:], 1) == []     # пропущена серия — не гадать
+
+
+def test_layout_director_cut_from_tvmaze(tmp_path):
+    # Длительностей TMDb нет (или ровно не делятся) — состав серий из TVmaze.
+    files = {f"[S01 Director's Cut]/Show {n:02d}.mkv": 100 for n in range(1, 14)}
+    nb = numbering.Numbering([numbering.Span(1, 1, 1, 25)])
+    got = {p.name: v for p, v in packs.layout(_scan(tmp_path, files), nb, maze=lambda: _MAZE).items()}
+    assert got["Show 01.mkv"] == (1, [1]) and got["Show 02.mkv"] == (1, [2, 3])
+    assert got["Show 13.mkv"] == (1, [24, 25])
+    # TVmaze не знает — по длительностям; нет и их — не склеивается.
+    assert packs.layout(_scan(tmp_path, files), nb, maze=lambda: []) == {}
+
+
+def test_specials_fall_back_to_tvmaze(tmp_path):
+    scan = _scan(tmp_path, {
+        "[S01]/Show 01.mkv": 1000, "[S01]/Show 02.mkv": 1000,
+        "Show Memory Snow [OVA-1 2018]/Show Memory Snow.mkv": 900,
+        "Show Other OVA [OVA-2 2019]/Show Other OVA.mkv": 900})
+    info = metadata.MediaInfo(kind=library.TV, tmdb_id=1, title="Show",
+                              title_en="Re:ZERO -Starting Life in Another World-")
+    packs.specials(scan, info, movie=lambda title, year: None, maze=lambda: _MAZE)
+    ep = info.episodes[(0, 1)]
+    assert (ep.title, ep.aired, ep.runtime) == ("Memory Snow", "2018-10-06", 60)
+    assert info.episodes[(0, 2)].aired == ""                   # в TVmaze нет — как было
+
+
+def test_part_strips_show_name_written_differently():
+    shows = ["re:zero -starting life in another world-"]
+    assert packs._part("Re:Zero - Starting Life in Another World - The Frozen Bond", shows) == \
+        "The Frozen Bond"
+    assert packs._part("Memory Snow", shows) == "Memory Snow"
+
+
+def test_tvmaze_specials_only_not_regular(monkeypatch):
+    import net
+    import tvmaze
+    asked = []
+
+    def get_json(url, timeout=None):
+        asked.append(url)
+        if "lookup" in url:
+            return {"id": 14459}
+        return [{"type": "regular", "name": "Ep"}, _MAZE[0]]
+
+    monkeypatch.setattr(net, "get_json", get_json)
+    assert tvmaze.specials(tvdb_id=305089) == [_MAZE[0]]
+    assert asked[-1].endswith("/shows/14459/episodes?specials=1")
+
+
 def test_minis_by_size(tmp_path):
     scan = _scan(tmp_path, {
         "[S01]/Show 01.mkv": 1000, "[S01]/Show 02.mkv": 1100,
