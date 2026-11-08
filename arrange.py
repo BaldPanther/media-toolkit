@@ -92,7 +92,7 @@ def write_episode_nfo(plan, info, policy: str) -> int:
                 own.unlink()
         # Старый .nfo файла из нескольких серий — по блоку на серию: Kodi взял бы первый.
         if (path.exists() and policy == metaconf.POLICY_MISSING
-                and not (len(eps) > 1 and nfo.episode_blocks(path) > 1)):
+                and nfo.episode_blocks(path) <= 1):
             continue
         preserve = nfo.read_watch_state(path)
         if row.action == library.A_RENAME and row.src is not None:

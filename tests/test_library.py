@@ -474,6 +474,16 @@ def test_multi_episode_plan_keeps_range(tmp_path):
     assert dst_of(plan, "S14E09").name == "Archer - S14E09+E10+E11 - Into the Cold.mkv"
 
 
+def test_multi_episode_range_narrowed_to_tmdb(tmp_path):
+    # По TheTVDB «Into the Cold» — три части (так назвал tinyMediaManager), у TMDb —
+    # одна серия S14E09: лишние номера из имени уходят.
+    src = tmp_path / "tv" / "Archer (2009)" / "Season 14"
+    touch(src / "Archer - S14E09-E11 - Into the Cold.mkv")
+    info = show_info("Archer", 2009, [(14, 8, "Saturn"), (14, 9, "Into the Cold")])
+    plan = library.build_tv_plan(tmp_path / "tv" / "Archer (2009)", info, make_settings())
+    assert dst_of(plan, "S14E09").name == "Archer - S14E09 - Into the Cold.mkv"
+
+
 def test_nfd_and_nfc_names_are_the_same_file(tmp_path):
     # macOS хранит «ö» разложенной, TMDb отдаёт слитную. Без нормализации
     # каждый прогон предлагал бы переименовать файл сам в себя.

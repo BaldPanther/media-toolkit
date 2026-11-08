@@ -852,6 +852,11 @@ def build_tv_plan(folder, info, settings, overrides=None, extra=None) -> Plan:
                                  note="двойной клик — задать вручную"))
             plan.unmatched.append(video)
             continue
+        known = [n for n in numbers if (season, n) in info.episodes]
+        if known and len(known) < len(numbers):
+            # Серий из имени у TMDb меньше: «Into the Cold» у Archer — по TheTVDB три
+            # части («S14E09-E11» от tinyMediaManager), у TMDb одна серия S14E09.
+            numbers = known
         # Название берём у первой серии файла: так подписан и многосерийный
         # файл в уже разложенной медиатеке («S14E09-E11 - Into the Cold»).
         ep = info.episodes.get((season, numbers[0]))
