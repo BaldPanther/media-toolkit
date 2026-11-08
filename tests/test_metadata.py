@@ -9,6 +9,7 @@ import metaconf
 import metadata
 import omdb
 import tmdb
+import tvmaze
 from metaconf import POLICY_MISSING, POLICY_OVERWRITE
 
 
@@ -282,6 +283,41 @@ def test_tv_runtime_falls_back_to_episode_median(monkeypatch):
     monkeypatch.setattr(tmdb, "_get_json", fake)
     info = metadata.fetch("tv", 1, settings(meta_language="en-US"), seasons=[1])
     assert info.runtime == 57
+
+
+def test_season_poster_from_tvmaze_only_when_missing(monkeypatch):
+    # «Монолог фармацевта»: в TMDb один сезон без постеров, на Fanart.tv — 1-й и 2-й,
+    # свежего 3-го нет ни там, ни там. TVmaze — только для него.
+    def fake(url, **kw):
+        if "/season/" in url and "/images" in url:
+            return {"posters": []}
+        if "/season/" in url:
+            return {"episodes": [{"episode_number": 1, "name": "A", "runtime": 24}]}
+        if "/tv/" in url:
+            return {"id": 1, "name": "Show", "external_ids": {"tvdb_id": 431162},
+                    "first_air_date": "2023-10-21"}
+        return {}
+
+    monkeypatch.setattr(tmdb, "_get_json", fake)
+    monkeypatch.setattr(fanart, "_get_json", lambda url, **kw: {"seasonposter": [
+        {"url": "https://assets.fanart.tv/fanart/s1.jpg", "season": "1", "lang": "en"},
+        {"url": "https://assets.fanart.tv/fanart/s2.jpg", "season": "2", "lang": "fr"}]})
+    asked = []
+
+    def show(tvdb_id=None, imdb_id=None):
+        asked.append(tvdb_id)
+        return {"_embedded": {"seasons": [
+            {"number": n, "image": {"medium": f"m{n}.jpg", "original": f"o{n}.jpg"}}
+            for n in (1, 2, 3)]}}
+
+    monkeypatch.setattr(tvmaze, "show", show)
+    info = metadata.fetch("tv", 1, settings(meta_language="en-US", fanart_key="f"), seasons=[1],
+                          art_seasons=[1, 2, 3])
+    by_season = {n: [c.source for c in metadata.art_of(info.art, metadata.ART_SEASON, n)]
+                 for n in (1, 2, 3)}
+    assert by_season == {1: ["Fanart.tv"], 2: ["Fanart.tv"], 3: ["TVmaze"]}
+    assert asked == ["431162"]
+    assert metadata.best_art(info.art, metadata.ART_SEASON, ["ru", "en", ""], season=3).url == "o3.jpg"
 
 
 # ------------------------------- альтернативная нумерация (episode groups) --

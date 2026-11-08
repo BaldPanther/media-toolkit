@@ -24,6 +24,7 @@ import metaconf
 import net
 import omdb
 import tmdb
+import tvmaze
 
 MOVIE = "movie"
 TV = "tv"
@@ -36,12 +37,13 @@ ART_SEASON = "seasonposter"
 
 _TMDB = "TMDb"
 _FANART = "Fanart.tv"
+_TVMAZE = "TVmaze"
 
 # При равном языке предпочитаем TMDb: именно оттуда пришли картинки, которые уже
 # лежат в медиатеке, и менять их вид без спроса незачем. Fanart.tv нужен как
 # источник дополнительных вариантов в сетке выбора и как запасной, когда у TMDb
-# логотипа нет вовсе.
-_SOURCE_ORDER = (_TMDB, _FANART)
+# логотипа нет вовсе. TVmaze — только постеры сезонов, которых нет у обоих.
+_SOURCE_ORDER = (_TMDB, _FANART, _TVMAZE)
 
 # Виды арта, где язык — это суть картинки: на постере и логотипе написано
 # название. У фона надписей обычно нет, и выбирать его по языку бессмысленно —
@@ -431,6 +433,27 @@ def _collect_fanart_art(kind: str, ids: dict, seasons, settings) -> list[ArtCand
     return art
 
 
+def _collect_tvmaze_art(ids: dict, seasons) -> list[ArtCandidate]:
+    """Постеры сезонов из TVmaze — запасной источник: свежий сезон аниме («Монолог
+    фармацевта», 3-й) у TMDb одним сезоном без постеров, а на Fanart.tv его постер
+    появляется не сразу. Сезоны TVmaze — как у TheTVDB и трекеров. Нет ответа — []."""
+    if not seasons or not (ids.get("tvdb") or ids.get("imdb")):
+        return []
+    try:
+        data = tvmaze.show(ids.get("tvdb"), ids.get("imdb"))
+    except net.NetError:
+        return []
+    art = []
+    for s in (data.get("_embedded") or {}).get("seasons") or []:
+        image = s.get("image") or {}
+        n = s.get("number")
+        if n in seasons and image.get("original"):
+            art.append(ArtCandidate(kind=ART_SEASON, url=image["original"],
+                                    thumb_url=image.get("medium") or image["original"],
+                                    source=_TVMAZE, season=n))
+    return art
+
+
 # --------------------------------------------------------------------------- #
 # Разбор карточки тайтла
 # --------------------------------------------------------------------------- #
@@ -794,4 +817,7 @@ def fetch(kind: str, tmdb_id: int, settings, seasons=(), season_sizes=None,
     info.art = _collect_tmdb_art(kind, tmdb_id, key, art_numbers, settings,
                                  info.original_language)
     info.art += _collect_fanart_art(kind, ids, art_numbers, settings)
+    if kind == TV:
+        missing = [n for n in art_numbers if n > 0 and not art_of(info.art, ART_SEASON, n)]
+        info.art += _collect_tvmaze_art(ids, missing)
     return info

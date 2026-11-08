@@ -23,3 +23,4 @@ def _no_swarm(monkeypatch):
 def _no_tvmaze(monkeypatch):
     """TVmaze в тестах — без сети: сериал будто не нашёлся."""
     monkeypatch.setattr(tvmaze, "show", lambda tvdb_id=None, imdb_id=None: {})
+    monkeypatch.setattr(tvmaze, "specials", lambda tvdb_id=None, imdb_id=None: [])

@@ -6,6 +6,10 @@ import library
 import metadata
 import numbering
 import packs
+import tvmaze
+
+# Настоящий запрос: conftest в каждом тесте подменяет его заглушкой без сети.
+_SPECIALS = tvmaze.specials
 
 
 @pytest.mark.parametrize("name, season", [
@@ -123,7 +127,6 @@ def test_part_strips_show_name_written_differently():
 
 def test_tvmaze_specials_only_not_regular(monkeypatch):
     import net
-    import tvmaze
     asked = []
 
     def get_json(url, timeout=None):
@@ -133,7 +136,7 @@ def test_tvmaze_specials_only_not_regular(monkeypatch):
         return [{"type": "regular", "name": "Ep"}, _MAZE[0]]
 
     monkeypatch.setattr(net, "get_json", get_json)
-    assert tvmaze.specials(tvdb_id=305089) == [_MAZE[0]]
+    assert _SPECIALS(tvdb_id=305089) == [_MAZE[0]]
     assert asked[-1].endswith("/shows/14459/episodes?specials=1")
 
 
