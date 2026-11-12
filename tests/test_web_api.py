@@ -78,6 +78,17 @@ def test_settings_subs_section(client, cfg):
     assert not (cfg / "meta_settings.json").exists()
 
 
+def test_settings_jacred_key(client, cfg):
+    import search
+    got = client.get("/api/settings").get_json()
+    assert got["search"]["jacred_key"] == "" and got["key_urls"]["jacred"] == search.JACRED_KEY_URL
+    client.post("/api/settings", json={"search": {"voices": [], "jacred_key": " abc "}})
+    assert search.jacred_key() == "abc"
+    got = client.get("/api/settings").get_json()
+    assert got["search"]["jacred_key"] == "abc"
+    assert all("abc" not in s for s in got["search"]["sources"])    # ключ в списке не светится
+
+
 def test_settings_qbit_section_and_check(client, cfg, monkeypatch):
     import qbit
     qbit.save_settings(qbit.Settings(url="http://old", password="secret"))

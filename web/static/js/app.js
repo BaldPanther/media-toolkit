@@ -228,7 +228,7 @@ document.addEventListener("alpine:init", () => {
         const res = await api.post("/api/settings",
           { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit,
             telegram: { token: this.data.telegram.token }, kodi: this.data.kodi,
-            search: { voices: this.data.search.voices } });
+            search: { voices: this.data.search.voices, jacred_key: this.data.search.jacred_key } });
         if (res) {
           this.visible = false;
           this.$store.ui.toast("Настройки сохранены");

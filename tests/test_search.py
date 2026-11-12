@@ -230,6 +230,72 @@ def test_jacred_survives_failed_query(monkeypatch):
     assert len(logged) == 1 and "504" in logged[0] and "Re:ZERO – Жизнь" in logged[0]
 
 
+def _api(title, h, tracker="rutracker", seeders=12):
+    """Раздача, как её отдаёт api.jacred.su."""
+    return {"tracker": tracker, "source_url": f"https://{tracker}/t/9", "title": title,
+            "size": 4 * 10 ** 9, "created_at": "2026-11-01T10:00:00Z", "seeders": seeders,
+            "peers": 3, "magnet": f"magnet:?xt=urn:btih:{h}", "year": 2024, "video_type": "sdr",
+            "quality": 1080, "voices": ["LostFilm"], "seasons": [1]}
+
+
+def test_jacred_su_searches_its_api_with_key_in_header(monkeypatch):
+    calls = []
+
+    def fake(url, headers=None, timeout=None):
+        calls.append((url, headers))
+        return ({"results": [_api("Тёмная материя / Dark Matter (2024) WEB-DL 1080p", "1" * 40)]},
+                {"X-RateLimit-Remaining": str(100 - len(calls))})
+
+    monkeypatch.setattr(search.net, "get_json_headers", fake)
+    logged = []
+    rels = search._jacred({"type": "jacred", "url": "https://jacred.su", "apikey": "SECRET"},
+                          _title(), log=logged.append)
+    url, headers = calls[0]
+    assert url.startswith("https://api.jacred.su/api/search?") and "query=" in url
+    assert headers == {"Authorization": "Bearer SECRET"} and "SECRET" not in url
+    # По одному названию за запрос, не больше трёх: поисков 100 в день.
+    assert len(calls) == 2                       # у «Тёмной материи» два названия
+    assert len(rels) == 1                        # одна раздача из обоих ответов
+    r = rels[0]
+    assert (r.seeds, r.peers, r.quality, r.voices) == (12, 3, 1080, ["LostFilm"])
+    assert r.trackers == [["rutracker", "https://rutracker/t/9"]]
+    assert logged == ["jacred.su: поисков на сегодня осталось 98"]
+
+
+def test_jacred_su_refusal_stops_at_first_query(monkeypatch):
+    calls = []
+
+    def fake(url, headers=None, timeout=None):
+        calls.append(url)
+        raise search.net.NetError("HTTP 429", code=429)
+
+    monkeypatch.setattr(search.net, "get_json_headers", fake)
+    with pytest.raises(search.net.NetError, match="кончились"):
+        search._jacred({"type": "jacred", "url": "https://api.jacred.su", "apikey": "K"}, _rezero())
+    assert len(calls) == 1
+    with pytest.raises(search.net.NetError, match="нужен личный ключ"):
+        search._jacred({"type": "jacred", "url": "https://jacred.su"}, _rezero())
+    assert len(calls) == 1
+
+
+def test_jacred_su_queries_one_name_each_romaji_second():
+    assert search._jacred_api_queries(_rezero()) == [
+        "Re:ZERO – Жизнь с нуля в альтернативном мире", "Re:Zero kara Hajimeru Isekai Seikatsu",
+        "Re:ZERO -Starting Life in Another World-"]
+
+
+def test_jacred_key_goes_to_sources_file_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    monkeypatch.setattr(paths, "_LEGACY_DIR", tmp_path / "legacy")
+    assert search.jacred_key() == ""
+    search.set_jacred_key(" KEY ")
+    assert search.load_sources() == [{"type": "jacred", "url": "https://jacred.su", "apikey": "KEY"},
+                                     {"type": "jacred", "url": "https://jac.red"}]
+    assert search.jacred_key() == "KEY"
+    search.set_jacred_key("")
+    assert search.load_sources() == [{"type": "jacred", "url": "https://jac.red"}]
+
+
 def test_year_from_title_when_source_has_none():
     item = {"magnet": "magnet:?xt=urn:btih:" + "a" * 40, "relased": 0, "types": ["docuserial"],
             "title": "Настояший детектив (Паутина любви) / 2025 / РУ / WEBRip"}

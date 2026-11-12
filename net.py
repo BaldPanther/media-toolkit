@@ -22,7 +22,11 @@ TIMEOUT = 25
 
 
 class NetError(Exception):
-    """Сетевая ошибка, отказ сервера или битый ответ."""
+    """Сетевая ошибка, отказ сервера или битый ответ. `code` — HTTP-код отказа, если был."""
+
+    def __init__(self, *args, code: int | None = None):
+        super().__init__(*args)
+        self.code = code
 
 
 def _request(url: str, headers: dict | None) -> urllib.request.Request:
@@ -53,12 +57,26 @@ def get_json(url: str, headers: dict | None = None, retries: int = 2,
                 except ValueError:
                     time.sleep(1)
                 continue
-            raise NetError(f"HTTP {e.code} для {url}") from e
+            raise NetError(f"HTTP {e.code} для {url}", code=e.code) from e
         except urllib.error.URLError as e:
             raise NetError(f"Сеть: {getattr(e, 'reason', e)}") from e
         except (json.JSONDecodeError, ValueError) as e:
             raise NetError(f"Битый ответ {url}: {e}") from e
     return None
+
+
+def get_json_headers(url: str, headers: dict | None = None, timeout: int = TIMEOUT):
+    """GET → (JSON, заголовки ответа). Без повторов: отказ по ключу или лимиту (401,
+    429 до полуночи) повтором не лечится — это ответ, его код — в `NetError.code`."""
+    try:
+        with urllib.request.urlopen(_request(url, headers), timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace")), r.headers
+    except urllib.error.HTTPError as e:
+        raise NetError(f"HTTP {e.code} для {url}", code=e.code) from e
+    except urllib.error.URLError as e:
+        raise NetError(f"Сеть: {getattr(e, 'reason', e)}") from e
+    except (json.JSONDecodeError, ValueError) as e:
+        raise NetError(f"Битый ответ {url}: {e}") from e
 
 
 def post_json(url: str, body, timeout: int = TIMEOUT):

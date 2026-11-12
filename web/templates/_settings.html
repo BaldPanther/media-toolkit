@@ -277,6 +277,16 @@
                   в списке важнее. Сравнивается с озвучками в описании раздачи.</span>
               </div>
               <div class="field">
+                <label for="s-jacred">Ключ jacred.su</label>
+                <div class="input-group">
+                  <input id="s-jacred" class="input mono" type="text" x-model="data.search.jacred_key"
+                         spellcheck="false" autocomplete="off">
+                  <a class="btn" :href="data.key_urls.jacred" target="_blank" rel="noopener">Получить ключ<svg class="icon"><use href="#i-external"/></svg></a>
+                </div>
+                <span class="hint">Бесплатно: вход на jacred.su через их Telegram-бота, без пароля и телефона, ключ —
+                  в профиле. 100 поисков в день, один поиск тайтла тратит до трёх. С ключом jacred.su ищет первым.</span>
+              </div>
+              <div class="field">
                 <span class="label">Где искать</span>
                 <div class="list">
                   <template x-for="src in data.search.sources" :key="src">

@@ -51,6 +51,11 @@ import tmdb
 _SOURCES_NAME = "search_sources.json"
 _PREFS_NAME = "search_settings.json"
 DEFAULT_SOURCES = [{"type": "jacred", "url": "https://jac.red"}]
+# jacred.su с 09.10.2026 ищет только с личным ключом (бесплатно, 100 поисков в день) —
+# своим API, не как jac.red. Источник с этим адресом говорит на нём.
+JACRED_API = "https://api.jacred.su"
+JACRED_API_HOSTS = ("jacred.su", "api.jacred.su")
+JACRED_KEY_URL = "https://jacred.su/account"
 KNABEN = {"type": "knaben", "url": "https://api.knaben.org/v1"}
 QUALITIES = (2160, 1080, 720, 480)
 QUALITY_NAMES = {2160: "4K", 1080: "1080p", 720: "720p", 480: "SD"}
@@ -138,6 +143,35 @@ def load_prefs() -> Prefs:
 
 def save_prefs(p: Prefs) -> None:
     paths.write_json(paths.settings_path(_PREFS_NAME), asdict(p))
+
+
+def jacred_api(source: dict) -> bool:
+    """Источник — jacred.su: свой API с ключом, а не /api/v1.0/torrents jac.red."""
+    return (urllib.parse.urlsplit(str(source.get("url") or "")).hostname or "") in JACRED_API_HOSTS
+
+
+def jacred_key() -> str:
+    """Личный ключ jacred.su из источников (пусто — не задан)."""
+    for s in load_sources():
+        if s.get("type") == "jacred" and jacred_api(s):
+            return str(s.get("apikey") or "")
+    return ""
+
+
+def set_jacred_key(key: str) -> None:
+    """Ключ jacred.su — в файл источников: есть ключ — источник jacred.su первым (с ключом
+    он ищет, без — нет), нет ключа — источник убирается. Остальные строки не трогаются."""
+    path = paths.settings_path(_SOURCES_NAME)
+    d = paths.read_json(path)
+    sources = d if isinstance(d, list) and all(isinstance(s, dict) for s in d) else list(DEFAULT_SOURCES)
+    ours = [s for s in sources if s.get("type") == "jacred" and jacred_api(s)]
+    rest = [s for s in sources if s not in ours]
+    key = key.strip()
+    if key:
+        src = dict(ours[0]) if ours else {"type": "jacred", "url": "https://jacred.su"}
+        src["apikey"] = key
+        rest.insert(0, src)
+    paths.write_json(path, rest)
 
 
 def load_sources() -> list[dict]:
@@ -461,6 +495,16 @@ def _from_jacred(item: dict) -> Release | None:
 
 
 JACRED_QUERIES = 4
+JACRED_API_QUERIES = 3
+
+
+def _api_item(r: dict) -> dict:
+    """Раздача из ответа api.jacred.su — в полях jac.red, чтобы читать её `_from_jacred`."""
+    return {"tracker": r.get("tracker"), "url": r.get("source_url"), "title": r.get("title"),
+            "size": r.get("size"), "createTime": r.get("created_at"), "sid": r.get("seeders"),
+            "pir": r.get("peers"), "magnet": r.get("magnet"), "relased": r.get("year"),
+            "videotype": r.get("video_type"), "quality": r.get("quality"),
+            "voices": r.get("voices"), "seasons": r.get("seasons"), "types": r.get("types")}
 
 
 def _jacred_key(name: str) -> str:
@@ -491,8 +535,8 @@ def _pairs(names: list[str]) -> list[dict]:
             for a, b in zip(names[::2], names[1::2] + [""])]
 
 
-def _jacred_queries(title: Title) -> list[dict]:
-    """Запросы к jac.red по названиям тайтла.
+def _jacred_names(title: Title) -> tuple[list[str], list[str]]:
+    """Названия тайтла для запросов к jac.red и jacred.su и среди них ромадзи (`wide`).
 
     По очереди: русское, английское, ромадзи, российские альтернативные — качаем с русской
     озвучкой, а русские трекеры пишут тайтл так; оригинал на другом языке (французский,
@@ -501,14 +545,6 @@ def _jacred_queries(title: Title) -> list[dict]:
     Bureau des légendes»). Японскими и корейскими буквами jac.red не ищет вовсе
     (`_foreign_script`). Название с диакритикой — ещё и без неё: «Pokémon» jac.red
     превращает в «pokmon» и находит не то, что по «Pokemon».
-
-    Точный поиск берёт два названия за запрос (`_pairs`), так что разных названий
-    помещается вдвое больше: у аниме их бывает десяток, и каждое находит свою часть раздач
-    (kinozal пишет «Re: Жизнь в альтернативном мире с нуля», rutracker — «Re:Zero — жизнь
-    с нуля в другом мире»). Ромадзи — неточным поиском: трекеры дописывают к нему сезон
-    («… Isekai Seikatsu 4», «… 2nd Season»), и точный такие раздачи не находит. jac.red
-    отвечает по одному запросу за раз (два разом — 429), каждый — около секунды: запросов
-    не больше `JACRED_QUERIES`.
     """
     native = title.original.strip() if title.original_language not in ("", "ru", "en") else ""
     if _jacred_key(native) == _jacred_key(title.title):
@@ -524,17 +560,92 @@ def _jacred_queries(title: Title) -> list[dict]:
                 names.append(v)
     romaji = {_jacred_key(n) for n in title.romaji}
     wide = [n for n in names if _jacred_key(n) in romaji][:1]
+    return names, wide
+
+
+def _jacred_queries(title: Title) -> list[dict]:
+    """Запросы к jac.red по названиям тайтла (`_jacred_names`).
+
+    Точный поиск берёт два названия за запрос (`_pairs`), так что разных названий
+    помещается вдвое больше: у аниме их бывает десяток, и каждое находит свою часть раздач
+    (kinozal пишет «Re: Жизнь в альтернативном мире с нуля», rutracker — «Re:Zero — жизнь
+    с нуля в другом мире»). Ромадзи — неточным поиском: трекеры дописывают к нему сезон
+    («… Isekai Seikatsu 4», «… 2nd Season»), и точный такие раздачи не находит. jac.red
+    отвечает по одному запросу за раз (два разом — 429), каждый — около секунды: запросов
+    не больше `JACRED_QUERIES`.
+    """
+    names, wide = _jacred_names(title)
     queries = _pairs([n for n in names if n not in wide])
     # Ромадзи — вторым: первый запрос (русское и английское) важнее всего.
     queries[1:1] = [{"search": n} for n in wide]
     return queries[:JACRED_QUERIES]
 
 
+def _jacred_api_queries(title: Title) -> list[str]:
+    """Названия для jacred.su: по одному за запрос (пары `altname` его API не знает), в том
+    же порядке, что у jac.red, и не больше `JACRED_API_QUERIES` — поисков 100 в день."""
+    names, wide = _jacred_names(title)
+    ordered = dict.fromkeys(names[:1] + wide + names[1:])
+    return list(ordered)[:JACRED_API_QUERIES]
+
+
+# Отказы jacred.su: на следующие запросы будет тот же ответ — дальше не спрашиваем.
+_API_REFUSED = {
+    401: "ключ не подходит — проверьте его в «Настройках» → «Поиск»",
+    403: "jacred.su заблокировал этот ключ",
+    429: "поиски на сегодня кончились (100 в день), новые — в 00:00 по Москве",
+}
+
+
+def _jacred_api(source: dict, title: Title, log=None, on_found=None) -> list[Release]:
+    """Раздачи из jacred.su: его API с личным ключом в заголовке (в журнал ключ не
+    попадает). Отказ по ключу или лимиту — ошибка источника, без лишних запросов."""
+    key = str(source.get("apikey") or "").strip()
+    if not key:
+        raise net.NetError("jacred.su: нужен личный ключ — «Настройки» → «Поиск»")
+    found: dict[tuple, Release] = {}
+    failed, left = [], None
+    queries = _jacred_api_queries(title)
+    for name in queries:
+        url = f"{JACRED_API}/api/search?" + urllib.parse.urlencode({"query": name, "limit": 120})
+        try:
+            data, headers = net.get_json_headers(url, {"Authorization": f"Bearer {key}"},
+                                                 timeout=30)
+        except net.NetError as e:
+            if e.code in _API_REFUSED:
+                raise net.NetError(f"jacred.su: {_API_REFUSED[e.code]}") from e
+            failed.append((name, e))
+            continue
+        left = headers.get("X-RateLimit-Remaining") or left
+        new = []
+        results = data.get("results") if isinstance(data, dict) else None
+        for raw in results if isinstance(results, list) else []:
+            item = _api_item(raw) if isinstance(raw, dict) else {}
+            rel = _from_jacred(item)
+            if rel is not None and not _other_title(item, title):
+                k = (rel.trackers[0][0], rel.trackers[0][1], rel.hash)
+                if k not in found:
+                    found[k] = rel
+                    new.append(rel)
+        if on_found and new:
+            on_found(new)
+    if failed and len(failed) == len(queries):
+        raise failed[0][1]
+    if log:
+        for name, e in failed:
+            log(f"⚠ Поиск: jacred.su: не ответил по «{name}»: {e}")
+        if left is not None:
+            log(f"jacred.su: поисков на сегодня осталось {left}")
+    return list(found.values())
+
+
 def _jacred(source: dict, title: Title, log=None, on_found=None) -> list[Release]:
     """Раздачи из jac.red. Запрос, на который он не ответил (504 бывает и на отдельные
     названия), — в журнал, остальные всё равно в деле; не ответил ни на один — ошибка
     источника. `on_found` получает новые раздачи после каждого запроса — их можно
-    проверять, пока идут следующие."""
+    проверять, пока идут следующие. jacred.su — своим API (`_jacred_api`)."""
+    if jacred_api(source):
+        return _jacred_api(source, title, log, on_found)
     base = str(source["url"]).rstrip("/")
     found: dict[tuple, Release] = {}
     failed = []

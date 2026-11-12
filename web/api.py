@@ -39,6 +39,7 @@ KEY_URLS = {
     "fanart": "https://fanart.tv/get-an-api-key/",
     "omdb": "https://www.omdbapi.com/apikey.aspx",
     "opensubtitles": "https://www.opensubtitles.com/consumers",
+    "jacred": search.JACRED_KEY_URL,
 }
 
 # Языки картинок, которые предлагаются в настройках. Список открытый: у TMDb
@@ -159,6 +160,7 @@ def _settings_dict() -> dict:
         "kodi": {"url": kd.url, "username": kd.username, "password": kd.password,
                  "remove_folders": kd.remove_folders},
         "search": {"voices": search.load_prefs().voices,
+                   "jacred_key": search.jacred_key(),
                    "sources": [s.get("url", "") + (f" ({s['type']})" if s.get("type") != "jacred" else "")
                                for s in search.load_sources()],
                    "sources_file": str(paths.settings_path("search_sources.json"))},
@@ -324,6 +326,9 @@ def save_settings():
         prefs = search.load_prefs()
         prefs.voices = [v for v in _str_list(search_in["voices"]) if v]
         search.save_prefs(prefs)
+    if (isinstance(search_in, dict) and isinstance(search_in.get("jacred_key"), str)
+            and search_in["jacred_key"].strip() != search.jacred_key()):
+        search.set_jacred_key(search_in["jacred_key"])
     st.log.add("Настройки сохранены.")
     for tab in st.tabs.values():
         hook = getattr(tab, "on_settings_changed", None)
