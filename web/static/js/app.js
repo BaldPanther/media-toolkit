@@ -232,7 +232,8 @@ document.addEventListener("alpine:init", () => {
         const res = await api.post("/api/settings",
           { meta: this.data.meta, subs: this.data.subs, qbit: this.data.qbit,
             telegram: { token: this.data.telegram.token }, kodi: this.data.kodi,
-            search: { voices: this.data.search.voices, jacred_key: this.data.search.jacred_key } });
+            search: { voices: this.data.search.voices, jacred_key: this.data.search.jacred_key,
+                      sources_on: Object.fromEntries(this.data.search.sources.map((s) => [s.url, s.on])) } });
         if (res) {
           this.visible = false;
           this.$store.ui.toast("Настройки сохранены");

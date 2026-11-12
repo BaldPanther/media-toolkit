@@ -152,7 +152,7 @@ def jacred_api(source: dict) -> bool:
 
 def jacred_key() -> str:
     """Личный ключ jacred.su из источников (пусто — не задан)."""
-    for s in load_sources():
+    for s in load_sources(with_off=True):
         if s.get("type") == "jacred" and jacred_api(s):
             return str(s.get("apikey") or "")
     return ""
@@ -174,12 +174,35 @@ def set_jacred_key(key: str) -> None:
     paths.write_json(path, rest)
 
 
-def load_sources() -> list[dict]:
-    """Источники из файла; нет файла — он создаётся с jac.red, чтобы было что править."""
+def set_sources_on(on: dict[str, bool]) -> None:
+    """Включить или выключить источники по адресу (галки в «Настройках» → «Поиск»).
+    Выключенный остаётся в файле — про запас, со своим ключом."""
+    path = paths.settings_path(_SOURCES_NAME)
+    d = paths.read_json(path)
+    if not (isinstance(d, list) and all(isinstance(s, dict) for s in d)):
+        return
+    changed = False
+    for s in d:
+        url = str(s.get("url") or "")
+        if url in on and bool(s.get("off")) == bool(on[url]):
+            if on[url]:
+                s.pop("off", None)
+            else:
+                s["off"] = True
+            changed = True
+    if changed:
+        paths.write_json(path, d)
+
+
+def load_sources(with_off: bool = False) -> list[dict]:
+    """Источники из файла; нет файла — он создаётся с jac.red, чтобы было что править.
+    Выключенные (`"off": true` — галкой в «Настройках» → «Поиск») поиск не спрашивает,
+    `with_off` — список целиком, для настроек."""
     path = paths.settings_path(_SOURCES_NAME)
     d = paths.read_json(path)
     if isinstance(d, list) and all(isinstance(s, dict) for s in d):
-        return [s for s in d if s.get("type") in ("jacred", "torznab") and s.get("url")]
+        return [s for s in d if s.get("type") in ("jacred", "torznab") and s.get("url")
+                and (with_off or not s.get("off"))]
     try:
         paths.write_json(path, DEFAULT_SOURCES)
     except OSError:

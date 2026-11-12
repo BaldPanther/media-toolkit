@@ -96,7 +96,7 @@ def test_settings_jacred_key(client, cfg):
     assert search.jacred_key() == "abc"
     got = client.get("/api/settings").get_json()
     assert got["search"]["jacred_key"] == "abc"
-    assert all("abc" not in s for s in got["search"]["sources"])    # ключ в списке не светится
+    assert all("abc" not in s["label"] for s in got["search"]["sources"])   # ключ в списке не светится
 
 
 def test_settings_qbit_section_and_check(client, cfg, monkeypatch):
@@ -271,6 +271,14 @@ def test_settings_search_voices(client, cfg):
     import search
     got = client.get("/api/settings").get_json()["search"]
     assert got["voices"] == ["Кубик в Кубе", "TVShows"]
-    assert got["sources"] == ["https://jac.red"] and got["sources_file"].endswith("search_sources.json")
+    assert got["sources"] == [{"url": "https://jac.red", "on": True, "label": "https://jac.red"}]
+    assert got["sources_file"].endswith("search_sources.json")
     client.post("/api/settings", json={"search": {"voices": [" LostFilm ", "", "TVShows"]}})
     assert search.load_prefs().voices == ["LostFilm", "TVShows"]
+    # Галка снята — источник выключен, но остаётся в списке про запас.
+    client.post("/api/settings", json={"search": {"voices": [], "sources_on": {"https://jac.red": False}}})
+    assert search.load_sources() == []
+    got = client.get("/api/settings").get_json()["search"]
+    assert got["sources"] == [{"url": "https://jac.red", "on": False, "label": "https://jac.red"}]
+    client.post("/api/settings", json={"search": {"voices": [], "sources_on": {"https://jac.red": True}}})
+    assert search.load_sources() == [{"type": "jacred", "url": "https://jac.red"}]

@@ -161,8 +161,9 @@ def _settings_dict() -> dict:
                  "remove_folders": kd.remove_folders},
         "search": {"voices": search.load_prefs().voices,
                    "jacred_key": search.jacred_key(),
-                   "sources": [s.get("url", "") + (f" ({s['type']})" if s.get("type") != "jacred" else "")
-                               for s in search.load_sources()],
+                   "sources": [{"url": s.get("url", ""), "on": not s.get("off"),
+                                "label": s.get("url", "") + (f" ({s['type']})" if s.get("type") != "jacred" else "")}
+                               for s in search.load_sources(with_off=True)],
                    "sources_file": str(paths.settings_path("search_sources.json"))},
         "choices": {
             "languages": metaconf.LANGUAGES,
@@ -326,6 +327,8 @@ def save_settings():
         prefs = search.load_prefs()
         prefs.voices = [v for v in _str_list(search_in["voices"]) if v]
         search.save_prefs(prefs)
+    if isinstance(search_in, dict) and isinstance(search_in.get("sources_on"), dict):
+        search.set_sources_on({str(k): bool(v) for k, v in search_in["sources_on"].items()})
     if (isinstance(search_in, dict) and isinstance(search_in.get("jacred_key"), str)
             and search_in["jacred_key"].strip() != search.jacred_key()):
         search.set_jacred_key(search_in["jacred_key"])

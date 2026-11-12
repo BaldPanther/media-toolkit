@@ -296,6 +296,17 @@ def test_jacred_key_goes_to_sources_file_first(tmp_path, monkeypatch):
     assert search.load_sources() == [{"type": "jacred", "url": "https://jac.red"}]
 
 
+def test_source_off_keeps_line_and_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "config_dir", lambda: tmp_path / "cfg")
+    monkeypatch.setattr(paths, "_LEGACY_DIR", tmp_path / "legacy")
+    search.set_jacred_key("KEY")
+    search.set_sources_on({"https://jac.red": False})
+    assert search.load_sources() == [{"type": "jacred", "url": "https://jacred.su", "apikey": "KEY"}]
+    assert search.load_sources(with_off=True)[1] == {"type": "jacred", "url": "https://jac.red", "off": True}
+    search.set_sources_on({"https://jacred.su": False})
+    assert search.load_sources() == [] and search.jacred_key() == "KEY"    # ключ не пропал
+
+
 def test_year_from_title_when_source_has_none():
     item = {"magnet": "magnet:?xt=urn:btih:" + "a" * 40, "relased": 0, "types": ["docuserial"],
             "title": "Настояший детектив (Паутина любви) / 2025 / РУ / WEBRip"}

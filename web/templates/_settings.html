@@ -289,14 +289,21 @@
               <div class="field">
                 <span class="label">Где искать</span>
                 <div class="list">
-                  <template x-for="src in data.search.sources" :key="src">
-                    <div class="list-item"><span class="grow mono" x-text="src"></span></div>
+                  <template x-for="src in data.search.sources" :key="src.url">
+                    <div class="list-item">
+                      <label class="check grow" :title="src.on ? 'Выключить: поиск его не спрашивает, строка остаётся' : 'Включить снова'">
+                        <input type="checkbox" x-model="src.on">
+                        <span class="mono" :class="{ faint: !src.on }" x-text="src.label"></span>
+                      </label>
+                      <span class="badge" x-show="!src.on">выключен</span>
+                    </div>
                   </template>
                 </div>
                 <span class="hint">Список — в файле <span class="mono" x-text="data.search.sources_file"></span>: строка
                   на источник, <span class="mono">{"type": "jacred", "url": "https://jac.red"}</span> или
                   <span class="mono">{"type": "torznab", "url": "…/api", "apikey": "…"}</span> для Jackett и
-                  Prowlarr. Перезапускать программу не нужно.</span>
+                  Prowlarr. Перезапускать программу не нужно. Без галки источник выключен: поиск его не
+                  спрашивает, а строка остаётся про запас.</span>
               </div>
             </div>
 
