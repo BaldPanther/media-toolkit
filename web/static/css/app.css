@@ -4,6 +4,11 @@
  * элементов, скругления, отступы. У кнопок, полей и выпадающих списков одна
  * высота (--h), чтобы в любом ряду они стояли ровно; кнопки отличаются только
  * цветом: основная, обычная, опасная, прозрачная.
+ *
+ * Синяя (btn-primary) — только то, что нажимать дальше: следующий шаг вкладки
+ * (btn-next — ещё и вспыхивает, когда шаг сменился) или главное действие окна.
+ * Выбранный фильтр — btn-on, а не синяя. Прозрачная с текстом — ссылка: синий
+ * текст; с btn-danger — красный (убрать, отвязать).
  */
 
 :root {
@@ -99,6 +104,27 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn-ok { background: var(--ok-soft); border-color: rgba(52, 211, 153, 0.45); color: var(--ok); }
 .btn-ok:hover:not(:disabled) { background: rgba(52, 211, 153, 0.22); border-color: var(--ok); }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+/* Прозрачная кнопка с текстом — ссылка: открывает окно, настройки, проверяет. */
+.btn-ghost:not(.btn-icon) { color: var(--accent-text); padding: 0 8px; }
+.btn-ghost:not(.btn-icon):hover:not(:disabled) { background: var(--accent-soft); color: #a9c8ff; }
+.btn-ghost.btn-danger { background: transparent; border-color: transparent; color: var(--danger); }
+.btn-ghost.btn-danger:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); }
+.dock .btn-ghost:not(.btn-icon) { color: var(--text-2); }
+.dock .btn-ghost:not(.btn-icon):hover { background: var(--surface-3); color: var(--text); }
+/* Выключенная основная — серая: синий цвет значит «нажимать сейчас». */
+.btn-primary:disabled { background: var(--surface-2); border-color: var(--border); color: var(--text-3); opacity: 1; }
+/* Выбранный фильтр или вариант (сезон, кодек, озвучка) — включённый переключатель. */
+.btn-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.btn-on:hover:not(:disabled) { background: rgba(59, 130, 246, 0.22); }
+/* Следующий шаг: синяя и пару раз вспыхивает, когда им стала. */
+.btn-next { animation: next-step 1.3s ease-out 2; }
+@keyframes next-step {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+  100% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+}
+/* Следующий шаг — выбрать в списке (дорожки после сканирования). */
+.input.is-next { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+@media (prefers-reduced-motion: reduce) { .btn-next { animation: none; } }
 .btn-sm { height: var(--h-sm); padding: 0 10px; font-size: 12.5px; }
 .btn-icon { width: var(--h); padding: 0; }
 .btn-icon.btn-sm { width: var(--h-sm); }
@@ -211,7 +237,7 @@ select.input option { background: var(--surface-2); color: var(--text); }
 .notice .icon { margin-top: 2px; }
 
 .empty { padding: 36px 16px; text-align: center; color: var(--text-3); }
-.empty .icon { width: 32px; height: 32px; margin-bottom: 8px; stroke-width: 1.4; }
+.empty > .icon { width: 32px; height: 32px; margin-bottom: 8px; stroke-width: 1.4; }
 
 /* ---------------------------------------------------------------- таблицы -- */
 .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius);

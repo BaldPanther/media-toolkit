@@ -466,6 +466,7 @@ def start_scan(st, folder: str, recursive: bool, rescan: bool = False, title="С
         st.summary = msg
         st.log.add(msg)
         job.summary = msg
+        st.scanned_path = folder
         st.apply_scan(files, rescan)
 
     return st.jobs.start(title, work, on_done=done)

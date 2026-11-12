@@ -15,6 +15,13 @@ document.addEventListener("alpine:init", () => {
     get t() { return this.$store.app.tabs.torrents || {}; },
     get s() { return this.t.search || {}; },
     get busy() { return this.$store.app.busy; },
+    // Следующий шаг: название введено, а по нему ещё не искали (или это ссылка).
+    get findNext() {
+      const q = this.q.trim();
+      if (!q) return false;
+      const searched = !!this.s.title || (this.s.hits || []).length > 0;
+      return this.isLink || !searched || q !== (this.s.query || "");
+    },
 
     init() {
       try {

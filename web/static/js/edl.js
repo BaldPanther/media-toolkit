@@ -22,6 +22,13 @@ document.addEventListener("alpine:init", () => {
     get t() { return this.$store.app.tabs.edl || {}; },
     get busy() { return this.$store.app.busy; },
     get rows() { return this.t.rows || []; },
+    // Следующий шаг: серии есть, а таймингов нет — «Определить автоматически»;
+    // тайминги есть, а .edl у серии ещё нет — «Записать .edl».
+    timed(r) { return r.intro !== "—" || r.outro !== "—"; },
+    get detectNext() {
+      return !!this.t.have_eps && !(this.t.tools_missing || []).length && !this.rows.some((r) => this.timed(r));
+    },
+    get writeNext() { return this.rows.some((r) => this.timed(r) && !r.edl); },
 
     init() {
       this.$watch("t.rows", (rows) => this.pruneSelection(rows));

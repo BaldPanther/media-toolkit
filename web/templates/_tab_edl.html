@@ -7,11 +7,12 @@
 
   <section class="card">
     <div class="row edl-actions">
-      <button type="button" class="btn btn-primary" @click="detect()"
+      <button type="button" class="btn" @click="detect()" :class="{ 'btn-primary btn-next': detectNext }"
               :disabled="busy || !t.have_eps || (t.tools_missing || []).length > 0">
         <svg class="icon"><use href="#i-search"/></svg>Определить автоматически
       </button>
-      <button type="button" class="btn" @click="write()" :disabled="busy || !t.have_eps">
+      <button type="button" class="btn" @click="write()" :disabled="busy || !t.have_eps"
+              :class="{ 'btn-primary btn-next': writeNext }">
         <svg class="icon"><use href="#i-check"/></svg>Записать .edl
       </button>
       <button type="button" class="btn" @click="del()" :disabled="busy || !t.have_files">

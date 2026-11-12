@@ -6,7 +6,8 @@
       <div class="tracks-choice">
         <div class="field">
           <label for="t-audio">Аудио</label>
-          <select id="t-audio" class="input" :disabled="$store.app.busy || !t.audio_options"
+          <select id="t-audio" class="input" :class="{ 'is-next': chooseNext }"
+                  :disabled="$store.app.busy || !t.audio_options"
                   :value="t.audio_choice" @change="choose($event.target.value, t.sub_choice)">
             <option value="">— не трогать —</option>
             <template x-for="o in t.audio_options || []" :key="o.id">
@@ -16,7 +17,8 @@
         </div>
         <div class="field">
           <label for="t-sub">Субтитры</label>
-          <select id="t-sub" class="input" :disabled="$store.app.busy || !t.sub_options"
+          <select id="t-sub" class="input" :class="{ 'is-next': chooseNext }"
+                  :disabled="$store.app.busy || !t.sub_options"
                   :value="t.sub_choice" @change="choose(t.audio_choice, $event.target.value)">
             <option value="">— не трогать —</option>
             <option value="off" :selected="t.sub_choice === 'off'">— выключить субтитры —</option>
@@ -27,7 +29,7 @@
         </div>
       </div>
       <div class="card-foot">
-        <button type="button" class="btn btn-primary" @click="apply()"
+        <button type="button" class="btn" @click="apply()" :class="{ 'btn-primary btn-next': applyNext }"
                 :disabled="$store.app.busy || !hasFiles() || (!t.audio_choice && !t.sub_choice)">
           <svg class="icon"><use href="#i-check"/></svg>Применить (дорожки/субтитры)
         </button>

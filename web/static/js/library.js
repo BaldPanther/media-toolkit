@@ -17,6 +17,10 @@ document.addEventListener("alpine:init", () => {
 
     get t() { return this.$store.app.tabs.library || {}; },
     get busy() { return this.$store.app.busy; },
+    // Следующий шаг (синяя кнопка): папка выбрана — «Найти», тайтл выбран и в плане
+    // есть изменения — «Применить».
+    get findNext() { return !!this.$store.app.workspace.path && !this.t.hit; },
+    get applyNext() { return !!this.t.can_apply && this.t.changes > 0; },
 
     init() {
       // Название и год подставляет сервер (из имени папки) — показываем их,

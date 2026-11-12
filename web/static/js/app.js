@@ -52,6 +52,17 @@ document.addEventListener("alpine:init", () => {
     },
 
     // -------------------------------------------------------- папка --
+    // Следующий шаг (синяя кнопка): папка нужна всем вкладкам, кроме «Торрентов»;
+    // сканирование — только «Дорожкам» и «EDL» («Медиатека» смотрит на имена файлов).
+    get folderNext() {
+      return !this.pathInput.trim() && this.tab !== "torrents";
+    },
+    get scanNext() {
+      const ws = this.$store.app.workspace;
+      return ["tracks", "edl"].includes(this.tab) && !!this.pathInput.trim()
+        && this.pathInput.trim() !== ws.scanned_path;
+    },
+
     async commitPath() {
       this.pathFocused = false;
       const ws = this.$store.app.workspace;

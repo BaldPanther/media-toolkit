@@ -427,6 +427,7 @@ class LibraryTab:
             "rows": rows,
             "plan_status": plan_status,
             "can_apply": self.plan is not None and not self.is_collection(),
+            "changes": len(self.plan.changed()) if self.plan is not None else 0,
             "delete_junk": self.delete_junk(),
             "send2trash": library.send_to_trash_available(),
             "policy": self.settings.existing_policy,

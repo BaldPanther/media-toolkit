@@ -42,7 +42,8 @@
       <div class="field">
         <span class="label">&nbsp;</span>
         <div class="row nowrap">
-          <button type="button" class="btn btn-primary" @click="find()" :disabled="busy">
+          <button type="button" class="btn" @click="find()" :disabled="busy"
+                  :class="{ 'btn-primary btn-next': findNext }">
             <svg class="icon"><use href="#i-search"/></svg>Найти
           </button>
           <button type="button" class="btn btn-ghost btn-icon" title="Подставить из имени папки" @click="guess()" :disabled="busy">
@@ -141,7 +142,8 @@
       <button type="button" class="btn" @click="rebuild()" :disabled="busy || !t.info">
         <svg class="icon"><use href="#i-scan"/></svg>Пересчитать план
       </button>
-      <button type="button" class="btn btn-primary" @click="apply()" :disabled="busy || !t.can_apply">
+      <button type="button" class="btn" @click="apply()" :disabled="busy || !t.can_apply"
+              :class="{ 'btn-primary btn-next': applyNext }">
         <svg class="icon"><use href="#i-check"/></svg>Применить
       </button>
     </div>

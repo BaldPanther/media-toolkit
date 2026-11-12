@@ -63,7 +63,8 @@
                x-model="pathInput" @focus="pathFocused = true" @blur="commitPath()"
                @keydown.enter.prevent="$event.target.blur()" :disabled="$store.app.busy"
                spellcheck="false" aria-label="Папка">
-        <button type="button" class="btn" @click="browseFolder()" :disabled="$store.app.busy">
+        <button type="button" class="btn" @click="browseFolder()" :disabled="$store.app.busy"
+                :class="{ 'btn-primary btn-next': folderNext }">
           <svg class="icon"><use href="#i-folder"/></svg>Обзор…
         </button>
         <button type="button" class="btn" @click="browseFile()" :disabled="$store.app.busy"
@@ -75,7 +76,7 @@
                  @change="setRecursive($event.target.checked)">
           Включая вложенные папки
         </label>
-        <button type="button" class="btn btn-primary" @click="scan()"
+        <button type="button" class="btn" @click="scan()" :class="{ 'btn-primary btn-next': scanNext }"
                 :disabled="$store.app.busy || !pathInput.trim()">
           <svg class="icon"><use href="#i-scan"/></svg>Сканировать
         </button>

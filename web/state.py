@@ -56,6 +56,8 @@ class AppState:
         # Результат последнего сканирования (core.MkvFile) — общий для вкладок
         # «Дорожки» и «EDL».
         self.files: list = []
+        # Какую папку сканировали: страница по нему решает, не пора ли «Сканировать».
+        self.scanned_path = ""
         # Вкладки: у каждой своё состояние и свои реакции на смену папки и скан.
         self.tabs: dict[str, object] = {}
         # Когда страница последний раз спрашивала статус. На своей машине сервер
@@ -114,4 +116,4 @@ class AppState:
 
     def to_dict(self) -> dict:
         return {"path": self.path, "recursive": self.recursive, "summary": self.summary,
-                "scanned": len(self.files)}
+                "scanned": len(self.files), "scanned_path": self.scanned_path}
