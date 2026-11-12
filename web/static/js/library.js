@@ -99,7 +99,8 @@ document.addEventListener("alpine:init", () => {
 
     // ------------------------------------------------------------- план --
     rowBadge(kind) {
-      return { change: "accent", warn: "warn", error: "danger", nochange: "plain" }[kind] || "";
+      // «уже верно» — зелёным, как «есть» на EDL и «разложено» в «Торрентах».
+      return { change: "accent", warn: "warn", error: "danger", nochange: "ok" }[kind] || "";
     },
     async rebuild() {
       await api.post("/api/library/plan");

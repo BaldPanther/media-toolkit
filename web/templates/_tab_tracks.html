@@ -92,14 +92,14 @@
         </thead>
         <tbody>
           <template x-for="(r, i) in rows" :key="r.path">
-            <tr class="clickable" :class="{ dim: r.kind === 'nochange' || !inScope(r), selected: sel[r.path] }"
+            <tr class="clickable" :class="{ dim: r.kind === 'nochange' || r.kind === 'ok' || !inScope(r), selected: sel[r.path] }"
                 @click="rowClick($event, r, i)">
               <td class="check-cell" @click.stop><label class="check"><input type="checkbox" :checked="sel[r.path]" @change="toggleRow(r, i)"></label></td>
               <td class="file" x-text="r.file" :title="r.path"></td>
               <td x-text="r.acur"></td>
-              <td :class="{ 'accent-text': r.kind === 'change' }" x-text="r.anew"></td>
+              <td :class="{ 'accent-text': r.kind === 'change' && r.anew !== '(не трогаем)' }" x-text="r.anew"></td>
               <td x-text="r.scur"></td>
-              <td :class="{ 'accent-text': r.kind === 'change' }" x-text="r.snew"></td>
+              <td :class="{ 'accent-text': r.kind === 'change' && r.snew !== '(не трогаем)' }" x-text="r.snew"></td>
               <td><span class="badge" :class="badge(r.kind)" x-text="r.status"></span></td>
             </tr>
           </template>

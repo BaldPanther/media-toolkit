@@ -43,6 +43,7 @@ def test_scan_result_fills_options_and_rows(env):
     assert [o["label"] for o in t["audio_options"]] == ["LostFilm [rus] — 2/2", "Original [eng] — 2/2"]
     assert t["audio_choice"] == ""
     assert [r["kind"] for r in t["rows"]] == ["nochange", "nochange"]
+    assert [r["status"] for r in t["rows"]] == ["не трогаем", "не трогаем"]
 
 
 def test_choice_changes_preview(env):
@@ -54,7 +55,8 @@ def test_choice_changes_preview(env):
     assert t["audio_choice"] == lostfilm
     assert t["sub_choice"] == "off"
     assert [r["anew"] for r in t["rows"]] == ["LostFilm", "LostFilm"]
-    assert [r["kind"] for r in t["rows"]] == ["change", "nochange"]
+    assert [r["kind"] for r in t["rows"]] == ["change", "ok"]     # LostFilm уже стоит
+    assert [r["status"] for r in t["rows"]] == ["будет изменён", "уже верно"]
     assert t["n_change"] == 1
 
 
@@ -85,7 +87,7 @@ def test_apply_asks_then_runs_and_rescans(env, monkeypatch):
     assert applied == ["S01E01.mkv"]
     t = _tab(c)
     assert t["audio_choice"] == lostfilm                  # выбор пережил пересканирование
-    assert [r["kind"] for r in t["rows"]] == ["nochange", "nochange"]
+    assert [r["kind"] for r in t["rows"]] == ["ok", "ok"]
     assert st.jobs.last.summary == "Готово: успешно 1/1."
 
 

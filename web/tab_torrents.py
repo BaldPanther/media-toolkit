@@ -40,6 +40,7 @@ class TorrentsTab:
                                          autopilot=self.autopilot, on_change=state.touch)
         # Поиск: выбранный тайтл, его сезоны, найденные раздачи и фильтры.
         self.query = ""
+        self.searched = ""             # по какому названию искали (query меняет и папка)
         self.folder_query = ""         # название, подставленное из выбранной папки
         self.folder_tmdb: tuple[str, int] | None = None   # (вид, номер TMDb) из .nfo папки
         self.hits: list[metadata.SearchHit] = []
@@ -208,6 +209,7 @@ class TorrentsTab:
         pinned = set(watching.pin) if watching else set()
         return {
             "query": self.query,
+            "searched": self.searched,
             "hits": [{"i": i, "label": h.label(), "poster": h.poster_url, "overview": h.overview,
                       "kind": "фильм" if h.kind == library.MOVIE else "сериал"}
                      for i, h in enumerate(self.hits)],
@@ -372,6 +374,7 @@ def search_title():
     meta = metaconf.load_settings()
     if not meta.has_tmdb():
         raise UserError("Нет ключа TMDb", "Впишите его в «Настройках» → «Ключи API».")
+    t.searched = t.query
 
     def work(job):
         job.progress(0, 0, "поиск в TMDb…")

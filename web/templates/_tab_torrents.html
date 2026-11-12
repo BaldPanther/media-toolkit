@@ -178,7 +178,7 @@
                   <span class="badge ok plain" x-show="r.in_qbit">уже в qBittorrent</span>
                   <span class="badge accent plain" x-show="r.update"
                         title="Та же страница трекера, что у раздачи в qBittorrent: докачаются только новые серии">новая версия вашей раздачи</span>
-                  <span class="badge plain" x-show="r.in_library">уже в медиатеке</span>
+                  <span class="badge ok plain" x-show="r.in_library">уже в медиатеке</span>
                   <template x-for="v in r.versions || []" :key="v"><span class="badge accent plain" x-text="v"></span></template>
                   <span class="badge warn plain" x-show="r.voice_unknown"
                         title="В названии раздачи студий нет (rutracker пишет их в описании темы) — может быть и выбранная. Откройте страницу раздачи по ссылке трекера">озвучки не указаны — см. страницу</span>

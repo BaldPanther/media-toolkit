@@ -30,6 +30,10 @@
   --accent-hover: #2f73e0;
   --accent-soft: rgba(59, 130, 246, 0.14);
   --accent-text: #7fb0ff;
+  --btn-border: rgba(59, 130, 246, 0.55);   /* обводка обычной кнопки: синее = нажимается */
+  --btn-bg: rgba(59, 130, 246, 0.06);
+  --selected-bg: #e6e8ee;                   /* выбранный вариант или фильтр — светлая плашка */
+  --selected-text: #0b0d12;
   --ok: #34d399;
   --ok-soft: rgba(52, 211, 153, 0.12);
   --warn: #fbbf24;
@@ -88,13 +92,14 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   height: var(--h); padding: 0 14px; border-radius: var(--radius);
-  border: 1px solid var(--border-strong); background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--text);
   font: 500 13.5px/1 var(--font); white-space: nowrap; cursor: pointer; user-select: none;
   transition: background .15s, border-color .15s, color .15s, opacity .15s;
 }
-.btn:hover:not(:disabled) { background: var(--surface-hover); }
+.btn:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.btn:disabled { opacity: .42; cursor: not-allowed; }
+/* Выключенная — без синего: серая рамка и текст, нажать нельзя. */
+.btn:disabled { cursor: not-allowed; color: var(--text-3); background: transparent; border-color: var(--border); }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-danger { background: var(--danger-bg); border-color: var(--danger-bg); color: #fff; }
@@ -103,7 +108,8 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* Второе действие рядом с основным («Всю раздачу» рядом со «Скачать»): видно, что кнопка, но спокойнее синей. */
 .btn-ok { background: var(--ok-soft); border-color: rgba(52, 211, 153, 0.45); color: var(--ok); }
 .btn-ok:hover:not(:disabled) { background: rgba(52, 211, 153, 0.22); border-color: var(--ok); }
-.btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-3); border-color: transparent; color: var(--text); }
+.btn-ghost:disabled { background: transparent; border-color: transparent; }
 /* Прозрачная кнопка с текстом — ссылка: открывает окно, настройки, проверяет. */
 .btn-ghost:not(.btn-icon) { color: var(--accent-text); padding: 0 8px; }
 .btn-ghost:not(.btn-icon):hover:not(:disabled) { background: var(--accent-soft); color: #a9c8ff; }
@@ -114,8 +120,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* Выключенная основная — серая: синий цвет значит «нажимать сейчас». */
 .btn-primary:disabled { background: var(--surface-2); border-color: var(--border); color: var(--text-3); opacity: 1; }
 /* Выбранный фильтр или вариант (сезон, кодек, озвучка) — включённый переключатель. */
-.btn-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
-.btn-on:hover:not(:disabled) { background: rgba(59, 130, 246, 0.22); }
+.btn-on { background: var(--selected-bg); border-color: var(--selected-bg); color: var(--selected-text); font-weight: 600; }
+.btn-on::before { content: "✓"; font-weight: 700; }
+.btn-on:hover:not(:disabled) { background: #fff; border-color: #fff; }
 /* Следующий шаг: синяя и пару раз вспыхивает, когда им стала. */
 .btn-next { animation: next-step 1.3s ease-out 2; }
 @keyframes next-step {
@@ -123,8 +130,9 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
   100% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
 }
 /* Следующий шаг — выбрать в списке (дорожки после сканирования). */
-.input.is-next { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-@media (prefers-reduced-motion: reduce) { .btn-next { animation: none; } }
+.input.is-next { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+                 animation: next-step 1.3s ease-out 2; }
+@media (prefers-reduced-motion: reduce) { .btn-next, .input.is-next { animation: none; } }
 .btn-sm { height: var(--h-sm); padding: 0 10px; font-size: 12.5px; }
 .btn-icon { width: var(--h); padding: 0; }
 .btn-icon.btn-sm { width: var(--h-sm); }
@@ -179,8 +187,9 @@ select.input option { background: var(--surface-2); color: var(--text); }
 .seg button { height: 100%; padding: 0 12px; border: 0; border-radius: 6px; background: transparent;
               color: var(--text-2); font: 500 13px var(--font); cursor: pointer; white-space: nowrap; }
 .seg button:hover:not(:disabled) { color: var(--text); }
-.seg button.on { background: var(--surface-hover); color: var(--text);
+.seg button.on { background: var(--selected-bg); color: var(--selected-text); font-weight: 600;
                  box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.seg button.on:hover:not(:disabled) { color: var(--selected-text); }
 .seg button:disabled { opacity: .45; cursor: not-allowed; }
 .seg button .icon { width: 14px; height: 14px; margin-left: 3px; vertical-align: -2px; }
 .seg button .count { margin-left: 6px; color: var(--text-3); font-weight: 400; }

@@ -26,7 +26,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     badge(kind) {
-      return { change: "accent", warn: "warn", error: "danger", nochange: "plain" }[kind] || "";
+      return { change: "accent", ok: "ok", warn: "warn", error: "danger", nochange: "plain" }[kind] || "";
     },
     async choose(audio, sub) {
       await api.post("/api/tracks/choice", { audio, sub });

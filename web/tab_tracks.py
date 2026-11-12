@@ -114,8 +114,11 @@ class TracksTab:
             elif plan.has_changes:
                 kind, status = "change", "будет изменён"
                 n_change += 1
+            elif self.audio_key is None and self.sub_key is None:
+                kind, status = "nochange", "не трогаем"
             else:
-                kind, status = "nochange", "без изменений"
+                # Выбранное уже стоит — как «уже верно» на «Медиатеке».
+                kind, status = "ok", "уже верно"
             rows.append({"file": name, "path": str(f.path),
                          "acur": self._cur_default(f.audio), "anew": anew,
                          "scur": self._cur_default(f.subtitles), "snew": snew,
