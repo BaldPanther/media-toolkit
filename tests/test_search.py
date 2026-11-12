@@ -253,7 +253,7 @@ def test_jacred_su_searches_its_api_with_key_in_header(monkeypatch):
     url, headers = calls[0]
     assert url.startswith("https://api.jacred.su/api/search?") and "query=" in url
     assert headers == {"Authorization": "Bearer SECRET"} and "SECRET" not in url
-    # По одному названию за запрос, не больше трёх: поисков 100 в день.
+    # По одному названию за запрос, не больше трёх: поиски в день считаны.
     assert len(calls) == 2                       # у «Тёмной материи» два названия
     assert len(rels) == 1                        # одна раздача из обоих ответов
     r = rels[0]

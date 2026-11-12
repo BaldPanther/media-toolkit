@@ -30,6 +30,10 @@ document.addEventListener("alpine:init", () => {
       } catch (e) { /* без хранилища */ }
       // Сервер меняет название сам после «Сканировать» папки тайтла — подставить его.
       this.$watch("s.query", (v) => { if (v) this.q = v; });
+      // Выбрали папку (и ту же, что была) — её название в поиск, даже если в поле своё.
+      window.addEventListener("folder-picked", () => {
+        if (this.s.folder_query) this.q = this.s.folder_query;
+      });
       this.$watch("q", () => { if (this.isLink) this.linkKind = this.guessKind(); });
     },
     setView(v) {

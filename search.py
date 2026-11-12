@@ -51,7 +51,7 @@ import tmdb
 _SOURCES_NAME = "search_sources.json"
 _PREFS_NAME = "search_settings.json"
 DEFAULT_SOURCES = [{"type": "jacred", "url": "https://jac.red"}]
-# jacred.su с 09.10.2026 ищет только с личным ключом (бесплатно, 100 поисков в день) —
+# jacred.su с 09.10.2026 ищет только с личным ключом (бесплатно, лимит поисков в день) —
 # своим API, не как jac.red. Источник с этим адресом говорит на нём.
 JACRED_API = "https://api.jacred.su"
 JACRED_API_HOSTS = ("jacred.su", "api.jacred.su")
@@ -583,7 +583,7 @@ def _jacred_queries(title: Title) -> list[dict]:
 
 def _jacred_api_queries(title: Title) -> list[str]:
     """Названия для jacred.su: по одному за запрос (пары `altname` его API не знает), в том
-    же порядке, что у jac.red, и не больше `JACRED_API_QUERIES` — поисков 100 в день."""
+    же порядке, что у jac.red, и не больше `JACRED_API_QUERIES` — поиски в день считаны."""
     names, wide = _jacred_names(title)
     ordered = dict.fromkeys(names[:1] + wide + names[1:])
     return list(ordered)[:JACRED_API_QUERIES]
@@ -593,7 +593,7 @@ def _jacred_api_queries(title: Title) -> list[str]:
 _API_REFUSED = {
     401: "ключ не подходит — проверьте его в «Настройках» → «Поиск»",
     403: "jacred.su заблокировал этот ключ",
-    429: "поиски на сегодня кончились (100 в день), новые — в 00:00 по Москве",
+    429: "поиски на сегодня кончились, новые — в 00:00 по Москве",
 }
 
 

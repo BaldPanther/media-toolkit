@@ -63,21 +63,25 @@ document.addEventListener("alpine:init", () => {
         && this.pathInput.trim() !== ws.scanned_path;
     },
 
-    async commitPath() {
+    // picked — выбрали в «Обзор…»/«Файл…»: даже ту же папку — это «вот этот тайтл»,
+    // и «Торренты» снова подставляют его название (событие folder-picked).
+    async commitPath(picked = false) {
       this.pathFocused = false;
       const ws = this.$store.app.workspace;
-      if (this.pathInput.trim() === ws.path) return;
+      const same = this.pathInput.trim() === ws.path;
+      if (same && !picked) return;
       if (this.$store.app.busy) { this.pathInput = ws.path; return; }
-      await api.post("/api/path", { path: this.pathInput.trim() });
-      this.$store.app.pollSoon();
+      if (!same) await api.post("/api/path", { path: this.pathInput.trim() });
+      await this.$store.app.loadState();
+      window.dispatchEvent(new CustomEvent("folder-picked"));
     },
     async browseFolder() {
       const p = await this.$store.browser.open({ start: this.pathInput || this.$store.app.workspace.path });
-      if (p) { this.pathInput = p; await this.commitPath(); }
+      if (p) { this.pathInput = p; await this.commitPath(true); }
     },
     async browseFile() {
       const p = await this.$store.browser.open({ start: this.pathInput, files: true });
-      if (p) { this.pathInput = p; await this.commitPath(); }
+      if (p) { this.pathInput = p; await this.commitPath(true); }
     },
     async setRecursive(value) {
       await api.post("/api/path", { path: this.$store.app.workspace.path, recursive: value });

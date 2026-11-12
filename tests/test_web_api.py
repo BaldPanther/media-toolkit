@@ -78,6 +78,16 @@ def test_settings_subs_section(client, cfg):
     assert not (cfg / "meta_settings.json").exists()
 
 
+def test_torrents_query_from_folder_at_start(cfg, tmp_path):
+    # Программа открылась с прежней папкой — название уже в поиске «Торрентов», без «Сканировать».
+    folder = tmp_path / "Altered Carbon (2018)"
+    folder.mkdir()
+    app = server.create_app(AppState("desktop", str(folder)))
+    app.testing = True
+    s = app.test_client().get("/api/state").get_json()["tabs"]["torrents"]["search"]
+    assert s["query"] == s["folder_query"] == "Altered Carbon (2018)"
+
+
 def test_settings_jacred_key(client, cfg):
     import search
     got = client.get("/api/settings").get_json()

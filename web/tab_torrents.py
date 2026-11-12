@@ -59,6 +59,8 @@ class TorrentsTab:
         self.codec = ""                # фильтр кодека: HEVC / AVC / "" — все
         self.version = ""              # фильтр версии: «режиссёрская»… / "" — все
         self.search_status = ""
+        # Программа открылась с прежней папкой — её название сразу в поиск, как при выборе.
+        self.on_path_changed(state.path)
 
     def start_background(self) -> None:
         self.bot.start()
@@ -209,6 +211,7 @@ class TorrentsTab:
         pinned = set(watching.pin) if watching else set()
         return {
             "query": self.query,
+            "folder_query": self.folder_query,
             "searched": self.searched,
             "hits": [{"i": i, "label": h.label(), "poster": h.poster_url, "overview": h.overview,
                       "kind": "фильм" if h.kind == library.MOVIE else "сериал"}
