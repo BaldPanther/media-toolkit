@@ -81,7 +81,7 @@
       <div class="row" x-show="s.seasons && s.seasons.length">
         <span class="small muted">Сезоны:</span>
         <template x-for="se in s.seasons" :key="se.number">
-          <button type="button" class="btn btn-sm" :class="{ 'btn-on': se.selected }"
+          <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': se.selected }"
                   @click="toggleSeason(se.number, $event)" :title="seasonHint(se)"
                   x-text="'Сезон ' + se.number + (se.year ? ' · ' + se.year : '') + ' · ' + seasonState(se)"></button>
         </template>
@@ -111,9 +111,9 @@
       </div>
       <div class="row" x-show="(s.codecs || []).some((c) => c[1] > 0)">
         <span class="small muted">Кодек:</span>
-        <button type="button" class="btn btn-sm" :class="{ 'btn-on': !s.codec }" @click="opt({ codec: '' })">все</button>
+        <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': !s.codec }" @click="opt({ codec: '' })">все</button>
         <template x-for="c in (s.codecs || []).filter((c) => c[1] > 0 || s.codec === c[0])" :key="c[0]">
-          <button type="button" class="btn btn-sm" :class="{ 'btn-on': s.codec === c[0] }"
+          <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': s.codec === c[0] }"
                   :title="codecHint(c[0])"
                   @click="opt({ codec: s.codec === c[0] ? '' : c[0] })">
             <span x-text="c[0]"></span> <span class="faint" x-text="c[1]"></span></button>
@@ -121,10 +121,10 @@
       </div>
       <div class="row" x-show="(s.versions || []).length">
         <span class="small muted">Версия:</span>
-        <button type="button" class="btn btn-sm" :class="{ 'btn-on': !s.version }" @click="opt({ version: '' })"
+        <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': !s.version }" @click="opt({ version: '' })"
                 title="Все раздачи — и без пометки версии (обычно это театральная)">все</button>
         <template x-for="v in s.versions || []" :key="v[0]">
-          <button type="button" class="btn btn-sm" :class="{ 'btn-on': s.version === v[0] }"
+          <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': s.version === v[0] }"
                   title="Версия — по названию раздачи"
                   @click="opt({ version: s.version === v[0] ? '' : v[0] })">
             <span x-text="v[0]"></span> <span class="faint" x-text="v[1]"></span></button>
@@ -132,9 +132,9 @@
       </div>
       <div class="row" x-show="s.voices && s.voices.length">
         <span class="small muted">Озвучка:</span>
-        <button type="button" class="btn btn-sm" :class="{ 'btn-on': !s.voice }" @click="opt({ voice: '' })">все</button>
+        <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': !s.voice }" @click="opt({ voice: '' })">все</button>
         <template x-for="v in s.voices" :key="v">
-          <button type="button" class="btn btn-sm" :class="{ 'btn-on': s.voice === v }"
+          <button type="button" class="btn btn-sm btn-chip" :class="{ 'btn-on': s.voice === v }"
                   @click="opt({ voice: s.voice === v ? '' : v })" x-text="v"></button>
         </template>
       </div>

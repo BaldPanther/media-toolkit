@@ -7,8 +7,9 @@
  *
  * Синяя (btn-primary) — только то, что нажимать дальше: следующий шаг вкладки
  * (btn-next — ещё и вспыхивает, когда шаг сменился) или главное действие окна.
- * Выбранный фильтр — btn-on, а не синяя. Прозрачная с текстом — ссылка: синий
- * текст; с btn-danger — красный (убрать, отвязать).
+ * Фильтр — btn-chip: невыбранный серый, выбранный (btn-on) — синяя подложка, рамка и
+ * галочка; так же выбранное в переключателе (.seg). Прозрачная с текстом — ссылка:
+ * синий текст; с btn-danger — красный (убрать, отвязать).
  */
 
 :root {
@@ -32,8 +33,9 @@
   --accent-text: #7fb0ff;
   --btn-border: rgba(59, 130, 246, 0.55);   /* обводка обычной кнопки: синее = нажимается */
   --btn-bg: rgba(59, 130, 246, 0.06);
-  --selected-bg: #e6e8ee;                   /* выбранный вариант или фильтр — светлая плашка */
-  --selected-text: #0b0d12;
+  --selected-bg: rgba(59, 130, 246, 0.22);  /* выбранный вариант или фильтр */
+  --selected-line: var(--accent);
+  --selected-text: #d6e5ff;
   --ok: #34d399;
   --ok-soft: rgba(52, 211, 153, 0.12);
   --warn: #fbbf24;
@@ -120,9 +122,12 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 /* Выключенная основная — серая: синий цвет значит «нажимать сейчас». */
 .btn-primary:disabled { background: var(--surface-2); border-color: var(--border); color: var(--text-3); opacity: 1; }
 /* Выбранный фильтр или вариант (сезон, кодек, озвучка) — включённый переключатель. */
-.btn-on { background: var(--selected-bg); border-color: var(--selected-bg); color: var(--selected-text); font-weight: 600; }
-.btn-on::before { content: "✓"; font-weight: 700; }
-.btn-on:hover:not(:disabled) { background: #fff; border-color: #fff; }
+/* Фильтр: невыбранный — тихий серый, чтобы выбранный был виден без крика. */
+.btn-chip { border-color: var(--border-strong); background: transparent; color: var(--text-2); }
+.btn-chip:hover:not(:disabled) { border-color: #4a5266; background: var(--surface-2); color: var(--text); }
+.btn-on, .btn-on:hover:not(:disabled) { background: var(--selected-bg); border-color: var(--selected-line);
+                                        color: var(--selected-text); font-weight: 600; }
+.btn-on::before { content: "✓"; font-weight: 700; color: var(--accent-text); }
 /* Следующий шаг: синяя и пару раз вспыхивает, когда им стала. */
 .btn-next { animation: next-step 1.3s ease-out 2; }
 @keyframes next-step {
@@ -188,7 +193,7 @@ select.input option { background: var(--surface-2); color: var(--text); }
               color: var(--text-2); font: 500 13px var(--font); cursor: pointer; white-space: nowrap; }
 .seg button:hover:not(:disabled) { color: var(--text); }
 .seg button.on { background: var(--selected-bg); color: var(--selected-text); font-weight: 600;
-                 box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+                 box-shadow: inset 0 0 0 1px var(--selected-line); }
 .seg button.on:hover:not(:disabled) { color: var(--selected-text); }
 .seg button:disabled { opacity: .45; cursor: not-allowed; }
 .seg button .icon { width: 14px; height: 14px; margin-left: 3px; vertical-align: -2px; }
